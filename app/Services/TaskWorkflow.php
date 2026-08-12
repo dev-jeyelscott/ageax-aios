@@ -203,7 +203,7 @@ class TaskWorkflow
         $isInterruptedRecovery = $previousAttempt?->status === 'interrupted';
 
         if ($isInterruptedRecovery) {
-            $baseSha = $previousAttempt?->base_sha;
+            $baseSha = $previousAttempt->base_sha;
             if ($state['inspectable'] && $baseSha !== null && $state['head_sha'] === $baseSha) {
                 $this->audit->record('task.recovery_git_state_accepted', [
                     'base_sha' => $baseSha,
