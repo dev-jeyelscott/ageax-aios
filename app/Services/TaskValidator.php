@@ -11,19 +11,20 @@ class TaskValidator
 {
     public function __construct(private WorkspacePathResolver $paths) {}
 
-    /** @return array{passed: bool, checks: array<string, bool>} */
-    public function validate(Task $task): array
+    /**
+     * @param array<int, string>|null $changedFiles
+     * @return array{passed: bool, checks: array<string, bool>}
+     */
+    public function validate(Task $task, ?string $baseSha = null, ?array $changedFiles = null): array
     {
         $path = $this->paths->assertProjectPath($task->project->path);
-        $diff = Process::path($path)->run(['git', 'diff', '--check']);
+        $diffCommand = $baseSha === null
+            ? ['git', 'diff', '--check']
+            : ['git', 'diff', '--check', $baseSha, '--'];
+        $diff = Process::path($path)->run($diffCommand);
         $secrets = Process::path($path)->run(['rg', '--hidden', '--glob', '!.git/**', '--glob', '!node_modules/**', '(AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36})']);
-        $status = Process::path($path)->run(['git', 'status', '--porcelain']);
-        $changedFiles = collect(preg_split('/\R/', $status->output()) ?: [])
-            ->filter(fn (string $line): bool => $line !== '')
-            ->map(fn (string $line): string => trim(substr($line, 3)))
-            ->filter()
-            ->values();
-        $forbiddenFiles = $changedFiles->contains(fn (string $file): bool => $this->isForbiddenFile($file));
+        $candidateFiles = $changedFiles === null ? $this->changedFiles($path) : collect($changedFiles);
+        $forbiddenFiles = $candidateFiles->contains(fn (string $file): bool => $this->isForbiddenFile($file));
         $checks = [
             'git_diff_check' => $diff->successful(),
             'secret_scan' => $secrets->exitCode() === 1,
@@ -57,7 +58,7 @@ class TaskValidator
 
             $result = Process::path($this->paths->assertProjectPath($task->project->path))
                 ->timeout((int) config('aios.execution_timeout'))
-                ->run(preg_split('/\\s+/', trim($command)) ?: []);
+                ->run(preg_split('/\s+/', trim($command)) ?: []);
 
             if ($result->failed()) {
                 return false;
@@ -94,8 +95,20 @@ class TaskValidator
             return false;
         }
 
-        $executable = preg_split('/\\s+/', trim($command))[0] ?? '';
+        $executable = preg_split('/\s+/', trim($command))[0] ?? '';
 
         return in_array($executable, ['php', 'composer', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'git', 'vendor/bin/pest', './vendor/bin/pest', 'vendor/bin/phpstan', './vendor/bin/phpstan', 'vendor/bin/pint', './vendor/bin/pint'], true);
+    }
+
+    /** @return \Illuminate\Support\Collection<int, string> */
+    private function changedFiles(string $path): \Illuminate\Support\Collection
+    {
+        $status = Process::path($path)->run(['git', 'status', '--porcelain']);
+
+        return collect(preg_split('/\R/', $status->output()) ?: [])
+            ->filter(fn (string $line): bool => $line !== '')
+            ->map(fn (string $line): string => trim(substr($line, 3)))
+            ->filter()
+            ->values();
     }
 }
