@@ -1,73 +1,16 @@
-# AGEAX AIOS 2.0 — Project Context Prompt
+# AGENTS.md — AGEAX AIOS 2.0
 
-You are a **Senior Software Architect, AI Systems Engineer, and Full-Stack Implementation Agent** working on **AGEAX AIOS 2.0**.
+## Project
 
-AGEAX AIOS 2.0 is a local AI software-development orchestration system designed to coordinate multiple Codex-powered engineering roles against projects stored on the user's Ubuntu workstation.
+AGEAX AIOS 2.0 is the active project. AIOS v1 development is paused.
 
-Development of AIOS v1 is paused. **AIOS 2.0 is the active project.**
-
-Your responsibility is to design and implement the **smallest correct, secure, deterministic, maintainable, auditable, production-ready architecture** that proves the multi-agent workflow works before investing in visual polish or unnecessary infrastructure.
-
----
-
-# Primary Objective
-
-Build a local application that manages software projects inside:
+AIOS 2.0 is a local, deterministic software-development orchestration system managing projects under:
 
 ```text
 ~/workspace
 ```
 
-The application must allow the user to:
-
-1. Create a new project under `~/workspace`.
-2. Select an existing project under `~/workspace`.
-3. Open a project dashboard.
-4. Run three persistent AIOS worker roles:
-
-   * Project Manager
-   * Coder
-   * Reviewer
-5. Upload a roadmap for new projects.
-6. Convert the roadmap into ordered implementation tasks.
-7. Execute tasks automatically using Codex.
-8. Review every implementation before allowing the next task.
-9. Maintain durable project knowledge using PostgreSQL, Git, and Obsidian.
-10. Audit all important actions and agent executions.
-11. Use a **fresh Codex context for every execution**.
-12. Minimize unnecessary token consumption.
-
-The MVP UI should be functional and clear. Do not prioritize advanced animations, 3D interfaces, complex visual systems, or unnecessary frontend polish.
-
----
-
-# Core Architecture Principle
-
-The most important rule is:
-
-> **LLM execution is disposable. System state is durable.**
-
-Do not rely on long-running AI conversations for project memory.
-
-Persistent state belongs in:
-
-```text
-PostgreSQL
-Git
-Repository documentation
-Obsidian
-Audit logs
-```
-
-Every Codex task, fix attempt, roadmap analysis, and review must start in a **new context window**.
-
-Agents receive only the context required for their current operation.
-
----
-
-# Agent Model
-
-AIOS has three persistent logical worker roles:
+It coordinates three Codex-powered roles:
 
 ```text
 Project Manager
@@ -75,67 +18,113 @@ Coder
 Reviewer
 ```
 
-These workers may remain running and waiting for work, but they are **not persistent Codex conversations**.
+Core principle:
 
-When work is available, the worker launches a fresh Codex execution.
+> **LLM execution is disposable. System state is durable.**
 
-Conceptually:
+Persistent truth belongs in PostgreSQL, Git, repository documentation, Obsidian, and audit logs. Never depend on Codex conversation history for project state.
+
+---
+
+## Source of Truth
+
+Follow this priority:
+
+1. Current task and acceptance criteria
+2. Approved project specifications / locked documentation
+3. `AGENTS.md`
+4. Existing implementation, schema, tests, configuration, and conventions
+5. Official documentation
+
+Do not contradict higher-priority sources.
+
+---
+
+## Mandatory Workflow
+
+For every task:
+
+1. Read applicable project documentation first.
+2. Inspect the existing implementation before changing anything.
+3. Inspect relevant code, models, migrations, services/actions, routes, authorization, UI, tests, configuration, and CI.
+4. Identify the actual requirement or root cause.
+5. Follow existing architecture and conventions.
+6. Make the smallest correct, secure, production-ready change.
+7. Avoid unrelated refactors or scope expansion.
+8. Add focused regression tests.
+9. Run relevant verification.
+10. Report only results actually inspected or executed.
+
+Never fabricate inspection, testing, verification, or completion.
+
+Priority:
 
 ```text
-AIOS Worker
-    ↓
-Build context capsule
-    ↓
-Start fresh Codex execution
-    ↓
-Capture structured result
-    ↓
-Validate result
-    ↓
-Perform deterministic state transition
+correctness
+→ security
+→ data integrity
+→ workflow determinism
+→ requirements
+→ existing architecture
+→ maintainability
+→ simplicity
+→ testability
+→ observability
+→ performance when justified
+→ token efficiency
 ```
 
-Do not use conversational memory between executions.
+---
+
+## Codex Execution
+
+Every roadmap analysis, implementation attempt, fix attempt, and review must use a **fresh Codex context**.
+
+Do not maintain persistent Codex conversations between tasks.
+
+Each execution should receive only the smallest sufficient context:
+
+```text
+task
+objective
+acceptance criteria
+scope
+constraints
+dependencies
+relevant documentation
+relevant repository paths
+previous approved handoff
+review findings
+verification commands
+```
+
+Do not send entire conversations, repositories, roadmaps, logs, or Obsidian vaults unless explicitly required.
 
 ---
 
-# Project Manager Agent
+## Agent Responsibilities
 
-The Project Manager handles roadmap decomposition.
+### Project Manager
 
-For a new project, the user uploads a roadmap document.
+The Project Manager:
 
-The Project Manager must:
+* analyzes uploaded roadmaps;
+* creates ordered phases and implementation tasks;
+* identifies dependencies;
+* defines acceptance criteria;
+* generates implementation-ready prompts;
+* generates concise context capsules;
+* produces structured Obsidian knowledge.
 
-1. Read approved repository documentation first when applicable.
-2. Analyze the uploaded roadmap.
-3. Break the roadmap into logical phases or modules.
-4. Break each phase into ordered implementation tasks.
-5. Determine task dependencies.
-6. Produce clear acceptance criteria.
-7. Identify relevant repository areas when they can be determined.
-8. Generate an implementation-ready prompt for every task.
-9. Generate a concise task context capsule.
-10. Generate structured project knowledge suitable for the Obsidian second brain.
-11. Keep generated context concise enough to avoid unnecessary token usage.
+It returns structured output only.
 
-The Project Manager must return structured output.
+It must **not directly mutate arbitrary application/database state**. AIOS validates output and performs persistence.
 
-It must **not directly insert arbitrary database records**.
+### Coder
 
-AIOS validates the returned structure and performs database writes inside controlled application logic.
+The Coder works on exactly **one eligible task at a time**.
 
----
-
-# Coder Agent
-
-The Coder monitors project tasks.
-
-The Coder may work on **exactly one task at a time**.
-
-It must never begin the next queued task while the current task has not reached `done`.
-
-Workflow:
+Required flow:
 
 ```text
 queued
@@ -144,7 +133,7 @@ queued
 → ready_for_review
 ```
 
-If the Reviewer requests changes:
+After rejection:
 
 ```text
 changes_required
@@ -153,125 +142,66 @@ changes_required
 → ready_for_review
 ```
 
-For every implementation attempt, the Coder must:
+The Coder must:
 
-1. Start with a fresh Codex context.
-2. Read applicable project documentation and `AGENTS.md`.
-3. Inspect the existing implementation before making changes.
-4. Understand the task objective and acceptance criteria.
-5. Inspect relevant models, migrations, services/actions, controllers, requests, routes, authorization, frontend, tests, configuration, and CI as appropriate.
-6. Fix the root cause.
-7. Make the smallest correct change.
-8. Preserve existing architecture and project conventions.
-9. Add focused regression tests.
-10. Run relevant verification.
-11. Avoid unrelated refactors.
-12. Preserve security, authorization, tenant isolation, transactions, validation, idempotency, auditability, and data integrity.
-13. Check the working tree for secrets, credentials, private keys, `.env` content, tokens, or other forbidden files before a commit is created.
-14. Return a structured implementation summary.
-15. Mark the task ready for review only after deterministic validation succeeds.
+* inspect before editing;
+* fix root causes;
+* preserve architecture and project rules;
+* make minimal changes;
+* preserve authorization, tenant isolation, transactions, validation, idempotency, auditability, and data integrity;
+* add focused tests;
+* run verification;
+* check for secrets and forbidden files;
+* return structured implementation results.
 
-The Coder must not decide that a task is complete.
+The Coder cannot mark a task `done`.
 
-Only the Reviewer can approve completion.
+### Reviewer
 
----
+The Reviewer independently reviews exactly **one `ready_for_review` task at a time**.
 
-# Reviewer Agent
-
-The Reviewer monitors tasks with:
+Inspect:
 
 ```text
-ready_for_review
-```
-
-The Reviewer may review **exactly one task at a time**.
-
-Every review must use a fresh Codex context.
-
-The Reviewer must independently inspect:
-
-```text
-original task
-implementation prompt
+task
 acceptance criteria
-repository documentation
-base Git SHA
-head Git SHA
-changed files
+implementation prompt
+relevant documentation
+base SHA
+head SHA
 Git diff
+changed files
 tests
-verification results
+verification evidence
 current implementation
 ```
 
-The Reviewer must determine whether the implementation fully satisfies the task.
-
-If correct:
+Results:
 
 ```text
-reviewing
-→ done
+approved  → done
+rejected  → changes_required
 ```
 
-If incorrect:
-
-```text
-reviewing
-→ changes_required
-```
-
-For every finding, the Reviewer must provide:
+Findings must identify:
 
 ```text
 severity
-file or relevant location
-current implementation
-expected implementation
-why the current behavior is incorrect
+location
+current behavior
+expected behavior
+reason
 required fix
 verification requirement
-implementation fix context
 ```
 
-Review findings must be actionable and technically specific.
-
-Do not reject an implementation based on subjective preferences when the implementation already satisfies the approved architecture and acceptance criteria.
-
-Do not expand the original scope during review.
+Do not reject based on subjective preferences, redesign working solutions, or expand task scope.
 
 ---
 
-# Required Serial Task Execution
+## Task State Machine
 
-AIOS 2.0 intentionally uses serial execution for the MVP.
-
-Example:
-
-```text
-TASK-001 → ready_for_review
-TASK-002 → queued
-```
-
-The Coder must remain idle.
-
-The Coder cannot begin `TASK-002` until:
-
-```text
-TASK-001 → done
-```
-
-This invariant must be enforced by the application, not only by prompts.
-
-Use database locking or another deterministic concurrency mechanism so two workers cannot claim the same task.
-
----
-
-# Task State Machine
-
-Use an explicit task state machine.
-
-Expected normal states:
+Normal states:
 
 ```text
 queued
@@ -292,229 +222,42 @@ failed
 cancelled
 ```
 
-State transitions must be validated centrally.
+State transitions must be centrally validated by AIOS.
 
-Agents must not directly perform arbitrary status changes.
+Agents must not arbitrarily change task state.
 
-The application is responsible for deciding whether a requested state transition is legal.
+### Serial Execution
+
+MVP execution is strictly serial.
+
+```text
+TASK-001 not done
+→ TASK-002 cannot start
+```
+
+Enforce this through application/database concurrency controls, not prompts alone.
+
+Use transactions and row locking where appropriate.
 
 ---
 
-# Context Capsules
-
-Token efficiency is a primary design goal.
-
-Do not resend entire conversations, entire roadmaps, full execution logs, or the entire Obsidian vault for every Codex execution.
-
-Each task should have a concise context capsule containing only information such as:
-
-```text
-task key
-title
-objective
-acceptance criteria
-scope
-constraints
-dependencies
-authoritative documentation
-relevant paths
-previous approved task handoff
-verification commands
-review findings when applicable
-```
-
-The Project Manager, Coder, and Reviewer communicate using structured handoffs rather than shared conversation history.
-
----
-
-# Durable Knowledge Architecture
-
-Use the following responsibility model:
-
-```text
-PostgreSQL
-= workflow and operational truth
-
-Git
-= source-code history and implementation truth
-
-Repository documentation
-= architecture, rules, specifications, and project requirements
-
-Obsidian
-= long-term project knowledge and second brain
-
-Codex execution
-= temporary task reasoning and implementation
-```
-
-Do not treat Obsidian as the transactional workflow database.
-
-Do not treat Codex thread history as durable project memory.
-
----
-
-# Obsidian Second Brain
-
-AIOS should maintain structured project notes in an Obsidian vault.
-
-Recommended logical structure:
-
-```text
-Projects/
-└── <project>/
-    ├── Project Overview.md
-    ├── Roadmaps/
-    ├── Phases/
-    ├── Tasks/
-    ├── Decisions/
-    ├── Reviews/
-    └── Handoffs/
-```
-
-Useful knowledge includes:
-
-```text
-project overview
-important architecture decisions
-phase summaries
-task summaries
-implementation handoffs
-approved implementation decisions
-review findings
-lessons learned
-known constraints
-important project conventions
-```
-
-Agents should preferably return structured knowledge data.
-
-AIOS should render and update the Markdown deterministically.
-
-Avoid allowing arbitrary agent output to overwrite unrelated vault content.
-
----
-
-# Vector Database Decision
-
-Do **not** introduce a vector database for the initial version.
-
-Start with:
-
-```text
-PostgreSQL metadata
-PostgreSQL full-text search when needed
-Obsidian Markdown
-repository documentation
-repository search
-ripgrep
-Git history
-explicit task relationships
-```
-
-A vector database should only be introduced when real evidence shows deterministic retrieval is insufficient.
-
-If semantic retrieval becomes necessary later, prefer integrating `pgvector` with PostgreSQL before introducing a separate vector database service.
-
-Do not add infrastructure without a demonstrated requirement.
-
----
-
-# Codex Integration
-
-The AIOS orchestration layer should control Codex execution.
-
-Prefer a non-interactive Codex execution mechanism suitable for scripting.
-
-Each execution should capture:
-
-```text
-agent role
-project
-task
-attempt
-Codex thread/run identifier when available
-start time
-end time
-exit code
-prompt or prompt hash
-structured result
-token usage when available
-commands executed
-file modifications
-errors
-```
-
-Do not expose or copy Codex authentication credentials into the application database.
-
-AIOS should run under the Linux user that already has valid Codex authentication.
-
-Never commit or expose credential material.
-
----
-
-# Git Requirements
+## Git
 
 Managed projects should use Git.
 
-For new projects:
+AIOS should control the implementation lifecycle:
 
 ```text
-create directory
-initialize Git repository
-register project
+Coder edits
+→ inspect working tree
+→ secret scan
+→ validation
+→ capture diff
+→ commit
+→ ready_for_review
 ```
 
-For existing projects:
-
-```text
-detect repository
-```
-
-If Git is missing, AIOS should explicitly require or offer repository initialization.
-
-Do not silently modify repositories outside the configured workspace root.
-
-Project paths must always resolve inside:
-
-```text
-~/workspace
-```
-
-Protect against:
-
-```text
-../
-symlink escapes
-absolute path injection
-path traversal
-```
-
----
-
-# Commit Model
-
-The Coder should implement changes, but AIOS should preferably control commit creation.
-
-Recommended sequence:
-
-```text
-Coder edits files
-    ↓
-AIOS inspects Git status
-    ↓
-secret scan
-    ↓
-verification
-    ↓
-capture diff
-    ↓
-commit
-    ↓
-ready_for_review
-```
-
-Store:
+Track relevant:
 
 ```text
 base_sha
@@ -522,306 +265,138 @@ head_sha
 commit_sha
 ```
 
-for each implementation attempt.
+The Reviewer must review the exact task diff.
 
-The Reviewer must inspect the exact implementation diff associated with the task.
+Never silently include unrelated dirty changes.
 
-Do not allow unrelated dirty working-tree changes to be accidentally included.
+Never perform destructive Git operations unless explicitly required and safe.
 
 ---
 
-# Deterministic Validation
+## Deterministic Validation
 
-Do not rely only on the Coder saying that implementation succeeded.
+Do not trust agent self-reported success.
 
-AIOS should run deterministic checks after the Coder exits.
-
-Examples:
+Run applicable deterministic checks:
 
 ```text
 secret scan
-Git diff inspection
+Git status/diff checks
 forbidden-file detection
 tests
 static analysis
 lint
 type checks
 build
-task-specific verification commands
+task-specific verification
 ```
 
-If validation fails, the task must not enter `ready_for_review`.
+If validation fails, do not move to `ready_for_review`.
 
-Instead create a new fix attempt using a fresh Coder context containing the validation failures.
+Start a fresh Coder fix attempt containing the validation failure context.
 
 ---
 
-# Auditing
+## Obsidian
 
-All significant actions must be auditable.
+Obsidian is persistent external memory, not the workflow database.
 
-Record events including:
+Use it selectively to reduce token usage.
+
+Retrieval order:
 
 ```text
-project creation
-project selection
-roadmap upload
-roadmap processing
-phase creation
-task creation
-task state transition
-task claim
-agent execution start
-agent execution completion
-Codex run identifiers
+Current Task
+→ STATE.md
+→ Relevant Specification / Architecture
+→ Relevant ADR / Decision
+→ Relevant Implementation Notes
+→ Additional linked notes only when required
+```
+
+Rules:
+
+* read `INDEX.md` first when useful for navigation;
+* read `STATE.md` for current state;
+* load only task-relevant notes;
+* follow links intentionally;
+* never recursively load the entire vault;
+* summarize instead of duplicating information;
+* update `STATE.md` after meaningful state changes;
+* record durable decisions in ADR/decision notes;
+* do not store chain-of-thought or temporary reasoning.
+
+> **Store broadly. Retrieve selectively. Summarize aggressively.**
+
+Do not introduce a vector database without demonstrated need. Prefer PostgreSQL search, repository search, Git history, Obsidian links, and explicit relationships first.
+
+---
+
+## Security
+
+Treat Codex as a privileged local automation process.
+
+Always protect:
+
+```text
+workspace boundaries
+repository boundaries
+credentials
+environment variables
+process arguments
+Git changes
+destructive actions
+execution logs
+```
+
+Never expose or commit:
+
+```text
+.env contents
+API secrets
+access tokens
+private keys
+Codex credentials
+GitHub credentials
+SSH keys
+cloud credentials
+```
+
+All managed project paths must resolve inside:
+
+```text
+~/workspace
+```
+
+Prevent path traversal, absolute-path injection, and symlink escapes.
+
+---
+
+## Auditing and Recovery
+
+Significant actions must be auditable, including:
+
+```text
+task transitions
+agent runs
 commands
-file changes
-validation result
-secret scan result
-Git SHA changes
-review start
-review completion
-review findings
-task approval
-task rejection
-user pause/resume
-worker crash
-worker restart
-recovery actions
-errors
-```
-
-Audit records should be append-only at the application layer.
-
-Store large raw execution streams or JSONL logs on disk when appropriate and reference them from the database rather than bloating PostgreSQL.
-
----
-
-# Crash Recovery
-
-Workers must provide heartbeat information.
-
-AIOS must detect interrupted work.
-
-Example:
-
-```text
-task = coding
-worker heartbeat stale
-worker process missing
-```
-
-AIOS should mark the execution interrupted and recover the same task.
-
-Recovery must inspect:
-
-```text
-base Git SHA
-current HEAD
-working tree
-existing diff
-previous run result
-previous logs
-```
-
-Then start a fresh Codex execution with a recovery context.
-
-Never skip to the next task because an execution crashed.
-
----
-
-# Project Pause and Resume
-
-Projects should support:
-
-```text
-running
-paused
-stopping
-```
-
-Pausing should stop workers from claiming new tasks.
-
-Prefer graceful pausing that allows the currently executing operation to finish safely.
-
-Do not terminate active Codex executions unexpectedly unless implementing an explicit emergency-stop capability.
-
----
-
-# Recommended Initial Stack
-
-Prefer the existing AGEAX engineering stack unless project evidence requires otherwise.
-
-Recommended starting point:
-
-```text
-Laravel 13
-PHP 8.5
-Inertia.js
-React
-TypeScript
-PostgreSQL
-Laravel Process
-Codex CLI
-Git
-Obsidian Markdown
-```
-
-For the MVP, avoid adding:
-
-```text
-Redis unless justified
-Horizon unless queues require it
-Reverb unless realtime push becomes necessary
-Docker unless it improves the actual workflow
-separate vector database
-multi-agent framework
-Kubernetes
-microservices
-complex event buses
-3D UI libraries
-unnecessary frontend dependencies
-```
-
-Use native framework capabilities first.
-
----
-
-# Suggested Core Data Model
-
-Expect entities similar to:
-
-```text
-projects
-roadmaps
-phases
-tasks
-task_dependencies
-task_attempts
+Git changes
+validation
 reviews
-review_findings
-agent_workers
-agent_runs
-audit_events
+errors
+pause/resume
+recovery
 ```
 
-Design schemas around workflow durability, concurrency safety, recoverability, and auditability.
+Workers must support heartbeat/crash detection.
 
-Do not create redundant state if it can be derived safely.
+Interrupted work must resume the **same task** after inspecting existing Git state, diffs, previous execution results, and logs.
+
+Never skip a task because an agent crashed.
 
 ---
 
-# Project Dashboard MVP
-
-The UI only needs to clearly expose system state.
-
-Project screen should show:
-
-```text
-project name
-project path
-Git state
-automation running/paused
-
-Project Manager status
-Coder status
-Reviewer status
-
-roadmap state
-
-ordered tasks
-task statuses
-current task
-
-latest implementation attempt
-latest review
-
-recent audit activity
-agent errors
-token usage when available
-```
-
-Correctness and observability are more important than appearance.
-
----
-
-# Token Usage and Cost Awareness
-
-Track Codex usage when available.
-
-Useful aggregates:
-
-```text
-tokens per PM run
-tokens per implementation
-tokens per fix attempt
-tokens per review
-tokens per task
-tokens per project
-retry overhead
-```
-
-Use measured data to improve context capsules.
-
-Do not prematurely optimize by removing context necessary for correctness.
-
-Priority remains:
-
-```text
-correctness
-security
-data integrity
-requirements
-architecture
-maintainability
-token efficiency
-```
-
----
-
-# Mandatory Engineering Workflow
-
-For every AGEAX AIOS 2.0 task:
-
-1. Read applicable approved project documentation first.
-2. Inspect the current repository implementation.
-3. Inspect relevant code, migrations, models, services, routes, commands, tests, configuration, UI, and CI.
-4. Identify the actual requirement or root cause.
-5. Follow the existing architecture.
-6. Make the smallest correct production-ready change.
-7. Avoid unrelated refactors.
-8. Add focused regression tests.
-9. Run appropriate verification.
-10. Never claim inspection or verification without evidence.
-11. Preserve security and deterministic workflow behavior.
-12. Update documentation only when the implementation materially changes architecture or documented behavior.
-
----
-
-# Engineering Priorities
-
-Always prioritize:
-
-```text
-correctness
-→ security
-→ data integrity
-→ workflow determinism
-→ project requirements
-→ existing architecture
-→ maintainability
-→ simplicity
-→ testability
-→ observability
-→ performance when justified
-→ token optimization
-```
-
-Do not sacrifice correctness for fewer tokens.
-
----
-
-# Implementation Rules
+## Implementation Rules
 
 Prefer:
 
@@ -829,160 +404,42 @@ Prefer:
 framework-native solutions
 explicit state machines
 database transactions
-row locking for task claims
+row locking
 structured agent output
-JSON Schema validation
-immutable implementation history
+schema validation
+immutable attempt history
 append-only auditing
-focused domain services/actions
-clear failure handling
 idempotent operations
-Git-backed implementation evidence
+focused services/actions
+clear failure handling
+Git-backed evidence
 ```
 
 Avoid:
 
 ```text
-agents directly mutating arbitrary database state
 persistent shared LLM conversations
-implicit task transitions
-parallel task implementation during MVP
+agents directly mutating arbitrary state
+implicit transitions
+parallel MVP implementation
 hidden state
 unbounded prompts
-entire repository dumps into prompts
-entire Obsidian vaults in prompts
+full repository/vault dumps
 blind retries
-automatic destructive Git actions
-unnecessary services
+unnecessary infrastructure
 premature abstractions
+unrelated refactors
 ```
+
+Do not add Redis, Horizon, Reverb, Docker, vector databases, multi-agent frameworks, microservices, or other infrastructure without an actual requirement.
 
 ---
 
-# Security Requirements
+## Final Rule
 
-Treat Codex as a privileged local automation process.
+AI agents reason, inspect, implement, and review.
 
-Enforce:
-
-```text
-workspace path restrictions
-Git repository boundaries
-secret detection
-credential protection
-safe process invocation
-argument escaping
-authorization for destructive UI actions
-controlled environment variables
-execution timeouts
-failure logging
-auditable commands
-```
-
-Never expose:
-
-```text
-.env contents
-API secrets
-private keys
-access tokens
-Codex authentication files
-GitHub credentials
-SSH private keys
-cloud credentials
-```
-
-Do not use unsafe execution modes merely for convenience.
-
----
-
-# MVP Build Order
-
-Prefer this sequence unless repository evidence requires adjustment:
-
-```text
-1. Codex execution integration spike
-2. Project registry and ~/workspace management
-3. Agent worker/runtime infrastructure
-4. Manual task vertical slice
-5. Coder → validation → Reviewer → done
-6. Reviewer rejection → Coder fix → re-review
-7. Roadmap upload and Project Manager decomposition
-8. Obsidian second-brain integration
-9. Crash recovery and worker heartbeat
-10. Pause/resume
-11. Audit hardening
-12. token metrics
-13. UI refinement
-```
-
-Prove the fundamental automation loop before adding optional features.
-
----
-
-# Core Acceptance Scenario
-
-The architecture is not proven until this scenario works:
-
-```text
-User creates/selects project
-        ↓
-roadmap uploaded
-        ↓
-Project Manager generates ordered tasks
-        ↓
-TASK-001 queued
-        ↓
-Coder claims TASK-001
-        ↓
-fresh Codex context
-        ↓
-implementation completed
-        ↓
-secret scan + verification
-        ↓
-commit created
-        ↓
-TASK-001 ready_for_review
-        ↓
-Coder waits
-        ↓
-Reviewer claims TASK-001
-        ↓
-fresh Codex context
-        ↓
-Reviewer rejects implementation
-        ↓
-specific findings stored
-        ↓
-TASK-001 changes_required
-        ↓
-Coder starts fresh context
-        ↓
-fixes findings
-        ↓
-validation
-        ↓
-Reviewer starts another fresh context
-        ↓
-approves
-        ↓
-TASK-001 done
-        ↓
-TASK-002 becomes eligible
-```
-
-The workflow must survive application restarts without losing task state.
-
----
-
-# Final Directive
-
-Build AGEAX AIOS 2.0 as a **deterministic software-development orchestration system**, not as a collection of autonomous chatbots.
-
-The AI agents should reason, inspect, implement, and review.
-
-The application should control:
+**AIOS controls:**
 
 ```text
 state
@@ -997,19 +454,7 @@ context assembly
 knowledge storage
 ```
 
-Keep Codex contexts disposable.
-
-Keep prompts targeted.
-
-Keep operational state deterministic.
-
-Keep the MVP simple.
-
-Do not over-engineer.
-
-Do not add a vector database until there is evidence that deterministic retrieval is insufficient.
-
-Do not move to UI polish until the full Project Manager → Coder → Reviewer → Fix → Approval workflow works reliably.
+Keep contexts disposable, state durable, prompts targeted, execution deterministic, and implementations minimal.
 
 <laravel-boost-guidelines>
 === foundation rules ===
@@ -1023,6 +468,7 @@ The Laravel Boost guidelines are specifically curated by Laravel maintainers for
 This application is a Laravel application running on PHP 8.5. You are an expert with the Laravel ecosystem. Always use the APIs that match the installed major version of each package — do not assume a version.
 
 Before relying on a package's API, confirm its installed version:
+
 - PHP packages: run `composer show --direct` to list direct dependencies with versions, or `composer show <vendor/package>` for a single package.
 - JS packages: check `package.json` for the installed versions.
 
@@ -1098,7 +544,7 @@ This project has domain-specific skills available in `**/skills/**`. You MUST ac
 
 - Execute PHP in app context for debugging and testing code. Do not create models without user approval, prefer tests with factories instead. Prefer existing Artisan commands over custom tinker code.
 - Always use single quotes to prevent shell expansion: `php artisan tinker --execute 'Your::code();'`
-  - Double quotes for PHP strings inside: `php artisan tinker --execute 'User::where("active", true)->count();'`
+    - Double quotes for PHP strings inside: `php artisan tinker --execute 'User::where("active", true)->count();'`
 
 === php rules ===
 
