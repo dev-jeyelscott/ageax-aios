@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Task;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use JsonException;
@@ -12,7 +13,7 @@ class TaskValidator
     public function __construct(private WorkspacePathResolver $paths) {}
 
     /**
-     * @param array<int, string>|null $changedFiles
+     * @param  array<int, string>|null  $changedFiles
      * @return array{passed: bool, checks: array<string, bool>}
      */
     public function validate(Task $task, ?string $baseSha = null, ?array $changedFiles = null): array
@@ -100,8 +101,8 @@ class TaskValidator
         return in_array($executable, ['php', 'composer', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'git', 'vendor/bin/pest', './vendor/bin/pest', 'vendor/bin/phpstan', './vendor/bin/phpstan', 'vendor/bin/pint', './vendor/bin/pint'], true);
     }
 
-    /** @return \Illuminate\Support\Collection<int, string> */
-    private function changedFiles(string $path): \Illuminate\Support\Collection
+    /** @return Collection<int, non-falsy-string> */
+    private function changedFiles(string $path): Collection
     {
         $status = Process::path($path)->run(['git', 'status', '--porcelain']);
 
