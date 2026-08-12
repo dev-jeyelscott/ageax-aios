@@ -1,6 +1,8 @@
 <?php
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
 
 /*
@@ -27,8 +29,8 @@ pest()->extend(TestCase::class)
 |--------------------------------------------------------------------------
 |
 | When you're writing tests, you often need to check that values meet certain conditions. The
-| "expect()" function gives you access to a set of "expectations" methods that you can use
-| to assert different things. Of course, you may extend the Expectation API at any time.
+| "expect()" function gives you access to a set of "expectations" methods to assert different
+| things. Of course, you may extend the Expectation API at any time.
 |
 */
 
@@ -40,14 +42,18 @@ expect()->extend('toBeOne', function () {
 |--------------------------------------------------------------------------
 | Functions
 |--------------------------------------------------------------------------
-|
-| While Pest is very powerful out-of-the-box, you may have some testing code specific to your
-| project that you don't want to repeat in every file. Here you can also expose helpers as
-| global functions to help you to reduce the number of lines of code in your test files.
-|
 */
 
-function something()
+function cleanGitRepository(string $prefix = 'aios-test'): string
 {
-    // ..
+    $path = sys_get_temp_dir().'/'.$prefix.'-'.fake()->uuid();
+    File::ensureDirectoryExists($path);
+    Process::path($path)->run(['git', 'init']);
+    Process::path($path)->run(['git', 'config', 'user.email', 'aios@example.test']);
+    Process::path($path)->run(['git', 'config', 'user.name', 'AIOS Test']);
+    File::put($path.'/README.md', '# Test repository');
+    Process::path($path)->run(['git', 'add', 'README.md']);
+    Process::path($path)->run(['git', 'commit', '-m', 'Baseline']);
+
+    return $path;
 }
