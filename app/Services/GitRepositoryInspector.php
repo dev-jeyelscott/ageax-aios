@@ -28,6 +28,10 @@ class GitRepositoryInspector
             return $this->unavailableState($exception->getMessage());
         }
 
+        if (! is_dir($path)) {
+            return $this->unavailableState('Project directory is unavailable.');
+        }
+
         $head = Process::path($path)->run(['git', 'rev-parse', '--verify', 'HEAD']);
         $index = Process::path($path)->run(['git', 'diff', '--cached', '--no-renames', '--name-only', '-z', '--']);
         $workingTree = Process::path($path)->run(['git', 'diff', '--no-renames', '--name-only', '-z', '--']);
@@ -61,6 +65,10 @@ class GitRepositoryInspector
             return null;
         }
 
+        if (! is_dir($path)) {
+            return null;
+        }
+
         $head = Process::path($path)->run(['git', 'rev-parse', '--verify', 'HEAD']);
         if ($head->failed() || trim($head->output()) !== $baseSha) {
             return null;
@@ -84,7 +92,8 @@ class GitRepositoryInspector
         return $this->normalizePaths(explode("\0", $output));
     }
 
-    /** @param array<int, string> $paths
+    /**
+     * @param  array<int, string>  $paths
      * @return array<int, string>
      */
     private function normalizePaths(array $paths): array
