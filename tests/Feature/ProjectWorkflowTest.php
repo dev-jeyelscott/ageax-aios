@@ -27,7 +27,7 @@ function createWorkflowTask(Project $project, int $position): Task
 
 test('coder waits for reviewer approval before claiming the next task', function () {
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
-    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $project = Project::create(['name' => 'Example', 'path' => cleanGitRepository(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $firstTask = createWorkflowTask($project, 1);
     $secondTask = createWorkflowTask($project, 2);
     $secondTask->dependencies()->attach($firstTask);
@@ -49,7 +49,7 @@ test('coder waits for reviewer approval before claiming the next task', function
 });
 
 test('a rejected review returns the same task to the coder with a legal transition', function () {
-    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $project = Project::create(['name' => 'Example', 'path' => cleanGitRepository(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = createWorkflowTask($project, 1);
     $claimTask = app(ClaimTask::class);
     $transitionTask = app(TransitionTask::class);
@@ -65,7 +65,7 @@ test('a rejected review returns the same task to the coder with a legal transiti
 
 test('the reviewer is called once after every task in a phase is ready', function () {
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
-    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $project = Project::create(['name' => 'Example', 'path' => cleanGitRepository(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $firstPhase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
     $secondPhase = Phase::create(['project_id' => $project->id, 'position' => 2, 'title' => 'Delivery', 'objective' => 'Deliver the feature.']);
     $firstTask = createWorkflowTask($project, 1);
@@ -104,7 +104,7 @@ test('the reviewer is called once after every task in a phase is ready', functio
 });
 
 test('a rejected phase review returns only the final task to the coder', function () {
-    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $project = Project::create(['name' => 'Example', 'path' => cleanGitRepository(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
     $firstTask = createWorkflowTask($project, 1);
     $finalTask = createWorkflowTask($project, 2);
