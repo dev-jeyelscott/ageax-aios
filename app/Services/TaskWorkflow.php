@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
 
 class TaskWorkflow
 {
-    public function __construct(private AuditLogger $audit, private ObsidianProjectNotes $notes) {}
+    public function __construct(private AuditLogger $audit, private ObsidianProjectNotes $notes, private GitRepositoryInspector $git) {}
 
     public function claim(Project $project, AgentRole $role): ?Task
     {
@@ -31,6 +31,10 @@ class TaskWorkflow
             };
 
             if ($task === null) {
+                return null;
+            }
+
+            if ($role === AgentRole::Coder && ! $this->repositoryAllowsCoderClaim($lockedProject, $task)) {
                 return null;
             }
 
@@ -189,5 +193,74 @@ class TaskWorkflow
             return $status === TaskStatus::Done
                 || ($task->phase_id !== null && $dependency->phase_id === $task->phase_id && $status === TaskStatus::ReadyForReview);
         });
+    }
+
+    private function repositoryAllowsCoderClaim(Project $project, Task $task): bool
+    {
+        $state = $this->git->inspect($project->path);
+        $this->persistProjectGitState($project, $state);
+        $previousAttempt = $task->attempts()->latest('number')->first();
+        $isInterruptedRecovery = $previousAttempt?->status === 'interrupted';
+
+        if ($isInterruptedRecovery) {
+            $baseSha = $previousAttempt?->base_sha;
+            if ($state['inspectable'] && $baseSha !== null && $state['head_sha'] === $baseSha) {
+                $this->audit->record('task.recovery_git_state_accepted', [
+                    'base_sha' => $baseSha,
+                    'repository' => $state,
+                ], $project, $task);
+
+                return true;
+            }
+
+            $this->blockForGitState(
+                $project,
+                $task,
+                'interrupted_recovery',
+                'Interrupted recovery requires repository HEAD to match the recorded clean base SHA.',
+                'Restore the repository to the recorded task base without discarding user work, then requeue the task.',
+                $state,
+                $baseSha,
+            );
+
+            return false;
+        }
+
+        if ($state['clean']) {
+            return true;
+        }
+
+        $this->blockForGitState(
+            $project,
+            $task,
+            'normal',
+            'A new Coder implementation attempt requires a clean repository with a valid HEAD.',
+            'Commit, move, or otherwise resolve the existing staged and working-tree changes outside AIOS, then requeue the task.',
+            $state,
+        );
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $state */
+    private function persistProjectGitState(Project $project, array $state): void
+    {
+        $project->update([
+            'git_status' => ! $state['inspectable'] ? 'unknown' : ($state['clean'] ? 'clean' : 'dirty'),
+            'git_head_sha' => $state['head_sha'],
+        ]);
+    }
+
+    /** @param array<string, mixed> $state */
+    private function blockForGitState(Project $project, Task $task, string $mode, string $reason, string $action, array $state, ?string $baseSha = null): void
+    {
+        $this->transitionLocked($task, TaskStatus::Blocked);
+        $this->audit->record('task.blocked_git_preflight', [
+            'mode' => $mode,
+            'reason' => $reason,
+            'action' => $action,
+            'base_sha' => $baseSha,
+            'repository' => $state,
+        ], $project, $task);
     }
 }
