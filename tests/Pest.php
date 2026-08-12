@@ -1,8 +1,11 @@
 <?php
 
+use App\Services\GitRepositoryInspector;
+use App\Services\WorkspacePathResolver;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
+use Tests\Support\LegacyWorkflowGitRepositoryInspector;
 use Tests\TestCase;
 
 /*
@@ -20,6 +23,10 @@ pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
     ->beforeEach(function (): void {
         config()->set('aios.workspace_root', sys_get_temp_dir());
+        app()->bind(
+            GitRepositoryInspector::class,
+            fn ($app): LegacyWorkflowGitRepositoryInspector => new LegacyWorkflowGitRepositoryInspector($app->make(WorkspacePathResolver::class)),
+        );
     })
     ->in('Feature');
 
