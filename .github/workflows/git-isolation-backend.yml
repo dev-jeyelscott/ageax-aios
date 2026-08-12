@@ -31,5 +31,13 @@ jobs:
       - name: Setup Application
         run: composer setup
 
-      - name: Run Backend Checks
-        run: composer test
+      - name: Format task PHP
+        run: |
+          vendor/bin/pint app/Actions/RunCoderTask.php app/Services/GitRepositoryInspector.php app/Services/TaskCommitter.php app/Services/TaskValidator.php app/Services/TaskWorkflow.php tests/Feature/GitTaskIsolationTest.php
+          git diff -- app/Actions/RunCoderTask.php app/Services/GitRepositoryInspector.php app/Services/TaskCommitter.php app/Services/TaskValidator.php app/Services/TaskWorkflow.php tests/Feature/GitTaskIsolationTest.php
+
+      - name: Run PHPStan
+        run: composer types:check
+
+      - name: Run PHP tests
+        run: php artisan test
