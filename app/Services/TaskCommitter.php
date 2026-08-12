@@ -64,7 +64,7 @@ class TaskCommitter
     }
 
     /** @param array<int, string> $files
-     *  @return array<int, string>
+     * @return array<int, string>
      */
     private function normalizeFiles(array $files): array
     {
