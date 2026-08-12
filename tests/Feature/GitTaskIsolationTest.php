@@ -12,10 +12,10 @@ use App\Models\TaskAttempt;
 use App\ProjectStatus;
 use App\Services\CodexCliRunner;
 use App\Services\StaleWorkerRecovery;
+use App\Services\TaskValidator;
 use App\TaskStatus;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
-use RuntimeException;
 
 use function Pest\Laravel\mock;
 
@@ -118,6 +118,11 @@ test('a clean coder attempt stores its base SHA and commits exactly its own file
     $project = Project::create(['name' => 'Example', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = gitIsolationTask($project);
     $claimed = app(ClaimTask::class)->handle($project, AgentRole::Coder);
+    mock(TaskValidator::class)
+        ->shouldReceive('validate')
+        ->once()
+        ->withArgs(fn (Task $validatedTask, ?string $sha, ?array $files): bool => $validatedTask->is($task) && $sha === $baseSha && $files === ['task-one.txt', 'task-two.txt'])
+        ->andReturn(['passed' => true, 'checks' => ['deterministic_validation' => true]]);
     mock(CodexCliRunner::class)
         ->shouldReceive('run')
         ->once()
@@ -130,15 +135,13 @@ test('a clean coder attempt stores its base SHA and commits exactly its own file
 
     $attempt = app(RunCoderTask::class)->handle($claimed);
 
-    if ($attempt?->commit_sha === null) {
-        throw new RuntimeException(json_encode($attempt?->validation_results, JSON_THROW_ON_ERROR));
-    }
-
     $committedFiles = Process::path($path)->run(['git', 'show', '--format=', '--name-only', 'HEAD']);
     $status = Process::path($path)->run(['git', 'status', '--porcelain']);
 
-    expect($attempt->base_sha)->toBe($baseSha)
+    expect($attempt)->not->toBeNull()
+        ->and($attempt->base_sha)->toBe($baseSha)
         ->and($attempt->changed_files)->toBe(['task-one.txt', 'task-two.txt'])
+        ->and($attempt->commit_sha)->not->toBeNull()
         ->and($committedFiles->output())->toContain('task-one.txt')
         ->and($committedFiles->output())->toContain('task-two.txt')
         ->and(trim($status->output()))->toBe('')
@@ -183,6 +186,11 @@ test('interrupted coder recovery may continue the existing task diff from its re
     expect($claimed?->id)->toBe($task->id)
         ->and($task->auditEvents()->where('event_type', 'task.recovery_git_state_accepted')->exists())->toBeTrue();
 
+    mock(TaskValidator::class)
+        ->shouldReceive('validate')
+        ->once()
+        ->withArgs(fn (Task $validatedTask, ?string $sha, ?array $files): bool => $validatedTask->is($task) && $sha === $baseSha && $files === ['feature.txt'])
+        ->andReturn(['passed' => true, 'checks' => ['deterministic_validation' => true]]);
     mock(CodexCliRunner::class)
         ->shouldReceive('run')
         ->once()
@@ -195,12 +203,10 @@ test('interrupted coder recovery may continue the existing task diff from its re
 
     $recoveryAttempt = app(RunCoderTask::class)->handle($claimed);
 
-    if ($recoveryAttempt?->commit_sha === null) {
-        throw new RuntimeException(json_encode($recoveryAttempt?->validation_results, JSON_THROW_ON_ERROR));
-    }
-
-    expect($recoveryAttempt->base_sha)->toBe($baseSha)
+    expect($recoveryAttempt)->not->toBeNull()
+        ->and($recoveryAttempt->base_sha)->toBe($baseSha)
         ->and($recoveryAttempt->changed_files)->toBe(['feature.txt'])
+        ->and($recoveryAttempt->commit_sha)->not->toBeNull()
         ->and(File::get($path.'/feature.txt'))->toBe('recovered implementation')
         ->and($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
         ->and(trim(Process::path($path)->run(['git', 'status', '--porcelain'])->output()))->toBe('');
