@@ -85,7 +85,7 @@ class GitRepositoryInspector
     }
 
     /** @param array<int, string> $paths
-     *  @return array<int, string>
+     * @return array<int, string>
      */
     private function normalizePaths(array $paths): array
     {
