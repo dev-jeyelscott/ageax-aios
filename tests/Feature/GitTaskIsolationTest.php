@@ -15,6 +15,7 @@ use App\Services\StaleWorkerRecovery;
 use App\TaskStatus;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
+use RuntimeException;
 
 use function Pest\Laravel\mock;
 
@@ -129,14 +130,16 @@ test('a clean coder attempt stores its base SHA and commits exactly its own file
 
     $attempt = app(RunCoderTask::class)->handle($claimed);
 
+    if ($attempt?->commit_sha === null) {
+        throw new RuntimeException(json_encode($attempt?->validation_results, JSON_THROW_ON_ERROR));
+    }
+
     $committedFiles = Process::path($path)->run(['git', 'show', '--format=', '--name-only', 'HEAD']);
     $status = Process::path($path)->run(['git', 'status', '--porcelain']);
 
-    expect($attempt)->not->toBeNull()
-        ->and($attempt->base_sha)->toBe($baseSha)
-        ->and($attempt->changed_files)->toBe(['task-one.txt', 'task-two.txt']);
-    expect($attempt->commit_sha, json_encode($attempt->validation_results, JSON_THROW_ON_ERROR))->not->toBeNull();
-    expect($committedFiles->output())->toContain('task-one.txt')
+    expect($attempt->base_sha)->toBe($baseSha)
+        ->and($attempt->changed_files)->toBe(['task-one.txt', 'task-two.txt'])
+        ->and($committedFiles->output())->toContain('task-one.txt')
         ->and($committedFiles->output())->toContain('task-two.txt')
         ->and(trim($status->output()))->toBe('')
         ->and($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
@@ -192,11 +195,13 @@ test('interrupted coder recovery may continue the existing task diff from its re
 
     $recoveryAttempt = app(RunCoderTask::class)->handle($claimed);
 
-    expect($recoveryAttempt)->not->toBeNull()
-        ->and($recoveryAttempt->base_sha)->toBe($baseSha)
-        ->and($recoveryAttempt->changed_files)->toBe(['feature.txt']);
-    expect($recoveryAttempt->commit_sha, json_encode($recoveryAttempt->validation_results, JSON_THROW_ON_ERROR))->not->toBeNull();
-    expect(File::get($path.'/feature.txt'))->toBe('recovered implementation')
+    if ($recoveryAttempt?->commit_sha === null) {
+        throw new RuntimeException(json_encode($recoveryAttempt?->validation_results, JSON_THROW_ON_ERROR));
+    }
+
+    expect($recoveryAttempt->base_sha)->toBe($baseSha)
+        ->and($recoveryAttempt->changed_files)->toBe(['feature.txt'])
+        ->and(File::get($path.'/feature.txt'))->toBe('recovered implementation')
         ->and($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
         ->and(trim(Process::path($path)->run(['git', 'status', '--porcelain'])->output()))->toBe('');
 });
