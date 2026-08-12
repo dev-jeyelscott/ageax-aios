@@ -37,7 +37,7 @@ class RunCoderTask
         $previousAttempt = $task->attempts()->latest('number')->first();
         $isInterruptedRecovery = $previousAttempt?->status === 'interrupted';
         $preflight = $this->git->inspect($projectPath);
-        $baseSha = $isInterruptedRecovery ? $previousAttempt?->base_sha : $preflight['head_sha'];
+        $baseSha = $isInterruptedRecovery ? $previousAttempt->base_sha : $preflight['head_sha'];
 
         if ($baseSha === null || ! $this->preflightAllowsExecution($preflight, $isInterruptedRecovery, $baseSha)) {
             $this->blockGitPreflight($task, $preflight, $isInterruptedRecovery, $baseSha);
@@ -57,7 +57,7 @@ class RunCoderTask
         $recoveryInstruction = $isInterruptedRecovery
             ? "This is an interrupted-attempt recovery. Inspect and continue the existing task diff from base SHA {$baseSha}; do not discard it.\n"
             : '';
-        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. {$recoveryInstruction}Do not commit, stash, reset, clean, discard, or otherwise rewrite Git state; AIOS owns Git staging and commits. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($capsule, JSON_THROW_ON_ERROR);
+        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. {$recoveryInstruction}Do not alter Git state; AIOS owns staging and commits. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($capsule, JSON_THROW_ON_ERROR);
         $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt);
 
         try {
@@ -199,7 +199,7 @@ class RunCoderTask
     }
 
     /**
-     * @param array<string, mixed> $state
+     * @param  array<string, mixed>  $state
      * @return array<string, mixed>
      */
     private function preflightEvidence(array $state, bool $isInterruptedRecovery, string $baseSha): array
