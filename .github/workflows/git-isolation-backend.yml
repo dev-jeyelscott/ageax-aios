@@ -28,13 +28,16 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Setup Application
         run: composer setup
 
       - name: Format task PHP
         run: |
-          vendor/bin/pint app/Actions/RunCoderTask.php app/Services/GitRepositoryInspector.php app/Services/TaskCommitter.php app/Services/TaskValidator.php app/Services/TaskWorkflow.php tests/Feature/GitTaskIsolationTest.php
-          git diff -- app/Actions/RunCoderTask.php app/Services/GitRepositoryInspector.php app/Services/TaskCommitter.php app/Services/TaskValidator.php app/Services/TaskWorkflow.php tests/Feature/GitTaskIsolationTest.php
+          vendor/bin/pint app/Actions/RunCoderTask.php app/Services/GitRepositoryInspector.php app/Services/TaskCommitter.php app/Services/TaskValidator.php app/Services/TaskWorkflow.php tests/Feature/GitTaskIsolationTest.php tests/Support/LegacyWorkflowGitRepositoryInspector.php tests/Pest.php tests/Feature/ProjectWorkflowTest.php
+          git diff -- app/Actions/RunCoderTask.php app/Services/GitRepositoryInspector.php app/Services/TaskCommitter.php app/Services/TaskValidator.php app/Services/TaskWorkflow.php tests/Feature/GitTaskIsolationTest.php tests/Support/LegacyWorkflowGitRepositoryInspector.php tests/Pest.php tests/Feature/ProjectWorkflowTest.php
 
       - name: Run PHPStan
         run: composer types:check
