@@ -134,9 +134,9 @@ test('a clean coder attempt stores its base SHA and commits exactly its own file
 
     expect($attempt)->not->toBeNull()
         ->and($attempt->base_sha)->toBe($baseSha)
-        ->and($attempt->changed_files)->toBe(['task-one.txt', 'task-two.txt'])
-        ->and($attempt->commit_sha)->not->toBeNull()
-        ->and($committedFiles->output())->toContain('task-one.txt')
+        ->and($attempt->changed_files)->toBe(['task-one.txt', 'task-two.txt']);
+    expect($attempt->commit_sha, json_encode($attempt->validation_results, JSON_THROW_ON_ERROR))->not->toBeNull();
+    expect($committedFiles->output())->toContain('task-one.txt')
         ->and($committedFiles->output())->toContain('task-two.txt')
         ->and(trim($status->output()))->toBe('')
         ->and($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
@@ -194,9 +194,9 @@ test('interrupted coder recovery may continue the existing task diff from its re
 
     expect($recoveryAttempt)->not->toBeNull()
         ->and($recoveryAttempt->base_sha)->toBe($baseSha)
-        ->and($recoveryAttempt->changed_files)->toBe(['feature.txt'])
-        ->and($recoveryAttempt->commit_sha)->not->toBeNull()
-        ->and(File::get($path.'/feature.txt'))->toBe('recovered implementation')
+        ->and($recoveryAttempt->changed_files)->toBe(['feature.txt']);
+    expect($recoveryAttempt->commit_sha, json_encode($recoveryAttempt->validation_results, JSON_THROW_ON_ERROR))->not->toBeNull();
+    expect(File::get($path.'/feature.txt'))->toBe('recovered implementation')
         ->and($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
         ->and(trim(Process::path($path)->run(['git', 'status', '--porcelain'])->output()))->toBe('');
 });
