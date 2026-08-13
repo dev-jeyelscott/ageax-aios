@@ -1,460 +1,89 @@
 # MASTER-PROMPT.md — AGEAX AIOS 2.0
 
-## Project
+## Purpose
 
-AGEAX AIOS 2.0 is the active project. AIOS v1 development is paused.
+- AIOS 2.0 orchestrates local software development under `~/workspace`.
+- Roles: **Project Manager**, **Coder**, **Reviewer**.
+- Principle: **Codex contexts are disposable; system state is durable.**
+- Durable truth: PostgreSQL, Git, repository docs, scoped Obsidian notes, and audit logs.
 
-AIOS 2.0 is a local, deterministic software-development orchestration system managing projects under:
-
-```text
-~/workspace
-```
-
-It coordinates three Codex-powered roles:
-
-```text
-Project Manager
-Coder
-Reviewer
-```
-
-Core principle:
-
-> **LLM execution is disposable. System state is durable.**
-
-Persistent truth belongs in PostgreSQL, Git, repository documentation, Obsidian, and audit logs. Never depend on Codex conversation history for project state.
-
----
-
-## Source of Truth
-
-Follow this priority:
+## Rules of precedence
 
 1. Current task and acceptance criteria
-2. Approved project specifications / locked documentation
+2. Approved specifications / locked docs
 3. `AGENTS.md`
-4. Existing implementation, schema, tests, configuration, and conventions
-5. Official documentation
+4. Existing code, schema, tests, config, and conventions
+5. Official docs
 
-Do not contradict higher-priority sources.
+Never contradict a higher-priority source.
 
----
+## Every task
 
-## Mandatory Workflow
+- Read relevant docs and inspect the existing implementation before editing.
+- Find the actual requirement or root cause; follow the established architecture.
+- Make the smallest secure, production-ready change; avoid unrelated refactors.
+- Add focused regression coverage and run relevant verification.
+- Report only work actually inspected or executed.
 
-For every task:
+Priority: correctness → security → data integrity → deterministic workflow → requirements → architecture → simplicity → testability → observability → justified performance.
 
-1. Read applicable project documentation first.
-2. Inspect the existing implementation before changing anything.
-3. Inspect relevant code, models, migrations, services/actions, routes, authorization, UI, tests, configuration, and CI.
-4. Identify the actual requirement or root cause.
-5. Follow existing architecture and conventions.
-6. Make the smallest correct, secure, production-ready change.
-7. Avoid unrelated refactors or scope expansion.
-8. Add focused regression tests.
-9. Run relevant verification.
-10. Report only results actually inspected or executed.
+## Codex runs
 
-Never fabricate inspection, testing, verification, or completion.
+- Every roadmap, coding, retry, and review uses a fresh, ephemeral Codex run.
+- Send only task context: objective, criteria, scope, constraints, dependencies, relevant paths/docs, prior evidence, findings, and verification commands.
+- Never send full conversations, repositories, logs, or vaults unless required.
 
-Priority:
+## Role contracts
 
-```text
-correctness
-→ security
-→ data integrity
-→ workflow determinism
-→ requirements
-→ existing architecture
-→ maintainability
-→ simplicity
-→ testability
-→ observability
-→ performance when justified
-→ token efficiency
-```
+| Role            | Must do                                                                                                                                                                                              | Must not do                                                                |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Project Manager | Turn uploaded roadmaps into ordered, dependency-aware tasks with criteria, prompts, safe verification commands, and concise project knowledge. Return structured output.                             | Mutate arbitrary app/database state; AIOS validates and persists the plan. |
+| Coder           | Claim one eligible task; inspect, implement, validate, secret-check, and return structured results. Preserve authorization, validation, transactions, idempotency, auditability, and data integrity. | Mark a task done.                                                          |
+| Reviewer        | Independently review the ready **phase**: its tasks, criteria, exact diffs, SHAs, changed files, implementation, and verification evidence.                                                          | Reject for taste, redesign valid work, or expand scope.                    |
 
----
+Reviewer outcomes:
 
-## Codex Execution
+- `approved` → AIOS completes the reviewed phase.
+- `changes_required` → findings must include severity, location, current vs. expected behavior, reason, required fix, and verification requirement.
+- Operational reviewer failures do not reject code; retain evidence and retry within the configured limit.
 
-Every roadmap analysis, implementation attempt, fix attempt, and review must use a **fresh Codex context**.
-
-Do not maintain persistent Codex conversations between tasks.
-
-Each execution should receive only the smallest sufficient context:
+## Workflow and concurrency
 
 ```text
-task
-objective
-acceptance criteria
-scope
-constraints
-dependencies
-relevant documentation
-relevant repository paths
-previous approved handoff
-review findings
-verification commands
+queued → coding → validating → ready_for_review → reviewing → done
+                         ↑                         │
+                         └── changes_required ─────┘
 ```
 
-Do not send entire conversations, repositories, roadmaps, logs, or Obsidian vaults unless explicitly required.
+- Exceptional states: `blocked`, `interrupted`, `failed`, `cancelled`.
+- AIOS alone validates transitions, with database transactions and row locks.
+- One task claim runs at a time per project. Ordering follows persisted dependencies; phase tasks may advance to review together.
+- Failed validation never reaches review; retry context includes failed validation evidence.
 
----
-
-## Agent Responsibilities
-
-### Project Manager
-
-The Project Manager:
-
-* analyzes uploaded roadmaps;
-* creates ordered phases and implementation tasks;
-* identifies dependencies;
-* defines acceptance criteria;
-* generates implementation-ready prompts;
-* generates concise context capsules;
-* produces structured Obsidian knowledge.
-
-It returns structured output only.
-
-It must **not directly mutate arbitrary application/database state**. AIOS validates output and performs persistence.
-
-### Coder
-
-The Coder works on exactly **one eligible task at a time**.
-
-Required flow:
+## Git and validation
 
 ```text
-queued
-→ coding
-→ validating
-→ ready_for_review
+clean/recoverable preflight → Coder edits → deterministic checks → exact diff → task-only commit → review
 ```
 
-After rejection:
-
-```text
-changes_required
-→ coding
-→ validating
-→ ready_for_review
-```
-
-The Coder must:
-
-* inspect before editing;
-* fix root causes;
-* preserve architecture and project rules;
-* make minimal changes;
-* preserve authorization, tenant isolation, transactions, validation, idempotency, auditability, and data integrity;
-* add focused tests;
-* run verification;
-* check for secrets and forbidden files;
-* return structured implementation results.
-
-The Coder cannot mark a task `done`.
-
-### Reviewer
-
-The Reviewer independently reviews exactly **one `ready_for_review` task at a time**.
-
-Inspect:
-
-```text
-task
-acceptance criteria
-implementation prompt
-relevant documentation
-base SHA
-head SHA
-Git diff
-changed files
-tests
-verification evidence
-current implementation
-```
-
-Results:
-
-```text
-approved  → done
-rejected  → changes_required
-```
-
-Findings must identify:
-
-```text
-severity
-location
-current behavior
-expected behavior
-reason
-required fix
-verification requirement
-```
-
-Do not reject based on subjective preferences, redesign working solutions, or expand task scope.
-
----
-
-## Task State Machine
-
-Normal states:
-
-```text
-queued
-coding
-validating
-ready_for_review
-reviewing
-changes_required
-done
-```
-
-Exceptional states may include:
-
-```text
-blocked
-interrupted
-failed
-cancelled
-```
-
-State transitions must be centrally validated by AIOS.
-
-Agents must not arbitrarily change task state.
-
-### Serial Execution
-
-MVP execution is strictly serial.
-
-```text
-TASK-001 not done
-→ TASK-002 cannot start
-```
-
-Enforce this through application/database concurrency controls, not prompts alone.
-
-Use transactions and row locking where appropriate.
-
----
-
-## Git
-
-Managed projects should use Git.
-
-AIOS should control the implementation lifecycle:
-
-```text
-Coder edits
-→ inspect working tree
-→ secret scan
-→ validation
-→ capture diff
-→ commit
-→ ready_for_review
-```
-
-Track relevant:
-
-```text
-base_sha
-head_sha
-commit_sha
-```
-
-The Reviewer must review the exact task diff.
-
-Never silently include unrelated dirty changes.
-
-Never perform destructive Git operations unless explicitly required and safe.
-
----
-
-## Deterministic Validation
-
-Do not trust agent self-reported success.
-
-Run applicable deterministic checks:
-
-```text
-secret scan
-Git status/diff checks
-forbidden-file detection
-tests
-static analysis
-lint
-type checks
-build
-task-specific verification
-```
-
-If validation fails, do not move to `ready_for_review`.
-
-Start a fresh Coder fix attempt containing the validation failure context.
-
----
-
-## Obsidian
-
-Obsidian is persistent external memory, not the workflow database.
-
-Use it selectively to reduce token usage.
-
-Retrieval order:
-
-```text
-Current Task
-→ STATE.md
-→ Relevant Specification / Architecture
-→ Relevant ADR / Decision
-→ Relevant Implementation Notes
-→ Additional linked notes only when required
-```
-
-Rules:
-
-* read `INDEX.md` first when useful for navigation;
-* read `STATE.md` for current state;
-* load only task-relevant notes;
-* follow links intentionally;
-* never recursively load the entire vault;
-* summarize instead of duplicating information;
-* update `STATE.md` after meaningful state changes;
-* record durable decisions in ADR/decision notes;
-* do not store chain-of-thought or temporary reasoning.
-
-> **Store broadly. Retrieve selectively. Summarize aggressively.**
-
-Do not introduce a vector database without demonstrated need. Prefer PostgreSQL search, repository search, Git history, Obsidian links, and explicit relationships first.
-
----
-
-## Security
-
-Treat Codex as a privileged local automation process.
-
-Always protect:
-
-```text
-workspace boundaries
-repository boundaries
-credentials
-environment variables
-process arguments
-Git changes
-destructive actions
-execution logs
-```
-
-Never expose or commit:
-
-```text
-.env contents
-API secrets
-access tokens
-private keys
-Codex credentials
-GitHub credentials
-SSH keys
-cloud credentials
-```
-
-All managed project paths must resolve inside:
-
-```text
-~/workspace
-```
-
-Prevent path traversal, absolute-path injection, and symlink escapes.
-
----
-
-## Auditing and Recovery
-
-Significant actions must be auditable, including:
-
-```text
-task transitions
-agent runs
-commands
-Git changes
-validation
-reviews
-errors
-pause/resume
-recovery
-```
-
-Workers must support heartbeat/crash detection.
-
-Interrupted work must resume the **same task** after inspecting existing Git state, diffs, previous execution results, and logs.
-
-Never skip a task because an agent crashed.
-
----
-
-## Implementation Rules
-
-Prefer:
-
-```text
-framework-native solutions
-explicit state machines
-database transactions
-row locking
-structured agent output
-schema validation
-immutable attempt history
-append-only auditing
-idempotent operations
-focused services/actions
-clear failure handling
-Git-backed evidence
-```
-
-Avoid:
-
-```text
-persistent shared LLM conversations
-agents directly mutating arbitrary state
-implicit transitions
-parallel MVP implementation
-hidden state
-unbounded prompts
-full repository/vault dumps
-blind retries
-unnecessary infrastructure
-premature abstractions
-unrelated refactors
-```
-
-Do not add Redis, Horizon, Reverb, Docker, vector databases, multi-agent frameworks, microservices, or other infrastructure without an actual requirement.
-
----
-
-## Final Rule
-
-AI agents reason, inspect, implement, and review.
-
-**AIOS controls:**
-
-```text
-state
-permissions
-task ordering
-validation
-Git lifecycle
-persistence
-recovery
-auditing
-context assembly
-knowledge storage
-```
-
-Keep contexts disposable, state durable, prompts targeted, execution deterministic, and implementations minimal.
+- Persist `base_sha`, `head_sha`, `commit_sha`, changed files, attempts, and evidence.
+- Require applicable checks: diff/status, secret scan, forbidden-file check, task commands, tests, lint, static/type checks, and build where relevant.
+- Commit only the validated, expected task files. Never hide unrelated changes.
+- Never stash, reset, clean, discard, or destructively alter Git without explicit, safe authorization.
+
+## Obsidian, security, recovery
+
+- Obsidian is scoped external memory, not workflow state. Load only relevant project notes; prefer `STATE.md`, then linked task/spec/decision notes. Summarize; never load the whole vault.
+- Store meaningful state changes and approved outcomes. Do not store chain-of-thought.
+- Resolve every managed project path inside `~/workspace`; prevent traversal, absolute-path injection, and symlink escapes.
+- Never expose or commit secrets, credentials, keys, tokens, or `.env` contents.
+- Audit transitions, runs, commands, Git changes, validation, reviews, failures, and recovery. Heartbeats detect crashes; resume the same task from persisted Git state and evidence.
+
+## Guardrails
+
+- Prefer framework-native code, explicit state machines, transactions, locking, schema-validated structured output, immutable attempts, append-only audit logs, idempotency, and focused services.
+- Do not add persistent shared LLM chats, parallel task execution, hidden state, broad prompts, full vault/repo dumps, blind retries, or new infrastructure without a demonstrated need.
+- AI reasons and edits. **AIOS controls state, permissions, ordering, validation, Git, persistence, recovery, audit, context assembly, and knowledge storage.**
 
 <laravel-boost-guidelines>
 === foundation rules ===
