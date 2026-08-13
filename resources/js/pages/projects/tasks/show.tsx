@@ -1,6 +1,6 @@
 import { Form, Head, Link, usePoll } from '@inertiajs/react';
 import { ArrowLeft, Send } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     index,
     show as showProject,
@@ -119,6 +119,7 @@ function JsonDetail({ value }: { value: unknown }) {
 }
 
 type AgentOutputEntry = {
+    isAgentMessage: boolean;
     label?: string;
     labelClassName?: string;
     message: string;
@@ -132,6 +133,7 @@ function formatAgentOutput(
     if (!output) {
         return [
             {
+                isAgentMessage: false,
                 message: 'No output has reached AIOS yet.',
                 className: 'text-zinc-400',
             },
@@ -143,6 +145,7 @@ function formatAgentOutput(
         .map((line): AgentOutputEntry => {
             if (line.startsWith('[stderr] ')) {
                 return {
+                    isAgentMessage: false,
                     label: 'error>',
                     labelClassName: 'text-rose-400',
                     message: line.slice(9),
@@ -165,6 +168,7 @@ function formatAgentOutput(
 
                 if (item?.type === 'agent_message' && item.text) {
                     return {
+                        isAgentMessage: true,
                         label: `${agentRole.replace('_', ' ')}>`,
                         labelClassName: 'text-emerald-400',
                         message: item.text,
@@ -174,6 +178,7 @@ function formatAgentOutput(
 
                 if (item?.type === 'reasoning' && item.text) {
                     return {
+                        isAgentMessage: false,
                         label: 'thinking>',
                         labelClassName: 'text-sky-400',
                         message: item.text,
@@ -188,6 +193,7 @@ function formatAgentOutput(
                         : '';
 
                     return {
+                        isAgentMessage: false,
                         message: `${command}${result}`.trim(),
                         className: 'text-amber-200',
                     };
@@ -195,6 +201,7 @@ function formatAgentOutput(
 
                 if (event.type === 'error' && event.message) {
                     return {
+                        isAgentMessage: false,
                         label: 'error>',
                         labelClassName: 'text-rose-400',
                         message: event.message,
@@ -202,10 +209,18 @@ function formatAgentOutput(
                     };
                 }
             } catch {
-                return { message: line, className: 'text-zinc-100' };
+                return {
+                    isAgentMessage: false,
+                    message: line,
+                    className: 'text-zinc-100',
+                };
             }
 
-            return { message: line, className: 'text-zinc-100' };
+            return {
+                isAgentMessage: false,
+                message: line,
+                className: 'text-zinc-100',
+            };
         })
         .filter((entry) => entry.message !== '');
 }
@@ -213,11 +228,15 @@ function formatAgentOutput(
 function AgentConsoleOutput({
     output,
     agentRole,
+    showTechnicalOutput,
 }: {
     output: string | null;
     agentRole: string;
+    showTechnicalOutput: boolean;
 }) {
-    const entries = formatAgentOutput(output, agentRole);
+    const entries = formatAgentOutput(output, agentRole).filter(
+        (entry) => showTechnicalOutput || entry.isAgentMessage,
+    );
 
     return entries.map((entry, index) => (
         <span
@@ -244,6 +263,7 @@ export default function TaskShow({
 }) {
     usePoll(2_000, { only: ['task'] }, { mode: 'rest' });
     const consoleRef = useRef<HTMLPreElement>(null);
+    const [showTechnicalOutput, setShowTechnicalOutput] = useState(false);
 
     const activeRun = task.runs.find((run) => run.status === 'running');
     const liveRun = activeRun?.live_output
@@ -252,6 +272,12 @@ export default function TaskShow({
           activeRun ??
           task.runs[0]);
     const isLiveOutput = liveRun?.id === activeRun?.id;
+    const hasTechnicalOutput = liveRun
+        ? formatAgentOutput(
+              liveRun.live_output ?? liveRun.transcript,
+              liveRun.role,
+          ).some((entry) => !entry.isAgentMessage)
+        : false;
 
     useEffect(() => {
         if (!isLiveOutput || !consoleRef.current) {
@@ -300,7 +326,7 @@ export default function TaskShow({
                     <CardHeader>
                         <CardTitle>Agent console</CardTitle>
                         <CardDescription>
-                            {isLiveOutput
+                            {isLiveOutput && liveRun
                                 ? `Live ${liveRun.role.replace('_', ' ')} output. Refreshes every two seconds.`
                                 : 'Latest captured agent output.'}
                         </CardDescription>
@@ -322,6 +348,24 @@ export default function TaskShow({
                                         {liveRun.role.replace('_', ' ')}
                                     </span>
                                 </div>
+                                {hasTechnicalOutput && (
+                                    <div>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() =>
+                                                setShowTechnicalOutput(
+                                                    (showing) => !showing,
+                                                )
+                                            }
+                                        >
+                                            {showTechnicalOutput
+                                                ? 'Hide technical output'
+                                                : 'Show technical output'}
+                                        </Button>
+                                    </div>
+                                )}
                                 <pre
                                     ref={consoleRef}
                                     className="max-h-[32rem] overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-5 whitespace-pre-wrap text-zinc-100"
@@ -332,6 +376,9 @@ export default function TaskShow({
                                             liveRun.transcript
                                         }
                                         agentRole={liveRun.role}
+                                        showTechnicalOutput={
+                                            showTechnicalOutput
+                                        }
                                     />
                                 </pre>
                             </div>
