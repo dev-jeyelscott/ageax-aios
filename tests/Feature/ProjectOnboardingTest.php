@@ -18,6 +18,7 @@ use App\Services\StaleWorkerRecovery;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 
@@ -79,6 +80,7 @@ test('project registration captures the current Git state and commit', function 
 
 test('an uploaded roadmap is recorded as project knowledge in Obsidian', function () {
     Storage::fake('local');
+    Queue::fake();
     $vault = storage_path('framework/testing/obsidian-'.fake()->uuid());
     config()->set('aios.obsidian_vault_path', $vault);
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);

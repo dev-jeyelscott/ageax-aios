@@ -43,14 +43,6 @@ type AgentRun = {
     exit_code: number | null;
     started_at: string;
 };
-type VaultOrganizationRun = {
-    id: number;
-    status: string;
-    token_usage: number | null;
-    exit_code: number | null;
-    started_at: string;
-    finished_at: string | null;
-};
 type Project = {
     id: number;
     name: string;
@@ -70,16 +62,10 @@ function formatTokens(tokens: number): string {
     return new Intl.NumberFormat().format(tokens);
 }
 
-export default function ProjectShow({
-    project,
-    vault_organization: vaultOrganization,
-}: {
-    project: Project;
-    vault_organization: VaultOrganizationRun | null;
-}) {
+export default function ProjectShow({ project }: { project: Project }) {
     usePoll(
         2_000,
-        { only: ['project', 'vault_organization'] },
+        { only: ['project'] },
         { mode: 'rest' },
     );
     const currentTask = project.tasks.find(
@@ -224,34 +210,6 @@ export default function ProjectShow({
                         </CardHeader>
                         <CardContent className="text-sm text-muted-foreground">
                             {formatTokens(project.token_usage_total)} tokens
-                        </CardContent>
-                    </Card>
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Knowledge Architect</CardTitle>
-                            <CardDescription>
-                                Global Obsidian vault organization runs daily.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="text-sm text-muted-foreground">
-                            {vaultOrganization ? (
-                                <>
-                                    <p className="capitalize">
-                                        {vaultOrganization.status}
-                                        {vaultOrganization.exit_code !== null &&
-                                        vaultOrganization.exit_code !== 0
-                                            ? ` · exit ${vaultOrganization.exit_code}`
-                                            : ''}
-                                    </p>
-                                    <p>
-                                        {vaultOrganization.token_usage === null
-                                            ? 'Token usage unavailable'
-                                            : `${formatTokens(vaultOrganization.token_usage)} tokens`}
-                                    </p>
-                                </>
-                            ) : (
-                                'No vault organization run recorded yet.'
-                            )}
                         </CardContent>
                     </Card>
                 </div>

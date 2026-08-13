@@ -13,6 +13,5 @@ return [
     'worker_heartbeat_interval_seconds' => (int) env('AIOS_WORKER_HEARTBEAT_INTERVAL_SECONDS', 5),
     'max_coder_attempts' => (int) env('AIOS_MAX_CODER_ATTEMPTS', 3),
     'max_reviewer_attempts' => (int) env('AIOS_MAX_REVIEWER_ATTEMPTS', 3),
-    'vault_organization_enabled' => (bool) env('AIOS_VAULT_ORGANIZATION_ENABLED', true),
-    'vault_organization_time' => env('AIOS_VAULT_ORGANIZATION_TIME', '02:00'),
+    'roadmap_scan_interval_hours' => (int) env('AIOS_ROADMAP_SCAN_INTERVAL_HOURS', 24),
 ];

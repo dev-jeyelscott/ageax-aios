@@ -53,6 +53,7 @@
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",
+            "@php artisan aios:project-manager --once --no-interaction",
             "@php artisan dev"
         ],
         "lint": [

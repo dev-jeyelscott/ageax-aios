@@ -15,7 +15,6 @@ use App\Http\Requests\UpdateProjectStatusRequest;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
-use App\Models\VaultOrganizationRun;
 use App\ProjectStatus;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
@@ -57,14 +56,6 @@ class ProjectController extends Controller
 
         return Inertia::render('projects/show', [
             'project' => $project,
-            'vault_organization' => VaultOrganizationRun::query()->latest('id')->first([
-                'id',
-                'status',
-                'token_usage',
-                'exit_code',
-                'started_at',
-                'finished_at',
-            ]),
         ]);
     }
 

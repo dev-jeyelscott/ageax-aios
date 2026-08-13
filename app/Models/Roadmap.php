@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['project_id', 'original_filename', 'storage_path', 'status', 'content', 'structured_output', 'processed_at'])]
+#[Fillable(['project_id', 'original_filename', 'storage_path', 'status', 'content', 'content_hash', 'source', 'source_path', 'structured_output', 'processed_at'])]
 class Roadmap extends Model
 {
     /** @use HasFactory<RoadmapFactory> */

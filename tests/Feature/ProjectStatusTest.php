@@ -2,7 +2,6 @@
 
 use App\Models\Project;
 use App\Models\User;
-use App\Models\VaultOrganizationRun;
 use App\ProjectStatus;
 
 test('an authenticated user can pause and resume a project', function () {
@@ -29,18 +28,6 @@ test('a pause request completes through the graceful stopping state before worke
 
     expect($project->refresh()->status)->toBe(ProjectStatus::Paused)
         ->and($project->auditEvents()->where('event_type', 'project.status_changed')->count())->toBe(2);
-});
-
-test('a project dashboard exposes the global knowledge architect status', function () {
-    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
-    VaultOrganizationRun::create(['status' => 'completed', 'prompt_hash' => hash('sha256', 'organize'), 'token_usage' => 120, 'exit_code' => 0, 'started_at' => now(), 'finished_at' => now()]);
-
-    $this->actingAs(User::factory()->create())
-        ->get(route('projects.show', $project))
-        ->assertInertia(fn ($page) => $page
-            ->component('projects/show')
-            ->where('vault_organization.status', 'completed')
-            ->where('vault_organization.token_usage', 120));
 });
 
 test('opening a different project records one durable project selection event', function () {
