@@ -134,18 +134,27 @@ class TaskWorkflow
                     ->get();
 
             foreach ($phaseTasks as $phaseTask) {
-                $expectedStatus = $phaseTask->is($reviewTask) ? TaskStatus::Reviewing : TaskStatus::ReadyForReview;
+                $status = TaskStatus::from($phaseTask->getRawOriginal('status'));
+                $isValidPhaseState = $phaseTask->is($reviewTask)
+                    ? $status === TaskStatus::Reviewing
+                    : in_array($status, [TaskStatus::ReadyForReview, TaskStatus::Done], true);
 
-                if (TaskStatus::from($phaseTask->getRawOriginal('status')) !== $expectedStatus) {
+                if (! $isValidPhaseState) {
                     throw new InvalidTaskTransition('A phase can only be approved after every task is ready for review.');
                 }
             }
 
+            $transitionedTasks = [];
             foreach ($phaseTasks as $phaseTask) {
+                if (TaskStatus::from($phaseTask->getRawOriginal('status')) === TaskStatus::Done) {
+                    continue;
+                }
+
                 $this->transitionLocked($phaseTask, TaskStatus::Done);
+                $transitionedTasks[] = $phaseTask;
             }
 
-            return $phaseTasks->map(fn (Task $phaseTask): Task => $phaseTask->refresh())->all();
+            return collect($transitionedTasks)->map(fn (Task $phaseTask): Task => $phaseTask->refresh())->all();
         }, attempts: 3);
 
         foreach ($completedTasks as $completedTask) {
@@ -266,7 +275,8 @@ class TaskWorkflow
                 ->lockForUpdate()
                 ->get();
 
-            if ($phaseTasks->last()?->is($task) && $phaseTasks->every(fn (Task $phaseTask): bool => TaskStatus::from($phaseTask->getRawOriginal('status')) === TaskStatus::ReadyForReview)) {
+            if ($phaseTasks->last(fn (Task $phaseTask): bool => TaskStatus::from($phaseTask->getRawOriginal('status')) === TaskStatus::ReadyForReview)?->is($task)
+                && $phaseTasks->every(fn (Task $phaseTask): bool => in_array(TaskStatus::from($phaseTask->getRawOriginal('status')), [TaskStatus::ReadyForReview, TaskStatus::Done], true))) {
                 return $task;
             }
         }

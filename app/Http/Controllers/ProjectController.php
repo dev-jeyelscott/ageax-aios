@@ -103,7 +103,7 @@ class ProjectController extends Controller
     public function showAgentRun(Project $project, AgentRun $run, AgentRunRecorder $runs): Response
     {
         $run->loadMissing('task:id,key,title', 'worker:id,role,status,last_heartbeat_at');
-        $run->setAttribute('transcript', $runs->transcript($run));
+        $run->setAttribute('agent_messages', $runs->agentMessages($run));
         $run->makeHidden('log_path');
         $isProjectManager = $run->getRawOriginal('role') === AgentRole::ProjectManager->value;
 

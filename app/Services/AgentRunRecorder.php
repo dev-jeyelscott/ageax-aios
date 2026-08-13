@@ -117,6 +117,28 @@ class AgentRunRecorder
         return $this->redact($this->boundedOutput(Storage::disk('local')->get($run->log_path)));
     }
 
+    /** @return list<string> */
+    public function agentMessages(AgentRun $run): array
+    {
+        $output = $this->transcript($run);
+        if ($output === null) {
+            return [];
+        }
+
+        $messages = [];
+        foreach (preg_split('/\R/', $output) ?: [] as $line) {
+            $event = json_decode($line, true);
+            $item = is_array($event) ? $event['item'] ?? null : null;
+            if (! is_array($item) || ($item['type'] ?? null) !== 'agent_message' || ! is_string($item['text'] ?? null)) {
+                continue;
+            }
+
+            $messages[] = $item['text'];
+        }
+
+        return array_values(array_unique($messages));
+    }
+
     public function redact(string $output): string
     {
         return $this->redactSensitiveOutput($output);

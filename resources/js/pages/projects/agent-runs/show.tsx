@@ -30,8 +30,7 @@ type AgentRun = {
     role: string;
     status: string;
     attempt_number: number | null;
-    live_output: string | null;
-    transcript: string | null;
+    agent_messages: string[];
     exit_code: number | null;
     token_usage: number | null;
     started_at: string | null;
@@ -60,7 +59,7 @@ export default function AgentRunShow({
             mode: 'rest',
         },
     );
-    const consoleRef = useRef<HTMLPreElement>(null);
+    const consoleRef = useRef<HTMLDivElement>(null);
     const live = agentRun.status === 'running';
     const isProjectManager = agentRun.role === 'project_manager';
 
@@ -68,7 +67,7 @@ export default function AgentRunShow({
         if (live && consoleRef.current) {
             consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
         }
-    }, [agentRun.live_output, live]);
+    }, [agentRun.agent_messages, live]);
 
     return (
         <>
@@ -98,22 +97,34 @@ export default function AgentRunShow({
 
                 <Card>
                     <CardHeader>
-                        <CardTitle>Agent console</CardTitle>
+                        <CardTitle>Agent messages</CardTitle>
                         <CardDescription>
                             {live
-                                ? 'Live output. Refreshes every two seconds.'
-                                : 'Captured execution output.'}
+                                ? 'Live updates. Refreshes every two seconds.'
+                                : 'Captured agent updates.'}
                         </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                        <pre
-                            ref={consoleRef}
-                            className="max-h-[36rem] overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-5 whitespace-pre-wrap text-zinc-100"
-                        >
-                            {agentRun.live_output ??
-                                agentRun.transcript ??
-                                'No output has reached AIOS yet.'}
-                        </pre>
+                    <CardContent
+                        ref={consoleRef}
+                        className="max-h-[36rem] overflow-auto"
+                    >
+                        <div className="grid gap-3">
+                            {agentRun.agent_messages.map((message, index) => (
+                                <p
+                                    key={`${index}-${message}`}
+                                    className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm whitespace-pre-wrap text-emerald-950 dark:text-emerald-100"
+                                >
+                                    {message}
+                                </p>
+                            ))}
+                            {agentRun.agent_messages.length === 0 && (
+                                <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                                    {live
+                                        ? 'Waiting for the agent’s first update.'
+                                        : 'This run did not produce an agent message.'}
+                                </p>
+                            )}
+                        </div>
                     </CardContent>
                 </Card>
 

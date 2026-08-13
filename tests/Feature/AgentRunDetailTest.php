@@ -17,7 +17,10 @@ test('an authenticated user can inspect a Project Manager run and send a message
         'role' => AgentRole::ProjectManager,
         'status' => AgentRunStatus::Running,
         'prompt_hash' => hash('sha256', 'plan'),
-        'live_output' => 'Inspecting the roadmap.',
+        'live_output' => implode("\n", [
+            '{"type":"item.completed","item":{"type":"command_execution","command":"php artisan test"}}',
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Inspecting the roadmap."}}',
+        ]),
         'started_at' => now(),
     ]);
 
@@ -27,7 +30,7 @@ test('an authenticated user can inspect a Project Manager run and send a message
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/agent-runs/show')
             ->where('agent_run.id', $run->id)
-            ->where('agent_run.live_output', 'Inspecting the roadmap.')
+            ->where('agent_run.agent_messages', ['Inspecting the roadmap.'])
             ->has('project_manager_messages', 0));
 
     $this->post(route('projects.project-manager-messages.store', $project), [

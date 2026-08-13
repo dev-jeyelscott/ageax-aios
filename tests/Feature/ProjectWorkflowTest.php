@@ -103,6 +103,26 @@ test('the reviewer is called once after every task in a phase is ready', functio
         ->and($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($thirdTask->id);
 });
 
+test('a completed roadmap task does not block phase review of remaining work', function () {
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
+    $completedTask = createWorkflowTask($project, 1);
+    $reviewableTask = createWorkflowTask($project, 2);
+    $completedTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::Done, 'completed_at' => now()]);
+    $reviewableTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::ReadyForReview]);
+
+    $claimedTask = app(ClaimTask::class)->handle($project, AgentRole::Reviewer);
+
+    expect($claimedTask?->id)->toBe($reviewableTask->id);
+
+    app(TaskWorkflow::class)->approvePhase($claimedTask);
+
+    expect($completedTask->refresh()->status)->toBe(TaskStatus::Done)
+        ->and($reviewableTask->refresh()->status)->toBe(TaskStatus::Done)
+        ->and($completedTask->auditEvents()->where('event_type', 'task.approved')->doesntExist())->toBeTrue();
+});
+
 test('a rejected phase review returns only the final task to the coder', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
