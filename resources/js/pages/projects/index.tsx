@@ -41,8 +41,8 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                     <CardHeader>
                         <CardTitle>Add project</CardTitle>
                         <CardDescription>
-                            Create a new Git project or register an existing
-                            Git repository inside the workspace.
+                            Create a new Git project or register an existing Git
+                            repository inside the workspace.
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -53,15 +53,21 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                             {({ errors, processing }) => (
                                 <>
                                     <div className="grid gap-2">
-                                        <label htmlFor="mode">Project type</label>
+                                        <label htmlFor="mode">
+                                            Project type
+                                        </label>
                                         <select
                                             id="mode"
                                             name="mode"
                                             defaultValue="create"
-                                            className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                                            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                                         >
-                                            <option value="create">Create new</option>
-                                            <option value="existing">Add existing</option>
+                                            <option value="create">
+                                                Create new
+                                            </option>
+                                            <option value="existing">
+                                                Add existing
+                                            </option>
                                         </select>
                                         <InputError message={errors.mode} />
                                     </div>

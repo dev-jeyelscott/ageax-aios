@@ -12,20 +12,35 @@ class CodexCliRunner
     public function __construct(private WorkspacePathResolver $paths) {}
 
     /** @return array{exit_code: int, output: string, error_output: string} */
-    public function run(Project $project, string $prompt, ?Closure $onOutput = null): array
+    public function run(Project $project, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null): array
     {
-        return $this->runAtPath($this->paths->assertProjectPath($project->path), $prompt, $onOutput);
+        return $this->runAtPath($this->paths->assertProjectPath($project->path), $prompt, $onOutput, $onHeartbeat);
     }
 
     /** @return array{exit_code: int, output: string, error_output: string} */
-    public function runAtPath(string $path, string $prompt, ?Closure $onOutput = null): array
+    public function runAtPath(string $path, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null): array
     {
-        $result = Process::path($path)
+        $pending = Process::path($path)
             ->timeout((int) config('aios.execution_timeout'))
-            ->input($prompt)
-            ->run($this->command(), $onOutput);
+            ->input($prompt);
 
-        return $this->result($result);
+        if ($onHeartbeat === null) {
+            return $this->result($pending->run($this->command(), $onOutput));
+        }
+
+        $process = $pending->start($this->command(), $onOutput);
+        $interval = max(1, (int) config('aios.worker_heartbeat_interval_seconds'));
+        $nextHeartbeatAt = now();
+        while ($process->running()) {
+            if (now()->gte($nextHeartbeatAt)) {
+                $onHeartbeat();
+                $nextHeartbeatAt = now()->addSeconds($interval);
+            }
+
+            usleep(250000);
+        }
+
+        return $this->result($process->wait());
     }
 
     /** @return list<string> */

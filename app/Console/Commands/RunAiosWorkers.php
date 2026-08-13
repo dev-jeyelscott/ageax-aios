@@ -16,6 +16,7 @@ use App\Services\WorkerHeartbeat;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
+use Illuminate\Support\Str;
 
 #[Signature('aios:work {--once}')]
 #[Description('Run durable AIOS workers until stopped, or one cycle with --once')]
@@ -26,6 +27,8 @@ class RunAiosWorkers extends Command
      */
     public function handle(ClaimTask $claimTask, RunCoderTask $runCoderTask, RunProjectManager $runProjectManager, RunReviewerTask $runReviewerTask, SetProjectStatus $setProjectStatus, StaleWorkerRecovery $staleWorkerRecovery, WorkerHeartbeat $heartbeat): int
     {
+        $workerInstanceId = (string) Str::uuid();
+
         do {
             foreach (Project::query()->whereIn('status', [ProjectStatus::Running, ProjectStatus::Stopping])->get() as $project) {
                 if ($this->stopRequested($project, $setProjectStatus)) {
@@ -33,11 +36,16 @@ class RunAiosWorkers extends Command
                 }
 
                 $staleWorkerRecovery->recover($project);
-                $roadmap = Roadmap::query()->whereBelongsTo($project)->where('status', 'uploaded')->oldest()->first();
+                $roadmap = Roadmap::query()->whereBelongsTo($project)->whereIn('status', ['uploaded', 'failed'])->oldest()->first();
                 if ($roadmap !== null) {
-                    $heartbeat->beat($project, AgentRole::ProjectManager, 'working');
-                    $runProjectManager->handle($roadmap);
-                    $heartbeat->beat($project, AgentRole::ProjectManager, 'idle');
+                    $lease = $heartbeat->acquire($project, AgentRole::ProjectManager, $workerInstanceId);
+                    if ($lease !== null) {
+                        try {
+                            $runProjectManager->handle($roadmap, $lease);
+                        } finally {
+                            $heartbeat->release($lease);
+                        }
+                    }
 
                     if ($this->stopRequested($project, $setProjectStatus)) {
                         continue;
@@ -45,23 +53,33 @@ class RunAiosWorkers extends Command
                 }
 
                 foreach ([AgentRole::Coder, AgentRole::Reviewer] as $role) {
-                    $heartbeat->beat($project, $role, 'idle');
+                    $lease = $heartbeat->acquire($project, $role, $workerInstanceId);
+                    if ($lease === null) {
+                        continue;
+                    }
+
                     $task = $claimTask->handle($project, $role);
                     if ($task !== null) {
                         $this->info("Claimed {$task->key} for {$role->value}.");
-                        $heartbeat->beat($project, $role, 'working');
-                        if ($role === AgentRole::Coder) {
-                            $runCoderTask->handle($task);
-                        } else {
-                            $attempt = $task->attempts()->latest('number')->firstOrFail();
-                            $runReviewerTask->run($task, $attempt);
+                        try {
+                            if ($role === AgentRole::Coder) {
+                                $runCoderTask->handle($task, $lease);
+                            } else {
+                                $attempt = $task->attempts()->latest('number')->firstOrFail();
+                                $runReviewerTask->run($task, $attempt, $lease);
+                            }
+                        } finally {
+                            $heartbeat->release($lease);
                         }
-                        $heartbeat->beat($project, $role, 'idle');
 
                         if ($this->stopRequested($project, $setProjectStatus)) {
                             continue 2;
                         }
+
+                        continue;
                     }
+
+                    $heartbeat->release($lease);
                 }
             }
 

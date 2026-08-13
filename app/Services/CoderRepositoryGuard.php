@@ -86,7 +86,8 @@ class CoderRepositoryGuard
             return $this->git->changedFilesFromBase($task->project->path, $baseSha) !== null;
         }
 
-        return $this->git->matchesExpectedChanges($task->project->path, $baseSha, $attempt->changed_files ?? []);
+        $changedFiles = json_decode($attempt->getRawOriginal('changed_files') ?? '[]', true);
+
+        return $this->git->matchesExpectedChanges($task->project->path, $baseSha, is_array($changedFiles) ? $changedFiles : []);
     }
 }
-

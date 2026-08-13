@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable(['project_id', 'original_filename', 'storage_path', 'status', 'content', 'structured_output', 'processed_at'])]
 class Roadmap extends Model
@@ -23,5 +24,11 @@ class Roadmap extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /** @return HasMany<RoadmapAttempt, $this> */
+    public function attempts(): HasMany
+    {
+        return $this->hasMany(RoadmapAttempt::class);
     }
 }

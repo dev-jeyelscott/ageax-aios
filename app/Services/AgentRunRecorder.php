@@ -9,6 +9,7 @@ use App\Models\AgentWorker;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
+use App\WorkerLease;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use JsonException;
@@ -21,12 +22,14 @@ class AgentRunRecorder
 
     public function __construct(private AuditLogger $audit) {}
 
-    public function start(Project $project, AgentRole $role, string $prompt, ?Task $task = null, ?TaskAttempt $attempt = null): AgentRun
+    public function start(Project $project, AgentRole $role, string $prompt, ?Task $task = null, ?TaskAttempt $attempt = null, ?WorkerLease $lease = null): AgentRun
     {
         $run = AgentRun::create([
             'project_id' => $project->id,
             'task_id' => $task?->id,
-            'agent_worker_id' => AgentWorker::query()->whereBelongsTo($project)->where('role', $role)->value('id'),
+            'agent_worker_id' => $lease === null ? AgentWorker::query()->whereBelongsTo($project)->where('role', $role)->value('id') : $lease->workerId,
+            'worker_instance_id' => $lease?->workerInstanceId,
+            'worker_lease_id' => $lease?->leaseId,
             'role' => $role,
             'status' => AgentRunStatus::Running,
             'attempt_number' => $attempt?->number,
@@ -39,6 +42,8 @@ class AgentRunRecorder
             'role' => $role->value,
             'attempt_number' => $attempt?->number,
             'prompt_hash' => $run->prompt_hash,
+            'worker_instance_id' => $run->worker_instance_id,
+            'worker_lease_id' => $run->worker_lease_id,
         ], $project, $task);
 
         return $run;

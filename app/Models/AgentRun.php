@@ -10,7 +10,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['project_id', 'task_id', 'agent_worker_id', 'role', 'status', 'attempt_number', 'codex_run_id', 'prompt_hash', 'result', 'commands', 'file_modifications', 'token_usage', 'log_path', 'live_output', 'exit_code', 'started_at', 'finished_at'])]
+#[Fillable(['project_id', 'task_id', 'agent_worker_id', 'worker_instance_id', 'worker_lease_id', 'role', 'status', 'attempt_number', 'codex_run_id', 'prompt_hash', 'result', 'commands', 'file_modifications', 'token_usage', 'log_path', 'live_output', 'exit_code', 'started_at', 'finished_at'])]
+/** @property AgentRunStatus $status */
 class AgentRun extends Model
 {
     /** @use HasFactory<AgentRunFactory> */

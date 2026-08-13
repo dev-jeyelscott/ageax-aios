@@ -126,7 +126,10 @@ class ProjectGitState
         return $actualFiles !== null && $actualFiles === $this->normalize($expectedFiles);
     }
 
-    /** @param array<int, string> $command @return array<int, string>|null */
+    /**
+     * @param  array<int, string>  $command
+     * @return array<int, string>|null
+     */
     private function files(string $projectPath, array $command): ?array
     {
         $result = $this->result($projectPath, $command);
@@ -145,7 +148,10 @@ class ProjectGitState
         return $result['successful'] ? trim($result['output']) : null;
     }
 
-    /** @param array<int, string> $command @return array{successful: bool, output: string} */
+    /**
+     * @param  array<int, string>  $command
+     * @return array{successful: bool, output: string}
+     */
     private function result(string $projectPath, array $command): array
     {
         try {
@@ -157,7 +163,10 @@ class ProjectGitState
         }
     }
 
-    /** @param array<int, string> $files @return array<int, string> */
+    /**
+     * @param  array<int, string>  $files
+     * @return array<int, string>
+     */
     private function normalize(array $files): array
     {
         $files = array_values(array_unique(array_filter($files, fn (string $file): bool => $file !== '')));
@@ -192,4 +201,3 @@ class ProjectGitState
         ];
     }
 }
-

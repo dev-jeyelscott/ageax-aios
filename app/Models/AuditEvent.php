@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use LogicException;
 
 #[Fillable(['project_id', 'task_id', 'event_type', 'payload', 'occurred_at'])]
+/** @property array<string, mixed> $payload */
 class AuditEvent extends Model
 {
     /** @use HasFactory<AuditEventFactory> */

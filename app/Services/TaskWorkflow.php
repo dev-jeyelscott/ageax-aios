@@ -18,7 +18,7 @@ class TaskWorkflow
 
     public function claim(Project $project, AgentRole $role): ?Task
     {
-        return DB::transaction(function () use ($project, $role): ?Task {
+        $task = DB::transaction(function () use ($project, $role): ?Task {
             $lockedProject = Project::query()->lockForUpdate()->findOrFail($project->id);
 
             if (ProjectStatus::from($lockedProject->getRawOriginal('status')) !== ProjectStatus::Running || $this->hasClaimedWork($lockedProject, $role)) {
@@ -45,6 +45,10 @@ class TaskWorkflow
 
             return $task->refresh();
         }, attempts: 3);
+
+        $this->notes->writeState($project);
+
+        return $task;
     }
 
     public function transition(Task $task, TaskStatus $to): Task
@@ -59,6 +63,7 @@ class TaskWorkflow
         if ($to === TaskStatus::Done) {
             $this->notes->writeTaskCompletion($transitionedTask, "Completed after workflow validation. {$transitionedTask->objective}");
         }
+        $this->notes->writeState($transitionedTask->project);
 
         return $transitionedTask;
     }
@@ -66,7 +71,7 @@ class TaskWorkflow
     /** @param array<string, mixed> $failure */
     public function recordReviewerOperationalFailure(Task $task, ?TaskAttempt $attempt, array $failure): Task
     {
-        return DB::transaction(function () use ($task, $attempt, $failure): Task {
+        $transitionedTask = DB::transaction(function () use ($task, $attempt, $failure): Task {
             $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
 
             if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::Reviewing) {
@@ -77,7 +82,11 @@ class TaskWorkflow
                 ->whereBelongsTo($lockedTask)
                 ->where('event_type', 'review.failed')
                 ->get()
-                ->filter(fn (AuditEvent $event): bool => ($event->payload['attempt_number'] ?? null) === $attempt?->number)
+                ->filter(function (AuditEvent $event) use ($attempt): bool {
+                    $payload = json_decode($event->getRawOriginal('payload'), true);
+
+                    return is_array($payload) && ($payload['attempt_number'] ?? null) === $attempt?->number;
+                })
                 ->count() + 1;
             $retryLimit = max(1, (int) config('aios.max_reviewer_attempts'));
             $retryStatus = $failureCount >= $retryLimit ? TaskStatus::Blocked : TaskStatus::ReadyForReview;
@@ -99,6 +108,10 @@ class TaskWorkflow
 
             return $lockedTask->refresh();
         }, attempts: 3);
+
+        $this->notes->writeState($transitionedTask->project);
+
+        return $transitionedTask;
     }
 
     /** @return array<int, Task> */

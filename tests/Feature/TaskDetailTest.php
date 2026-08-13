@@ -113,25 +113,59 @@ test('a task context capsule includes the prior attempt evidence for a fresh ret
         'base_sha' => 'base-sha',
         'head_sha' => 'head-sha',
         'status' => 'failed',
-        'validation_results' => ['secret_scan' => false],
         'changed_files' => ['app/Example.php'],
+        'failed_validation_evidence' => [],
     ]);
 });
 
-test('a task context capsule includes only its project Obsidian knowledge', function () {
+test('a task context capsule prioritizes state and excludes unrelated Obsidian notes', function () {
     $vault = storage_path('framework/testing/obsidian-'.fake()->uuid());
     config()->set('aios.obsidian_vault_path', $vault);
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
     $task = taskForDetail($project);
-    $notePath = $vault.'/Projects/example/Tasks/TASK-000 - prior-work.md';
-    File::ensureDirectoryExists(dirname($notePath));
-    File::put($notePath, 'Prior work implemented the shared project foundation.');
+    $projectDirectory = $vault.'/Projects/example';
+    File::ensureDirectoryExists($projectDirectory.'/Tasks');
+    File::ensureDirectoryExists($projectDirectory.'/Specifications');
+    File::ensureDirectoryExists($projectDirectory.'/Decisions');
+    File::ensureDirectoryExists($projectDirectory.'/Notes');
+    File::put($projectDirectory.'/STATE.md', 'The repository is paused until TASK-001 is reviewed.');
+    File::put($projectDirectory.'/Tasks/TASK-001 - implement-the-task-detail-page.md', 'Use [[Specifications/Task Detail]] and [[Decisions/No New Dependencies]].');
+    File::put($projectDirectory.'/Specifications/Task Detail.md', 'The task detail page must retain audit evidence.');
+    File::put($projectDirectory.'/Decisions/No New Dependencies.md', 'Keep the current stack.');
+    File::put($projectDirectory.'/Notes/unrelated.md', 'UNRELATED NOTE MUST NOT REACH CODEX.');
+    File::put($projectDirectory.'/Tasks/TASK-000 - prior-work.md', 'PRIOR WORK MUST NOT REACH CODEX.');
 
     $capsule = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Coder);
 
-    expect($capsule['obsidian_project_knowledge'])
-        ->toHaveKey('Tasks/TASK-000 - prior-work.md')
-        ->and($capsule['obsidian_project_knowledge']['Tasks/TASK-000 - prior-work.md'])->toBe('Prior work implemented the shared project foundation.');
+    expect(array_keys($capsule['obsidian_project_knowledge']))->toBe([
+        'STATE.md',
+        'Tasks/TASK-001 - implement-the-task-detail-page.md',
+        'Specifications/Task Detail.md',
+        'Decisions/No New Dependencies.md',
+    ])
+        ->and($capsule['obsidian_project_knowledge']['STATE.md'])->toBe('The repository is paused until TASK-001 is reviewed.')
+        ->and(implode("\n", $capsule['obsidian_project_knowledge']))->not->toContain('UNRELATED NOTE MUST NOT REACH CODEX')
+        ->and(implode("\n", $capsule['obsidian_project_knowledge']))->not->toContain('PRIOR WORK MUST NOT REACH CODEX');
+});
+
+test('a task context capsule enforces per-note and overall Obsidian budgets', function () {
+    $vault = storage_path('framework/testing/obsidian-'.fake()->uuid());
+    config()->set('aios.obsidian_vault_path', $vault);
+    config()->set('aios.obsidian_context_max_note_characters', 10);
+    config()->set('aios.obsidian_context_max_characters', 13);
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
+    $task = taskForDetail($project);
+    $directory = $vault.'/Projects/example';
+    File::ensureDirectoryExists($directory.'/Tasks');
+    File::put($directory.'/STATE.md', '0123456789-state');
+    File::put($directory.'/Tasks/TASK-001 - implement-the-task-detail-page.md', 'abcdefghij-task');
+
+    $knowledge = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Coder)['obsidian_project_knowledge'];
+
+    expect($knowledge)->toBe([
+        'STATE.md' => '0123456789',
+        'Tasks/TASK-001 - implement-the-task-detail-page.md' => 'abc',
+    ]);
 });
 
 test('a task detail includes bounded live agent output', function () {

@@ -64,7 +64,10 @@ class TaskCommitter
         return $commitSha;
     }
 
-    /** @param array<int, string> $files @return array<int, string> */
+    /**
+     * @param  array<int, string>  $files
+     * @return array<int, string>
+     */
     private function normalize(array $files): array
     {
         $files = array_values(array_unique(array_filter($files, fn (string $file): bool => $file !== '')));
@@ -73,4 +76,3 @@ class TaskCommitter
         return $files;
     }
 }
-

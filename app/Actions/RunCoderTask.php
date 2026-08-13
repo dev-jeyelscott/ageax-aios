@@ -18,13 +18,14 @@ use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
 use App\Services\WorkspacePathResolver;
 use App\TaskStatus;
+use App\WorkerLease;
 use Throwable;
 
 class RunCoderTask
 {
     public function __construct(private CodexCliRunner $runner, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git) {}
 
-    public function handle(Task $task): TaskAttempt
+    public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
     {
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Coding, 409, 'Only claimed coding tasks may execute.');
         $task->loadMissing('project');
@@ -42,6 +43,7 @@ class RunCoderTask
         }
 
         $baseSha = $preflight['base_sha'];
+        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($this->capsules->make($task), JSON_THROW_ON_ERROR);
         $attempt = TaskAttempt::create([
             'task_id' => $task->id,
             'number' => $task->attempts()->max('number') + 1,
@@ -56,14 +58,15 @@ class RunCoderTask
             ],
             'started_at' => now(),
         ]);
-        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($this->capsules->make($task), JSON_THROW_ON_ERROR);
-        $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt);
+        $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt, $lease);
 
         try {
-            $execution = $this->runner->run($task->project, $prompt, function (string $type, string $output) use ($run, $task): void {
+            $execution = $this->runner->run($task->project, $prompt, function (string $type, string $output) use ($run, $task, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
-                $this->heartbeat->beat($task->project, AgentRole::Coder);
-            });
+                if ($lease === null) {
+                    $this->heartbeat->beat($task->project, AgentRole::Coder);
+                }
+            }, $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease));
             $this->runs->complete($run, $execution);
 
             if ($execution['exit_code'] === 0) {
@@ -77,6 +80,22 @@ class RunCoderTask
             $headUnchanged = $this->git->baseMatchesCurrentHead($projectPath, $baseSha);
             $validation['checks']['git_change_set'] = $changedFiles !== null;
             $validation['checks']['git_head_unchanged'] = $headUnchanged;
+            $validation['evidence'] = is_array($validation['evidence'] ?? null) ? $validation['evidence'] : [];
+            $validation['evidence']['git_change_set'] = [
+                'name' => 'git_change_set',
+                'passed' => $changedFiles !== null,
+                'verification_identifier' => 'git diff --name-only',
+                'exit_code' => $changedFiles === null ? 1 : 0,
+                'files' => $changedFiles ?? [],
+                'summary' => $changedFiles === null ? 'The changed-file set could not be determined from the attempt base.' : null,
+            ];
+            $validation['evidence']['git_head_unchanged'] = [
+                'name' => 'git_head_unchanged',
+                'passed' => $headUnchanged,
+                'verification_identifier' => 'git rev-parse HEAD',
+                'exit_code' => $headUnchanged ? 0 : 1,
+                'summary' => $headUnchanged ? null : 'The repository HEAD changed during validation.',
+            ];
             $validation['base_sha'] = $baseSha;
             $validation['candidate_changed_files'] = $changedFiles ?? [];
             $validation['repository_preflight'] = [
@@ -89,6 +108,13 @@ class RunCoderTask
 
             if ($validationPassed) {
                 $validation['checks']['task_commit'] = $commitSha !== null;
+                $validation['evidence']['task_commit'] = [
+                    'name' => 'task_commit',
+                    'passed' => $commitSha !== null,
+                    'verification_identifier' => 'git commit',
+                    'exit_code' => $commitSha === null ? 1 : 0,
+                    'summary' => $commitSha === null ? 'The validated task changes could not be committed.' : null,
+                ];
             }
 
             $validation['passed'] = $passed;
@@ -246,4 +272,3 @@ class RunCoderTask
         return $attempt;
     }
 }
-

@@ -4,12 +4,14 @@ namespace App\Actions;
 
 use App\AgentRole;
 use App\Models\Roadmap;
+use App\Models\RoadmapAttempt;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use App\Services\CodexCliRunner;
 use App\Services\ObsidianProjectNotes;
 use App\Services\StructuredResultParser;
 use App\Services\WorkerHeartbeat;
+use App\WorkerLease;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Validator;
@@ -20,21 +22,26 @@ class RunProjectManager
     public function __construct(private CodexCliRunner $runner, private AgentRunRecorder $runs, private StructuredResultParser $parser, private ApplyRoadmapPlan $plans, private ObsidianProjectNotes $notes, private WorkerHeartbeat $heartbeat, private AuditLogger $audit) {}
 
     /** @return array{exit_code: int, output: string, error_output: string} */
-    public function handle(Roadmap $roadmap): array
+    public function handle(Roadmap $roadmap, ?WorkerLease $lease = null): array
     {
-        $roadmap = $this->claimRoadmap($roadmap);
-        if ($roadmap === null) {
+        $attempt = $this->claimRoadmap($roadmap);
+        if ($attempt === null) {
             return ['exit_code' => 0, 'output' => '', 'error_output' => ''];
         }
 
-        $this->audit->record('roadmap.processing_started', ['roadmap_id' => $roadmap->id], $roadmap->project);
-        $prompt = "You are the Project Manager. Read AGENTS.md, repository documentation, Git history, the current implementation, and the provided Obsidian project knowledge before planning. Treat Obsidian notes as context, but verify the repository before marking a task complete. Produce only JSON: {project_knowledge:{overview,architecture_decisions:[{title,rationale}],constraints,handoff},phases:[{title,objective,tasks:[{title,objective,acceptance_criteria,scope,constraints,relevant_paths,verification_commands,implementation_prompt,depends_on,completion_status,completion_evidence}]}]}. Keep tasks ordered and implementation-ready. depends_on is an array of one-based positions of earlier tasks in the complete plan; declare only real dependencies. If a task has no additional dependency, use an empty array. In project_knowledge, record only concise, verified facts that will be useful to fresh agents; do not include secrets or raw repository dumps. Use concise arrays for scope, constraints, relevant_paths, and verification_commands. Verification commands must be safe, simple commands from the approved project toolchain, with no shell operators or redirects. For every task, set completion_status to done only when the current repository already satisfies its acceptance criteria; provide concise, concrete completion_evidence with paths, commands, or commits. Otherwise set completion_status to queued and completion_evidence to null. Do not infer completion from intent or documentation alone.\n\n".json_encode(['roadmap' => $roadmap->content, 'obsidian_project_knowledge' => $this->notes->projectKnowledge($roadmap->project)], JSON_THROW_ON_ERROR);
-        $run = $this->runs->start($roadmap->project, AgentRole::ProjectManager, $prompt);
+        $roadmap = $attempt->roadmap;
+
+        $this->audit->record('roadmap.processing_started', ['roadmap_id' => $roadmap->id, 'roadmap_attempt_id' => $attempt->id], $roadmap->project);
+        $prompt = "You are the Project Manager. Read AGENTS.md, repository documentation, Git history, the current implementation, and the provided targeted Obsidian project knowledge before planning. Treat Obsidian notes as context, but verify the repository before marking a task complete. Produce only JSON: {project_knowledge:{overview,architecture_decisions:[{title,rationale}],constraints,handoff},phases:[{title,objective,tasks:[{title,objective,acceptance_criteria,scope,constraints,relevant_paths,verification_commands,implementation_prompt,depends_on,completion_status,completion_evidence}]}]}. Keep tasks ordered and implementation-ready. depends_on is an array of one-based positions of earlier tasks in the complete plan; declare only real dependencies. If a task has no additional dependency, use an empty array. In project_knowledge, record only concise, verified facts that will be useful to fresh agents; do not include secrets or raw repository dumps. Use concise arrays for scope, constraints, relevant_paths, and verification_commands. Verification commands must be safe, simple commands from the approved project toolchain, with no shell operators or redirects. For every task, set completion_status to done only when the current repository already satisfies its acceptance criteria; provide concise, concrete completion_evidence with paths, commands, or commits. Otherwise set completion_status to queued and completion_evidence to null. Do not infer completion from intent or documentation alone.\n\n".json_encode(['roadmap' => $roadmap->content, 'obsidian_project_knowledge' => $this->notes->roadmapKnowledge($roadmap->project)], JSON_THROW_ON_ERROR);
+        $run = $this->runs->start($roadmap->project, AgentRole::ProjectManager, $prompt, lease: $lease);
+        $attempt->update(['agent_run_id' => $run->id, 'status' => 'running']);
         try {
-            $execution = $this->runner->run($roadmap->project, $prompt, function (string $type, string $output) use ($run, $roadmap): void {
+            $execution = $this->runner->run($roadmap->project, $prompt, function (string $type, string $output) use ($run, $roadmap, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
-                $this->heartbeat->beat($roadmap->project, AgentRole::ProjectManager);
-            });
+                if ($lease === null) {
+                    $this->heartbeat->beat($roadmap->project, AgentRole::ProjectManager);
+                }
+            }, $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease));
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
         }
@@ -42,8 +49,7 @@ class RunProjectManager
         $plan = $this->parser->parse($execution['output']);
 
         if ($execution['exit_code'] !== 0 || $plan === null) {
-            $roadmap->update(['status' => 'failed']);
-            $this->audit->record('roadmap.processing_failed', ['roadmap_id' => $roadmap->id, 'exit_code' => $execution['exit_code']], $roadmap->project);
+            $this->failAttempt($attempt, $execution['exit_code'], 'execution_failed');
 
             return $execution;
         }
@@ -51,33 +57,61 @@ class RunProjectManager
         try {
             $this->validatePlan($plan);
         } catch (ValidationException) {
-            $roadmap->update(['status' => 'failed']);
-            $this->audit->record('roadmap.processing_failed', ['roadmap_id' => $roadmap->id, 'exit_code' => $execution['exit_code'], 'reason' => 'invalid_plan'], $roadmap->project);
+            $this->failAttempt($attempt, $execution['exit_code'], 'invalid_plan');
 
             return $execution;
         }
 
-        $this->plans->handle($roadmap->project, $plan['phases']);
-        $roadmap->update(['status' => 'processed', 'structured_output' => $plan, 'processed_at' => now()]);
+        try {
+            $this->plans->handle($roadmap->project, $plan['phases'], $roadmap, $attempt, $plan);
+        } catch (Throwable) {
+            $this->failAttempt($attempt, $execution['exit_code'], 'persistence_failed');
+
+            return $execution;
+        }
+
         $this->notes->writeRoadmapPlan($roadmap->project, $plan);
         $this->notes->writeProjectManagerKnowledge($roadmap->project, $plan['project_knowledge'] ?? [], $plan['phases']);
-        $this->audit->record('roadmap.processed', ['roadmap_id' => $roadmap->id, 'phase_count' => count($plan['phases'])], $roadmap->project);
 
         return $execution;
     }
 
-    private function claimRoadmap(Roadmap $roadmap): ?Roadmap
+    private function claimRoadmap(Roadmap $roadmap): ?RoadmapAttempt
     {
-        return DB::transaction(function () use ($roadmap): ?Roadmap {
+        return DB::transaction(function () use ($roadmap): ?RoadmapAttempt {
             $lockedRoadmap = Roadmap::query()->lockForUpdate()->findOrFail($roadmap->id);
 
-            if ($lockedRoadmap->getRawOriginal('status') !== 'uploaded') {
+            if (! in_array($lockedRoadmap->getRawOriginal('status'), ['uploaded', 'failed'], true)) {
                 return null;
             }
 
             $lockedRoadmap->update(['status' => 'processing']);
 
-            return $lockedRoadmap->refresh()->load('project');
+            $attempt = RoadmapAttempt::create([
+                'roadmap_id' => $lockedRoadmap->id,
+                'number' => ((int) $lockedRoadmap->attempts()->max('number')) + 1,
+                'status' => 'claimed',
+                'claimed_at' => now(),
+            ]);
+            $this->audit->record('roadmap.claimed', ['roadmap_id' => $lockedRoadmap->id, 'roadmap_attempt_id' => $attempt->id, 'attempt_number' => $attempt->number], $lockedRoadmap->project);
+
+            return $attempt->refresh()->load('roadmap.project');
+        }, attempts: 3);
+    }
+
+    private function failAttempt(RoadmapAttempt $attempt, int $exitCode, string $reason): void
+    {
+        DB::transaction(function () use ($attempt, $exitCode, $reason): void {
+            $lockedAttempt = RoadmapAttempt::query()->lockForUpdate()->findOrFail($attempt->id);
+            $roadmap = Roadmap::query()->lockForUpdate()->findOrFail($lockedAttempt->roadmap_id);
+
+            if ($lockedAttempt->getRawOriginal('status') === 'persisted') {
+                return;
+            }
+
+            $lockedAttempt->update(['status' => 'failed', 'finished_at' => now()]);
+            $roadmap->update(['status' => 'failed']);
+            $this->audit->record('roadmap.processing_failed', ['roadmap_id' => $roadmap->id, 'roadmap_attempt_id' => $lockedAttempt->id, 'exit_code' => $exitCode, 'reason' => $reason], $roadmap->project);
         }, attempts: 3);
     }
 

@@ -18,6 +18,7 @@ use App\ProjectStatus;
 use App\Services\CodexCliRunner;
 use App\Services\StaleWorkerRecovery;
 use App\Services\TaskCommitter;
+use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskValidator;
 use App\TaskStatus;
 use Illuminate\Support\Facades\File;
@@ -104,6 +105,43 @@ test('the task validator rejects unsafe verification commands without executing 
 
     expect($validation['passed'])->toBeFalse()
         ->and($validation['checks']['task_verification'])->toBeFalse();
+});
+
+test('a fresh Coder context receives bounded redacted evidence from failed verification commands', function () {
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    File::ensureDirectoryExists($project->path);
+    $task = reviewTask($project);
+    $task->update(['verification_commands' => ['php artisan test --compact']]);
+    Process::fake(['*' => Process::sequence()
+        ->push(Process::result())
+        ->push(Process::result(exitCode: 1))
+        ->push(Process::result())
+        ->push(Process::result('Tests: 1 failed.', "APP_KEY=super-secret\nExpected 200, received 500.", 1)),
+    ]);
+
+    $validation = app(TaskValidator::class)->validate($task);
+    TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'status' => 'failed',
+        'validation_results' => $validation,
+        'started_at' => now()->subMinute(),
+        'finished_at' => now(),
+    ]);
+
+    $context = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Coder);
+    $failedEvidence = $context['previous_attempt']['failed_validation_evidence']['task_verification'];
+
+    expect($validation['passed'])->toBeFalse()
+        ->and($validation['evidence']['task_verification']['commands'][0])->toMatchArray([
+            'verification_identifier' => 'php artisan test --compact',
+            'exit_code' => 1,
+        ])
+        ->and($failedEvidence['commands'][0]['summary'])->toContain('Expected 200, received 500.')
+        ->and($failedEvidence['commands'][0]['summary'])->toContain('APP_KEY=[REDACTED]')
+        ->and(json_encode($context, JSON_THROW_ON_ERROR))->not->toContain('super-secret')
+        ->and($context['previous_attempt'])->not->toHaveKey('validation_results')
+        ->and($context['previous_attempt']['failed_validation_evidence'])->not->toHaveKey('git_diff_check');
 });
 
 test('the task committer excludes files that existed before the agent attempt', function () {

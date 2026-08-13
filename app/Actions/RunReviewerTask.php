@@ -17,6 +17,7 @@ use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
 use App\TaskStatus;
+use App\WorkerLease;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -25,19 +26,21 @@ class RunReviewerTask
     public function __construct(private TaskWorkflow $workflow, private CodexCliRunner $runner, private AgentRunRecorder $runs, private StructuredResultParser $parser, private TaskContextCapsuleFactory $capsules, private ObsidianProjectNotes $notes, private WorkerHeartbeat $heartbeat, private AuditLogger $audit) {}
 
     /** @return array{exit_code: int, output: string, error_output: string} */
-    public function run(Task $task, TaskAttempt $attempt): array
+    public function run(Task $task, TaskAttempt $attempt, ?WorkerLease $lease = null): array
     {
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Reviewing, 409, 'Only claimed review tasks may execute.');
         $task->loadMissing('project', 'phase');
         $this->audit->record('review.started', ['attempt_number' => $attempt->number], $task->project, $task);
         $context = $this->capsules->make($task, AgentRole::Reviewer);
         $prompt = "You are the Reviewer. This is a phase review: independently inspect every task in the supplied phase, repository documentation, current implementation, verification results, and exact Git diffs. Approve only when the complete phase meets its acceptance criteria; approval completes every task in the phase. If changes are needed, return actionable findings for the final task so the Coder can correct the phase in a fresh attempt. Return JSON with outcome approved|changes_required, summary, and actionable findings. When approved, make summary a concise, concrete implementation summary suitable for an Obsidian project record, covering the phase changes and verification.\n\n".json_encode(['task' => $context, 'attempt' => $attempt->only(['number', 'base_sha', 'head_sha', 'commit_sha', 'validation_results', 'changed_files']), 'phase' => $this->phaseReviewContext($task)], JSON_THROW_ON_ERROR);
-        $run = $this->runs->start($task->project, AgentRole::Reviewer, $prompt, $task, $attempt);
+        $run = $this->runs->start($task->project, AgentRole::Reviewer, $prompt, $task, $attempt, $lease);
         try {
-            $execution = $this->runner->run($task->project, $prompt, function (string $type, string $output) use ($run, $task): void {
+            $execution = $this->runner->run($task->project, $prompt, function (string $type, string $output) use ($run, $task, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
-                $this->heartbeat->beat($task->project, AgentRole::Reviewer);
-            });
+                if ($lease === null) {
+                    $this->heartbeat->beat($task->project, AgentRole::Reviewer);
+                }
+            }, $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease));
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
         }

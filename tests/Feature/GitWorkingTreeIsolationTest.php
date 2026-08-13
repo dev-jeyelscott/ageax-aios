@@ -86,7 +86,6 @@ test('pre-existing staged changes block a new coder attempt without modifying th
         ->and($task->auditEvents()->where('event_type', 'task.blocked_dirty_repository')->firstOrFail()->payload['staged_files'])->toBe(['feature.txt']);
 });
 
-
 test('task committer rejects an unexpected staged file before staging task files', function () {
     $project = gitIsolationProject();
     $task = gitIsolationTask($project, TaskStatus::Coding);
@@ -171,4 +170,3 @@ test('an interrupted attempt may resume its existing dirty task diff from the sa
         ->and(File::get($project->path.'/feature.txt'))->toBe('interrupted task edit')
         ->and($task->auditEvents()->where('event_type', 'task.repository_recovery_allowed')->exists())->toBeTrue();
 });
-

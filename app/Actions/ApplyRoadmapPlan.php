@@ -4,6 +4,8 @@ namespace App\Actions;
 
 use App\Models\Phase;
 use App\Models\Project;
+use App\Models\Roadmap;
+use App\Models\RoadmapAttempt;
 use App\Models\Task;
 use App\Services\AuditLogger;
 use App\Services\ObsidianProjectNotes;
@@ -14,10 +16,26 @@ class ApplyRoadmapPlan
 {
     public function __construct(private AuditLogger $audit, private ObsidianProjectNotes $notes) {}
 
-    /** @param array<int, array{title: string, objective: string, tasks: array<int, array{title: string, objective: string, acceptance_criteria: array<int, string>, scope?: array<int, string>, constraints?: array<int, string>, relevant_paths?: array<int, string>, verification_commands?: array<int, string>, implementation_prompt: string, depends_on?: array<int, int>, completion_status?: 'done'|'queued', completion_evidence?: string|null}>}> $phases */
-    public function handle(Project $project, array $phases): void
+    /**
+     * @param  array<int, array{title: string, objective: string, tasks: array<int, array{title: string, objective: string, acceptance_criteria: array<int, string>, scope?: array<int, string>, constraints?: array<int, string>, relevant_paths?: array<int, string>, verification_commands?: array<int, string>, implementation_prompt: string, depends_on?: array<int, int>, completion_status?: 'done'|'queued', completion_evidence?: string|null}>}>  $phases
+     * @param  ?array<string, mixed>  $structuredOutput
+     */
+    public function handle(Project $project, array $phases, ?Roadmap $roadmap = null, ?RoadmapAttempt $attempt = null, ?array $structuredOutput = null): void
     {
-        $completedTasks = DB::transaction(function () use ($project, $phases): array {
+        $completedTasks = DB::transaction(function () use ($project, $phases, $roadmap, $attempt, $structuredOutput): array {
+            if ($roadmap !== null && $attempt !== null) {
+                $lockedRoadmap = Roadmap::query()->lockForUpdate()->findOrFail($roadmap->id);
+                $lockedAttempt = RoadmapAttempt::query()->lockForUpdate()->findOrFail($attempt->id);
+
+                if ($lockedAttempt->getRawOriginal('status') === 'persisted') {
+                    return [];
+                }
+
+                if ($lockedRoadmap->getRawOriginal('status') !== 'processing' || $lockedAttempt->roadmap_id !== $lockedRoadmap->id) {
+                    throw new \LogicException('The roadmap attempt is no longer active.');
+                }
+            }
+
             $position = 0;
             $createdTasks = [];
             $taskDependencies = [];
@@ -49,6 +67,15 @@ class ApplyRoadmapPlan
                 if ($dependencyIds !== []) {
                     $createdTasks[$taskPosition]->dependencies()->attach($dependencyIds);
                 }
+            }
+
+            if ($roadmap !== null && $attempt !== null && $structuredOutput !== null) {
+                $lockedRoadmap = Roadmap::query()->lockForUpdate()->findOrFail($roadmap->id);
+                $lockedAttempt = RoadmapAttempt::query()->lockForUpdate()->findOrFail($attempt->id);
+                $lockedAttempt->update(['status' => 'persisted', 'structured_output' => $structuredOutput, 'finished_at' => now()]);
+                $lockedRoadmap->update(['status' => 'processed', 'structured_output' => $structuredOutput, 'processed_at' => now()]);
+                $this->audit->record('roadmap.persistence_completed', ['roadmap_id' => $lockedRoadmap->id, 'roadmap_attempt_id' => $lockedAttempt->id, 'phase_count' => count($phases)], $project);
+                $this->audit->record('roadmap.processed', ['roadmap_id' => $lockedRoadmap->id, 'roadmap_attempt_id' => $lockedAttempt->id, 'phase_count' => count($phases)], $project);
             }
 
             return $completedTasks;

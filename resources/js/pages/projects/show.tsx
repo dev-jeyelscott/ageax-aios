@@ -77,7 +77,11 @@ export default function ProjectShow({
     project: Project;
     vault_organization: VaultOrganizationRun | null;
 }) {
-    usePoll(2_000, { only: ['project', 'vault_organization'] }, { mode: 'rest' });
+    usePoll(
+        2_000,
+        { only: ['project', 'vault_organization'] },
+        { mode: 'rest' },
+    );
     const currentTask = project.tasks.find(
         (task) => !['done', 'cancelled'].includes(task.status),
     );
@@ -358,8 +362,7 @@ export default function ProjectShow({
                         {project.recent_agent_runs.map((run) => {
                             const failed =
                                 run.status === 'failed' ||
-                                (run.exit_code !== null &&
-                                    run.exit_code !== 0);
+                                (run.exit_code !== null && run.exit_code !== 0);
 
                             return (
                                 <div
@@ -368,8 +371,8 @@ export default function ProjectShow({
                                 >
                                     <div>
                                         <p className="font-medium capitalize">
-                                            {run.role.replace('_', ' ')} · Attempt{' '}
-                                            {run.attempt_number ?? '—'}
+                                            {run.role.replace('_', ' ')} ·
+                                            Attempt {run.attempt_number ?? '—'}
                                         </p>
                                         <p className="text-muted-foreground">
                                             {run.token_usage === null

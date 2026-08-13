@@ -93,8 +93,9 @@ type OperatorMessage = {
 type AuditEvent = { id: number; event_type: string; occurred_at: string };
 
 function DisplayList({ items }: { items: string[] | null }) {
-    if (!items || items.length === 0)
+    if (!items || items.length === 0) {
         return <p className="text-sm text-muted-foreground">None recorded.</p>;
+    }
 
     return (
         <ul className="list-disc space-y-1 pl-5 text-sm">
@@ -106,8 +107,9 @@ function DisplayList({ items }: { items: string[] | null }) {
 }
 
 function JsonDetail({ value }: { value: unknown }) {
-    if (!value || (Array.isArray(value) && value.length === 0))
+    if (!value || (Array.isArray(value) && value.length === 0)) {
         return <p className="text-sm text-muted-foreground">None recorded.</p>;
+    }
 
     return (
         <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs whitespace-pre-wrap">
@@ -169,6 +171,7 @@ function formatAgentOutput(
                         className: 'text-emerald-200',
                     };
                 }
+
                 if (item?.type === 'reasoning' && item.text) {
                     return {
                         label: 'thinking>',
@@ -177,16 +180,19 @@ function formatAgentOutput(
                         className: 'text-sky-200',
                     };
                 }
+
                 if (item?.type === 'command_execution') {
                     const command = item.command ? `$ ${item.command}` : '';
                     const result = item.aggregated_output
                         ? `\n${item.aggregated_output}`
                         : '';
+
                     return {
                         message: `${command}${result}`.trim(),
                         className: 'text-amber-200',
                     };
                 }
+
                 if (event.type === 'error' && event.message) {
                     return {
                         label: 'error>',

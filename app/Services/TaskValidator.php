@@ -3,15 +3,18 @@
 namespace App\Services;
 
 use App\Models\Task;
+use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use JsonException;
 
 class TaskValidator
 {
-    public function __construct(private WorkspacePathResolver $paths) {}
+    private const int EvidenceSummaryLimit = 4000;
 
-    /** @return array{passed: bool, checks: array<string, bool>} */
+    public function __construct(private WorkspacePathResolver $paths, private AgentRunRecorder $runs) {}
+
+    /** @return array{passed: bool, checks: array<string, bool>, evidence: array<string, array<string, mixed>>} */
     public function validate(Task $task): array
     {
         $path = $this->paths->assertProjectPath($task->project->path);
@@ -24,14 +27,31 @@ class TaskValidator
             ->filter()
             ->values();
         $forbiddenFiles = $changedFiles->contains(fn (string $file): bool => $this->isForbiddenFile($file));
+        $verification = $this->runVerificationCommands($task);
         $checks = [
             'git_diff_check' => $diff->successful(),
             'secret_scan' => $secrets->exitCode() === 1,
             'forbidden_file_check' => ! $forbiddenFiles,
-            'task_verification' => $this->runVerificationCommands($task),
+            'task_verification' => $verification['passed'],
         ];
 
-        return ['passed' => ! in_array(false, $checks, true), 'checks' => $checks];
+        return [
+            'passed' => ! in_array(false, $checks, true),
+            'checks' => $checks,
+            'evidence' => [
+                'git_diff_check' => $this->processEvidence('git_diff_check', $checks['git_diff_check'], 'git diff --check', $diff),
+                'secret_scan' => $this->secretScanEvidence($checks['secret_scan'], $secrets),
+                'forbidden_file_check' => [
+                    'name' => 'forbidden_file_check',
+                    'passed' => $checks['forbidden_file_check'],
+                    'verification_identifier' => 'git status --porcelain',
+                    'exit_code' => $status->exitCode(),
+                    'files' => $forbiddenFiles ? $changedFiles->filter(fn (string $file): bool => $this->isForbiddenFile($file))->values()->all() : [],
+                    'summary' => $forbiddenFiles ? 'Forbidden files were detected in the working tree.' : null,
+                ],
+                'task_verification' => $verification['evidence'],
+            ],
+        ];
     }
 
     private function isForbiddenFile(string $file): bool
@@ -43,28 +63,68 @@ class TaskValidator
             || preg_match('/^(?:id_rsa|.*\.(?:pem|key))$/', $filename) === 1;
     }
 
-    private function runVerificationCommands(Task $task): bool
+    /** @return array{passed: bool, evidence: array<string, mixed>} */
+    private function runVerificationCommands(Task $task): array
     {
         $commands = $this->verificationCommands($task);
         if ($commands === null) {
-            return false;
+            return ['passed' => false, 'evidence' => ['name' => 'task_verification', 'passed' => false, 'verification_identifier' => 'configured_verification_commands', 'exit_code' => null, 'commands' => [], 'summary' => 'Verification commands could not be decoded.']];
         }
 
+        $evidence = [];
         foreach ($commands as $command) {
             if (! $this->isSafeVerificationCommand($command)) {
-                return false;
+                return ['passed' => false, 'evidence' => ['name' => 'task_verification', 'passed' => false, 'verification_identifier' => 'configured_verification_commands', 'exit_code' => null, 'commands' => $evidence, 'summary' => 'A configured verification command is not allowed.']];
             }
 
             $result = Process::path($this->paths->assertProjectPath($task->project->path))
                 ->timeout((int) config('aios.execution_timeout'))
                 ->run(preg_split('/\\s+/', trim($command)) ?: []);
 
+            $commandEvidence = $this->processEvidence('task_verification_command', $result->successful(), $command, $result);
+            $evidence[] = $commandEvidence;
             if ($result->failed()) {
-                return false;
+                return ['passed' => false, 'evidence' => ['name' => 'task_verification', 'passed' => false, 'verification_identifier' => 'task_verification_commands', 'exit_code' => $result->exitCode(), 'commands' => $evidence, 'summary' => 'A task verification command failed.']];
             }
         }
 
-        return true;
+        return ['passed' => true, 'evidence' => ['name' => 'task_verification', 'passed' => true, 'verification_identifier' => 'task_verification_commands', 'exit_code' => 0, 'commands' => $evidence, 'summary' => null]];
+    }
+
+    /** @return array{name: string, passed: bool, verification_identifier: string, exit_code: ?int, summary: ?string} */
+    private function processEvidence(string $name, bool $passed, string $identifier, ProcessResult $result): array
+    {
+        return [
+            'name' => $name,
+            'passed' => $passed,
+            'verification_identifier' => $identifier,
+            'exit_code' => $result->exitCode(),
+            'summary' => $passed ? null : $this->boundedSummary($result->output(), $result->errorOutput()),
+        ];
+    }
+
+    /** @return array{name: string, passed: bool, verification_identifier: string, exit_code: ?int, summary: ?string} */
+    private function secretScanEvidence(bool $passed, ProcessResult $result): array
+    {
+        return [
+            'name' => 'secret_scan',
+            'passed' => $passed,
+            'verification_identifier' => 'secret_scan',
+            'exit_code' => $result->exitCode(),
+            'summary' => $passed ? null : ($result->exitCode() === 0 ? 'Potential secret material was detected. Match details were intentionally omitted.' : 'The secret scan did not complete successfully.'),
+        ];
+    }
+
+    private function boundedSummary(string $output, string $errorOutput): ?string
+    {
+        $summary = trim($this->runs->redact($output."\n".$errorOutput));
+        if ($summary === '') {
+            return null;
+        }
+
+        return Str::length($summary) > self::EvidenceSummaryLimit
+            ? '…'.Str::substr($summary, -self::EvidenceSummaryLimit)
+            : $summary;
     }
 
     /** @return array<int, string>|null */
