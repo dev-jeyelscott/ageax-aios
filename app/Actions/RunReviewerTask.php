@@ -48,12 +48,10 @@ class RunReviewerTask
 
         $review = $this->parser->parseAgentMessage($execution['output']);
         if ($execution['exit_code'] !== 0 || $review === null) {
-            $this->audit->record('review.failed', [
-                'attempt_number' => $attempt->number,
+            $this->workflow->recordReviewerOperationalFailure($task, $attempt, [
                 'exit_code' => $execution['exit_code'],
                 'reason' => $execution['exit_code'] !== 0 ? 'execution_failed' : 'missing_structured_decision',
-            ], $task->project, $task);
-            $this->workflow->transition($task, TaskStatus::ChangesRequired);
+            ]);
 
             return $execution;
         }
@@ -62,7 +60,7 @@ class RunReviewerTask
             $validated = validator($review, [
                 'outcome' => ['required', 'in:approved,changes_required'],
                 'summary' => ['nullable', 'string'],
-                'findings' => ['required_if:outcome,changes_required', 'array'],
+                'findings' => ['exclude_unless:outcome,changes_required', 'required', 'array', 'min:1'],
                 'findings.*.severity' => ['required', 'string'],
                 'findings.*.location' => ['nullable', 'string'],
                 'findings.*.current_implementation' => ['required', 'string'],
@@ -73,12 +71,10 @@ class RunReviewerTask
                 'findings.*.implementation_fix_context' => ['required', 'string'],
             ])->validate();
         } catch (ValidationException) {
-            $this->audit->record('review.failed', [
-                'attempt_number' => $attempt->number,
+            $this->workflow->recordReviewerOperationalFailure($task, $attempt, [
                 'exit_code' => $execution['exit_code'],
                 'reason' => 'invalid_structured_decision',
-            ], $task->project, $task);
-            $this->workflow->transition($task, TaskStatus::ChangesRequired);
+            ]);
 
             return $execution;
         }
@@ -89,10 +85,11 @@ class RunReviewerTask
     }
 
     /** @param array<int, array<string, string>> $findings */
-    public function record(Task $task, TaskAttempt $attempt, ReviewStatus $outcome, ?string $summary = null, array $findings = []): Review
+    private function record(Task $task, TaskAttempt $attempt, ReviewStatus $outcome, ?string $summary = null, array $findings = []): Review
     {
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Reviewing, 409, 'Only claimed review tasks may be decided.');
         abort_unless(in_array($outcome, [ReviewStatus::Approved, ReviewStatus::ChangesRequired], true), 422, 'A review must explicitly approve or request changes.');
+        abort_if($outcome === ReviewStatus::ChangesRequired && $findings === [], 422, 'A rejection must include actionable findings.');
         $review = Review::create(['task_id' => $task->id, 'task_attempt_id' => $attempt->id, 'status' => $outcome, 'summary' => $summary, 'started_at' => now(), 'completed_at' => now()]);
         foreach ($findings as $finding) {
             $reviewFinding = ReviewFinding::create(['review_id' => $review->id, 'severity' => $finding['severity'], 'location' => $finding['location'] ?? null, 'current_implementation' => $finding['current_implementation'], 'expected_implementation' => $finding['expected_implementation'], 'why_incorrect' => $finding['why_incorrect'], 'required_fix' => $finding['required_fix'], 'verification_requirement' => $finding['verification_requirement'], 'implementation_fix_context' => $finding['implementation_fix_context']]);

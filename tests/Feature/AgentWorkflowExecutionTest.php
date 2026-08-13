@@ -162,20 +162,24 @@ test('reviewer persists actionable findings and returns a task to the coder', fu
         ->and($task->auditEvents()->where('event_type', 'task.rejected')->exists())->toBeTrue();
 });
 
-test('a reviewer without a valid decision returns the task to the coder instead of retrying review', function () {
+test('malformed reviewer output preserves the implementation and retries review without invoking the coder', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = reviewTask($project);
-    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'completed', 'started_at' => now(), 'finished_at' => now()]);
+    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'base_sha' => 'base-sha', 'head_sha' => 'head-sha', 'commit_sha' => 'commit-sha', 'status' => 'completed', 'changed_files' => ['app/Example.php'], 'started_at' => now(), 'finished_at' => now()]);
     Process::fake(['*' => Process::result(output: 'Reviewer could not complete the decision.')]);
 
     app(RunReviewerTask::class)->run($task, $attempt);
 
-    expect($task->refresh()->status)->toBe(TaskStatus::ChangesRequired)
+    expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
+        ->and($attempt->refresh()->only(['base_sha', 'head_sha', 'commit_sha', 'changed_files']))->toBe(['base_sha' => 'base-sha', 'head_sha' => 'head-sha', 'commit_sha' => 'commit-sha', 'changed_files' => ['app/Example.php']])
+        ->and($task->reviews()->count())->toBe(0)
+        ->and($task->auditEvents()->where('event_type', 'task.rejected')->exists())->toBeFalse()
         ->and($task->auditEvents()->where('event_type', 'review.failed')->exists())->toBeTrue()
-        ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder)?->id)->toBe($task->id);
+        ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder))->toBeNull()
+        ->and(app(ClaimTask::class)->handle($project, AgentRole::Reviewer)?->id)->toBe($task->id);
 });
 
-test('a reviewer execution exception returns the task to the coder with durable failed evidence', function () {
+test('reviewer execution failure does not create a rejection and retries review', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = reviewTask($project);
     $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'completed', 'started_at' => now(), 'finished_at' => now()]);
@@ -183,10 +187,14 @@ test('a reviewer execution exception returns the task to the coder with durable 
 
     app(RunReviewerTask::class)->run($task, $attempt);
 
-    expect($task->refresh()->status)->toBe(TaskStatus::ChangesRequired)
+    expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
+        ->and(AgentRun::query()->whereBelongsTo($task)->value('status'))->toBe(AgentRunStatus::Failed)
         ->and(AgentRun::query()->whereBelongsTo($task)->value('exit_code'))->toBe(-1)
+        ->and($task->reviews()->count())->toBe(0)
+        ->and($task->auditEvents()->where('event_type', 'task.rejected')->exists())->toBeFalse()
         ->and($task->auditEvents()->where('event_type', 'review.failed')->exists())->toBeTrue()
-        ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder)?->id)->toBe($task->id);
+        ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder))->toBeNull()
+        ->and(app(ClaimTask::class)->handle($project, AgentRole::Reviewer)?->id)->toBe($task->id);
 });
 
 test('live reviewer output refreshes the worker heartbeat', function () {
@@ -499,16 +507,19 @@ test('stale recovery preserves repository and execution evidence for the fresh r
     expect($recoveryAuditPayload['evidence']['current_head_sha'])->toBe('current-sha');
 });
 
-test('stale reviewer recovery returns the task to the coder', function () {
+test('stale reviewer recovery preserves the implementation for a fresh review', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     AgentWorker::create(['project_id' => $project->id, 'role' => AgentRole::Reviewer, 'status' => 'working', 'last_heartbeat_at' => now()->subMinutes(5)]);
     $task = reviewTask($project);
+    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'base_sha' => 'base-sha', 'head_sha' => 'head-sha', 'commit_sha' => 'commit-sha', 'status' => 'completed', 'changed_files' => ['app/Example.php'], 'started_at' => now(), 'finished_at' => now()]);
     AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'role' => AgentRole::Reviewer, 'status' => AgentRunStatus::Running, 'prompt_hash' => hash('sha256', 'test'), 'started_at' => now()->subMinutes(5)]);
 
     app(StaleWorkerRecovery::class)->recover($project, 60);
 
-    expect($task->refresh()->status)->toBe(TaskStatus::ChangesRequired)
-        ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder)?->id)->toBe($task->id);
+    expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
+        ->and($attempt->refresh()->only(['base_sha', 'head_sha', 'commit_sha', 'changed_files']))->toBe(['base_sha' => 'base-sha', 'head_sha' => 'head-sha', 'commit_sha' => 'commit-sha', 'changed_files' => ['app/Example.php']])
+        ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder))->toBeNull()
+        ->and(app(ClaimTask::class)->handle($project, AgentRole::Reviewer)?->id)->toBe($task->id);
 });
 
 test('stale recovery safely ignores the global knowledge architect role', function () {

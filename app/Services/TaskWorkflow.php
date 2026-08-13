@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\AgentRole;
 use App\Exceptions\InvalidTaskTransition;
+use App\Models\AuditEvent;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
@@ -60,6 +61,44 @@ class TaskWorkflow
         }
 
         return $transitionedTask;
+    }
+
+    /** @param array<string, mixed> $failure */
+    public function recordReviewerOperationalFailure(Task $task, ?TaskAttempt $attempt, array $failure): Task
+    {
+        return DB::transaction(function () use ($task, $attempt, $failure): Task {
+            $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+
+            if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::Reviewing) {
+                throw new InvalidTaskTransition('Only a claimed review task can record an operational failure.');
+            }
+
+            $failureCount = AuditEvent::query()
+                ->whereBelongsTo($lockedTask)
+                ->where('event_type', 'review.failed')
+                ->get()
+                ->filter(fn (AuditEvent $event): bool => ($event->payload['attempt_number'] ?? null) === $attempt?->number)
+                ->count() + 1;
+            $retryLimit = max(1, (int) config('aios.max_reviewer_attempts'));
+            $retryStatus = $failureCount >= $retryLimit ? TaskStatus::Blocked : TaskStatus::ReadyForReview;
+            $payload = [
+                ...$failure,
+                'attempt_number' => $attempt?->number,
+                'retry_count' => $failureCount,
+                'retry_limit' => $retryLimit,
+            ];
+
+            $this->audit->record('review.failed', $payload, $lockedTask->project, $lockedTask);
+            $this->transitionLocked($lockedTask, $retryStatus);
+            $this->audit->record(
+                $retryStatus === TaskStatus::Blocked ? 'review.retry_exhausted' : 'review.retry_scheduled',
+                $payload,
+                $lockedTask->project,
+                $lockedTask,
+            );
+
+            return $lockedTask->refresh();
+        }, attempts: 3);
     }
 
     /** @return array<int, Task> */
@@ -176,7 +215,7 @@ class TaskWorkflow
             TaskStatus::Reviewing => [TaskStatus::Done, TaskStatus::ChangesRequired, TaskStatus::ReadyForReview, TaskStatus::Interrupted],
             TaskStatus::ChangesRequired => [TaskStatus::Coding, TaskStatus::Cancelled, TaskStatus::Blocked],
             TaskStatus::Interrupted => [TaskStatus::Coding, TaskStatus::Reviewing, TaskStatus::Failed],
-            TaskStatus::Blocked => [TaskStatus::Queued, TaskStatus::ChangesRequired, TaskStatus::Cancelled],
+            TaskStatus::Blocked => [TaskStatus::Queued, TaskStatus::ChangesRequired, TaskStatus::ReadyForReview, TaskStatus::Cancelled],
             TaskStatus::Failed => [TaskStatus::Coding, TaskStatus::Blocked, TaskStatus::Cancelled],
             TaskStatus::Done, TaskStatus::Cancelled => [],
         };
@@ -232,4 +271,3 @@ class TaskWorkflow
         });
     }
 }
-

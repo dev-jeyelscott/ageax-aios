@@ -37,16 +37,21 @@ class StaleWorkerRecovery
             };
 
             if ($statuses !== []) {
-                $recoveryStatus = $role === AgentRole::Coder ? TaskStatus::Failed : TaskStatus::ChangesRequired;
                 $recoveredTasks = [];
-                $project->tasks()->whereIn('status', $statuses)->get()->each(function (Task $task) use ($recoveryStatus, $role, $project, &$recoveredTasks): void {
+                $project->tasks()->whereIn('status', $statuses)->get()->each(function (Task $task) use ($role, $project, &$recoveredTasks): void {
                     $evidence = $this->recoveryEvidence($task);
                     $this->storeRecoveryEvidence($task, $evidence);
                     if ($role === AgentRole::Coder) {
                         $task->attempts()->where('status', 'running')->update(['status' => 'interrupted', 'finished_at' => now()]);
+                        $this->workflow->transition($task, TaskStatus::Failed);
+                    } else {
+                        $this->workflow->recordReviewerOperationalFailure(
+                            $task,
+                            $task->attempts()->latest('number')->first(),
+                            ['reason' => 'stale_worker', 'evidence' => $evidence],
+                        );
                     }
 
-                    $this->workflow->transition($task, $recoveryStatus);
                     $this->audit->record('task.recovered', ['role' => $role->value, 'evidence' => $evidence], $project, $task);
                     $recoveredTasks[] = ['task_key' => $task->key, 'evidence' => $evidence];
                 });
