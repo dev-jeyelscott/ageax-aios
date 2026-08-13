@@ -7,6 +7,7 @@ use App\AgentRunStatus;
 use App\Models\AgentRun;
 use App\Models\AgentWorker;
 use App\Models\Project;
+use App\Models\ProjectManagerMessage;
 use App\Models\Roadmap;
 use App\Models\RoadmapAttempt;
 use App\Models\User;
@@ -168,6 +169,26 @@ test('a Project Manager only runs after atomically claiming an uploaded roadmap'
 
     expect($result)->toBe(['exit_code' => 0, 'output' => '', 'error_output' => ''])
         ->and($project->runs()->doesntExist())->toBeTrue();
+});
+
+test('a Project Manager receives queued operator messages in its next fresh execution', function () {
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $roadmap = Roadmap::create(['project_id' => $project->id, 'original_filename' => 'roadmap.md', 'storage_path' => 'roadmaps/roadmap.md', 'status' => 'uploaded', 'content' => 'Build the application.']);
+    $message = ProjectManagerMessage::factory()->for($project)->for(User::factory())->create([
+        'body' => 'Keep the roadmap scoped to the existing Laravel architecture.',
+    ]);
+    $plan = validRoadmapPlan();
+    $output = json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => json_encode($plan, JSON_THROW_ON_ERROR)]], JSON_THROW_ON_ERROR);
+
+    mock(CodexCliRunner::class)->shouldReceive('run')->once()->withArgs(function (Project $passedProject, string $prompt, mixed ...$unused) use ($project): bool {
+        return $passedProject->is($project)
+            && str_contains($prompt, 'Keep the roadmap scoped to the existing Laravel architecture.');
+    })->andReturn(['exit_code' => 0, 'output' => $output, 'error_output' => '']);
+
+    app(RunProjectManager::class)->handle($roadmap);
+
+    expect($message->refresh()->delivered_at)->not->toBeNull();
 });
 
 test('a crash after a roadmap claim is recovered without losing the claimed attempt', function () {

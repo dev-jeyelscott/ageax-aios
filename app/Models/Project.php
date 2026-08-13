@@ -60,4 +60,10 @@ class Project extends Model
     {
         return $this->hasMany(AuditEvent::class);
     }
+
+    /** @return HasMany<ProjectManagerMessage, $this> */
+    public function projectManagerMessages(): HasMany
+    {
+        return $this->hasMany(ProjectManagerMessage::class);
+    }
 }

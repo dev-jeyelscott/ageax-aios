@@ -10,6 +10,7 @@ import {
 import {
     index,
     requeueTask,
+    showAgentRun,
     showTask,
     updateStatus,
 } from '@/actions/App/Http/Controllers/ProjectController';
@@ -63,11 +64,7 @@ function formatTokens(tokens: number): string {
 }
 
 export default function ProjectShow({ project }: { project: Project }) {
-    usePoll(
-        2_000,
-        { only: ['project'] },
-        { mode: 'rest' },
-    );
+    usePoll(2_000, { only: ['project'] }, { mode: 'rest' });
     const currentTask = project.tasks.find(
         (task) => !['done', 'cancelled'].includes(task.status),
     );
@@ -323,8 +320,14 @@ export default function ProjectShow({ project }: { project: Project }) {
                                 (run.exit_code !== null && run.exit_code !== 0);
 
                             return (
-                                <div
+                                <Link
                                     key={run.id}
+                                    href={
+                                        showAgentRun({
+                                            project: project.id,
+                                            run: run.id,
+                                        }).url
+                                    }
                                     className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
                                 >
                                     <div>
@@ -347,7 +350,7 @@ export default function ProjectShow({ project }: { project: Project }) {
                                             ? `error${run.exit_code === null ? '' : ` · exit ${run.exit_code}`}`
                                             : run.status}
                                     </Badge>
-                                </div>
+                                </Link>
                             );
                         })}
                         {project.recent_agent_runs.length === 0 && (

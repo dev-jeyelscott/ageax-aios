@@ -3,15 +3,18 @@
 namespace App\Http\Controllers;
 
 use App\Actions\CreateProject;
+use App\Actions\RecordProjectManagerMessage;
 use App\Actions\RecordTaskOperatorMessage;
 use App\Actions\RequeueBlockedTask;
 use App\Actions\SetProjectStatus;
 use App\Actions\StoreRoadmap;
 use App\AgentRole;
+use App\Http\Requests\StoreProjectManagerMessageRequest;
 use App\Http\Requests\StoreProjectRequest;
 use App\Http\Requests\StoreRoadmapRequest;
 use App\Http\Requests\StoreTaskOperatorMessageRequest;
 use App\Http\Requests\UpdateProjectStatusRequest;
+use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
@@ -95,6 +98,31 @@ class ProjectController extends Controller
         });
 
         return Inertia::render('projects/tasks/show', ['project' => $project->only(['id', 'name', 'path']), 'task' => $task]);
+    }
+
+    public function showAgentRun(Project $project, AgentRun $run, AgentRunRecorder $runs): Response
+    {
+        $run->loadMissing('task:id,key,title', 'worker:id,role,status,last_heartbeat_at');
+        $run->setAttribute('transcript', $runs->transcript($run));
+        $run->makeHidden('log_path');
+        $isProjectManager = $run->getRawOriginal('role') === AgentRole::ProjectManager->value;
+
+        return Inertia::render('projects/agent-runs/show', [
+            'project' => $project->only(['id', 'name', 'path']),
+            'agent_run' => $run,
+            'project_manager_messages' => $isProjectManager
+                ? $project->projectManagerMessages()->oldest()->with('user:id,name')->get()
+                : [],
+        ]);
+    }
+
+    public function storeProjectManagerMessage(StoreProjectManagerMessageRequest $request, Project $project, RecordProjectManagerMessage $messages): RedirectResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+        $messages->handle($project, $user, $request->validated('body'));
+
+        return back();
     }
 
     public function storeOperatorMessage(StoreTaskOperatorMessageRequest $request, Project $project, Task $task, RecordTaskOperatorMessage $recordTaskOperatorMessage): RedirectResponse
