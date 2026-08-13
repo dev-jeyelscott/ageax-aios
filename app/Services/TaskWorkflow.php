@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
 
 class TaskWorkflow
 {
-    public function __construct(private AuditLogger $audit, private ObsidianProjectNotes $notes) {}
+    public function __construct(private AuditLogger $audit, private ObsidianProjectNotes $notes, private CoderRepositoryGuard $repositoryGuard) {}
 
     public function claim(Project $project, AgentRole $role): ?Task
     {
@@ -31,6 +31,10 @@ class TaskWorkflow
             };
 
             if ($task === null) {
+                return null;
+            }
+
+            if ($role === AgentRole::Coder && ! $this->repositoryAllowsCoderClaim($lockedProject, $task)) {
                 return null;
             }
 
@@ -112,6 +116,43 @@ class TaskWorkflow
         return $project->tasks()->whereIn('status', $statuses)->exists();
     }
 
+    private function repositoryAllowsCoderClaim(Project $project, Task $task): bool
+    {
+        $preflight = $this->repositoryGuard->inspect($task);
+        $state = $preflight['state'];
+        $project->update([
+            'git_head_sha' => $state['head_sha'],
+            'git_status' => $state['inspectable'] ? ($state['clean'] ? 'clean' : 'dirty') : 'unknown',
+        ]);
+
+        if ($preflight['allowed']) {
+            if ($preflight['mode'] === 'recovery' && $preflight['recovery_attempt'] !== null) {
+                $this->audit->record('task.repository_recovery_allowed', [
+                    'attempt_number' => $preflight['recovery_attempt']->number,
+                    'attempt_status' => $preflight['recovery_attempt']->status,
+                    'base_sha' => $preflight['base_sha'],
+                    'changed_files' => $preflight['recovery_attempt']->changed_files ?? [],
+                ], $project, $task);
+            }
+
+            return true;
+        }
+
+        $this->transitionLocked($task, TaskStatus::Blocked);
+        $this->audit->record('task.blocked_dirty_repository', [
+            'reason' => $state['inspectable'] ? 'repository_not_clean' : 'repository_state_unavailable',
+            'head_sha' => $state['head_sha'],
+            'base_sha' => $state['base_sha'],
+            'staged_files' => $state['staged_files'],
+            'unstaged_files' => $state['unstaged_files'],
+            'untracked_files' => $state['untracked_files'],
+            'errors' => $state['errors'],
+            'action' => 'Resolve the repository state manually, then requeue the task. AIOS did not stash, reset, clean, discard, or commit these changes.',
+        ], $project, $task);
+
+        return false;
+    }
+
     private function transitionLocked(Task $task, TaskStatus $to): void
     {
         $from = TaskStatus::from($task->getRawOriginal('status'));
@@ -191,3 +232,4 @@ class TaskWorkflow
         });
     }
 }
+

@@ -1,4 +1,4 @@
-# AGENTS.md — AGEAX AIOS 2.0
+# MASTER-PROMPT.md — AGEAX AIOS 2.0
 
 ## Project
 
