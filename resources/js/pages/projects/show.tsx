@@ -55,6 +55,16 @@ type Project = {
     workers: Worker[];
     tasks: Task[];
     token_usage_total: number;
+    token_observability: Record<
+        string,
+        {
+            rolling_average: number | null;
+            baseline_average: number | null;
+            change_percentage: number | null;
+            run_count: number;
+            warning_threshold: number;
+        }
+    >;
     recent_agent_runs: AgentRun[];
     audit_events: { id: number; event_type: string; occurred_at: string }[];
 };
@@ -207,6 +217,18 @@ export default function ProjectShow({ project }: { project: Project }) {
                         </CardHeader>
                         <CardContent className="text-sm text-muted-foreground">
                             {formatTokens(project.token_usage_total)} tokens
+                            <div className="mt-2 grid gap-1 text-xs">
+                                {Object.entries(project.token_observability).map(
+                                    ([role, usage]) => (
+                                        <span key={role}>
+                                            {role}: {usage.rolling_average === null ? 'no runs' : `${formatTokens(usage.rolling_average)} avg / ${formatTokens(usage.warning_threshold)} warning`}
+                                            {usage.change_percentage === null
+                                                ? ''
+                                                : ` (${usage.change_percentage > 0 ? '+' : ''}${usage.change_percentage}% vs baseline)`}
+                                        </span>
+                                    ),
+                                )}
+                            </div>
                         </CardContent>
                     </Card>
                 </div>

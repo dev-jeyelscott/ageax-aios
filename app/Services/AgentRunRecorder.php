@@ -20,9 +20,10 @@ class AgentRunRecorder
 
     private const int MetadataItemLimit = 200;
 
-    public function __construct(private AuditLogger $audit) {}
+    public function __construct(private AuditLogger $audit, private TokenUsageObservability $tokens) {}
 
-    public function start(Project $project, AgentRole $role, string $prompt, ?Task $task = null, ?TaskAttempt $attempt = null, ?WorkerLease $lease = null): AgentRun
+    /** @param array<string, mixed>|null $retrievalManifest */
+    public function start(Project $project, AgentRole $role, string $prompt, ?Task $task = null, ?TaskAttempt $attempt = null, ?WorkerLease $lease = null, ?array $retrievalManifest = null): AgentRun
     {
         $run = AgentRun::create([
             'project_id' => $project->id,
@@ -34,6 +35,7 @@ class AgentRunRecorder
             'status' => AgentRunStatus::Running,
             'attempt_number' => $attempt?->number,
             'prompt_hash' => hash('sha256', $prompt),
+            'result' => $retrievalManifest === null ? null : ['retrieval_manifest' => $retrievalManifest],
             'started_at' => now(),
         ]);
 
@@ -44,6 +46,7 @@ class AgentRunRecorder
             'prompt_hash' => $run->prompt_hash,
             'worker_instance_id' => $run->worker_instance_id,
             'worker_lease_id' => $run->worker_lease_id,
+            'retrieval_manifest' => $retrievalManifest,
         ], $project, $task);
 
         return $run;
@@ -62,11 +65,12 @@ class AgentRunRecorder
             $liveOutput = $this->boundedOutput($output."\n".$errorOutput);
         }
 
+        $existingResult = $this->result($run->fresh());
         $run->update([
             'status' => $execution['exit_code'] === 0 ? AgentRunStatus::Completed : AgentRunStatus::Failed,
             'exit_code' => $execution['exit_code'],
             'codex_run_id' => $metadata['codex_run_id'],
-            'result' => $metadata['result'],
+            'result' => [...$existingResult, ...$metadata['result']],
             'commands' => $metadata['commands'],
             'file_modifications' => $metadata['file_modifications'],
             'token_usage' => $metadata['token_usage'],
@@ -77,6 +81,7 @@ class AgentRunRecorder
 
         $completedRun = $run->refresh();
         $completedRun->loadMissing('project', 'task');
+        $observability = $this->tokens->forProject($completedRun->project);
         $this->audit->record('agent.execution_completed', [
             'agent_run_id' => $completedRun->id,
             'role' => AgentRole::from($completedRun->getRawOriginal('role'))->value,
@@ -86,7 +91,21 @@ class AgentRunRecorder
             'token_usage' => $completedRun->token_usage,
             'commands' => $completedRun->commands ?? [],
             'file_modifications' => $completedRun->file_modifications ?? [],
+            'retrieval_manifest' => $this->result($completedRun)['retrieval_manifest'] ?? null,
+            'token_observability' => $observability,
         ], $completedRun->project, $completedRun->task);
+
+        $role = AgentRole::from($completedRun->getRawOriginal('role'));
+        $threshold = $observability[$role->value]['warning_threshold'] ?? null;
+        if ($threshold !== null && $completedRun->token_usage !== null && $completedRun->token_usage >= $threshold) {
+            $this->audit->record('agent.token_warning', [
+                'agent_run_id' => $completedRun->id,
+                'role' => $role->value,
+                'token_usage' => $completedRun->token_usage,
+                'warning_threshold' => $threshold,
+                'token_observability' => $observability[$role->value],
+            ], $completedRun->project, $completedRun->task);
+        }
 
         return $completedRun;
     }
@@ -155,6 +174,14 @@ class AgentRunRecorder
         return mb_strlen($output) > self::LiveOutputLimit
             ? mb_substr($output, -self::LiveOutputLimit)
             : $output;
+    }
+
+    /** @return array<string, mixed> */
+    private function result(AgentRun $run): array
+    {
+        $decoded = json_decode((string) $run->getRawOriginal('result'), true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     private function redactSensitiveOutput(string $output): string

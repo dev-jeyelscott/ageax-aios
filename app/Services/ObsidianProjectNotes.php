@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\AgentRole;
 use App\Models\Project;
 use App\Models\Review;
 use App\Models\Roadmap;
@@ -58,6 +59,52 @@ class ObsidianProjectNotes
         $this->writeState($task->project);
 
         return $path;
+    }
+
+    public function writeTaskBrief(Task $task): ?string
+    {
+        $task->loadMissing('project', 'phase');
+        $criteria = collect($this->taskStringList($task, 'acceptance_criteria'))->map(fn (string $criterion): string => "- {$criterion}")->implode("\n");
+        $paths = collect($this->taskStringList($task, 'relevant_paths'))->map(fn (string $path): string => "- `{$path}`")->implode("\n");
+        $commands = collect($this->taskStringList($task, 'verification_commands'))->map(fn (string $command): string => "- `{$command}`")->implode("\n");
+        $constraints = collect($this->taskStringList($task, 'constraints'))->map(fn (string $constraint): string => "- {$constraint}")->implode("\n");
+        $context = $this->taskArray($task, 'context_capsule');
+        $links = collect(is_array($context['obsidian_notes'] ?? null) ? $context['obsidian_notes'] : [])
+            ->filter(fn (mixed $path): bool => is_string($path))
+            ->map(fn (string $path): string => "- [[{$path}]]")
+            ->implode("\n");
+
+        try {
+            $path = $this->writeProjectNote($task->project, 'Task Briefs', $this->taskBriefFilename($task), "# {$task->key}: {$task->title}\n\n## Objective\n\n{$task->objective}\n\n## Acceptance criteria\n\n{$criteria}\n\n## Relevant paths\n\n".($paths !== '' ? $paths : '- Inspect the current implementation.')."\n\n## Verification commands\n\n".($commands !== '' ? $commands : '- Run focused existing coverage.')."\n\n## Constraints\n\n".($constraints !== '' ? $constraints : '- Follow AGENTS.md and existing conventions.')."\n\n## Intentional notes\n\n".($links !== '' ? $links : '- None.')."\n");
+            $this->writeState($task->project);
+        } catch (Throwable) {
+            return null;
+        }
+
+        return $path;
+    }
+
+    public function writePhaseReviewBrief(Task $task): ?string
+    {
+        $task->loadMissing('project', 'phase');
+        $phaseTasks = $task->phase_id === null
+            ? collect([$task])
+            : Task::query()->whereBelongsTo($task->project)->where('phase_id', $task->phase_id)->with('attempts')->orderBy('position')->get();
+        $tasks = $phaseTasks->map(function (Task $phaseTask): string {
+            $attempt = $phaseTask->attempts->sortByDesc('number')->first();
+            $criteria = collect($this->taskStringList($phaseTask, 'acceptance_criteria'))->map(fn (string $criterion): string => "  - {$criterion}")->implode("\n");
+            $files = collect($attempt === null ? [] : $this->attemptStringList($attempt, 'changed_files'))->map(fn (string $file): string => "  - `{$file}`")->implode("\n");
+            $validation = $attempt === null ? [] : $this->attemptArray($attempt, 'validation_results');
+            $passed = ($validation['passed'] ?? false) === true ? 'passed' : 'not passed';
+
+            return "## {$phaseTask->key}: {$phaseTask->title}\n\n- Brief: [[Task Briefs/{$this->taskBriefFilename($phaseTask)}]]\n- Commit: ".($attempt === null ? 'Not recorded' : ($attempt->commit_sha ?? 'Not recorded'))."\n- Validation: {$passed}\n\n### Acceptance criteria\n\n{$criteria}\n\n### Changed files\n\n".($files !== '' ? $files : '- None recorded.');
+        })->implode("\n\n");
+
+        try {
+            return $this->writeProjectNote($task->project, 'Phase Reviews', $this->phaseReviewBriefFilename($task), '# Phase review: '.$this->phaseTitle($task)."\n\n## Objective\n\n".$this->phaseObjective($task)."\n\n{$tasks}\n");
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     public function writeRoadmapUpload(Roadmap $roadmap): ?string
@@ -185,27 +232,39 @@ class ObsidianProjectNotes
         ]);
     }
 
-    /** @return array<string, string> */
-    public function taskKnowledge(Task $task): array
+    /** @return array{notes: array<string, string>, manifest: array{role: string, selected_note_paths: array<int, string>, character_count: int, retrieval_reason: string}} */
+    public function roadmapRetrieval(Project $project): array
     {
-        $task->loadMissing('project', 'phase');
-        $taskFilename = $task->key.' - '.Str::slug($task->title).'.md';
-        $paths = [
-            'STATE.md',
-            'Tasks/'.$taskFilename,
-            'Handoffs/'.$task->key.'.md',
-            'Handoffs/'.$taskFilename,
-            'Reviews/'.$task->key.'.md',
+        $notes = $this->roadmapKnowledge($project);
+
+        return [
+            'notes' => $notes,
+            'manifest' => [
+                'role' => AgentRole::ProjectManager->value,
+                'selected_note_paths' => array_keys($notes),
+                'character_count' => array_sum(array_map(Str::length(...), $notes)),
+                'retrieval_reason' => 'targeted project roadmap knowledge only',
+            ],
         ];
+    }
 
-        if ($task->phase !== null) {
-            $paths[] = 'Phases/'.str_pad((string) $task->phase->position, 2, '0', STR_PAD_LEFT).' - '.Str::slug($task->phase->title).'.md';
-        }
-
-        $initialNotes = $this->readNotes($task->project, $paths);
+    /** @return array{notes: array<string, string>, manifest: array{role: string, selected_note_paths: array<int, string>, character_count: int, retrieval_reason: string}} */
+    public function taskRetrieval(Task $task, AgentRole $role): array
+    {
+        $task->loadMissing('project');
+        $initialNotes = $this->readNotes($task->project, ['STATE.md', 'Task Briefs/'.$this->taskBriefFilename($task)]);
         $explicitPaths = $this->explicitNotePaths($task, $initialNotes);
+        $notes = $initialNotes + $this->readNotes($task->project, $explicitPaths, count($initialNotes));
 
-        return $initialNotes + $this->readNotes($task->project, $explicitPaths);
+        return [
+            'notes' => $notes,
+            'manifest' => [
+                'role' => $role->value,
+                'selected_note_paths' => array_keys($notes),
+                'character_count' => array_sum(array_map(Str::length(...), $notes)),
+                'retrieval_reason' => 'state, current task brief, and intentional project-local Markdown links only',
+            ],
+        ];
     }
 
     public function writeState(Project $project): ?string
@@ -243,8 +302,8 @@ class ObsidianProjectNotes
     private function explicitNotePaths(Task $task, array $initialNotes): array
     {
         $paths = [];
-        $contextCapsule = json_decode((string) $task->getRawOriginal('context_capsule'), true);
-        if (is_array($contextCapsule) && is_array($contextCapsule['obsidian_notes'] ?? null)) {
+        $contextCapsule = $this->taskArray($task, 'context_capsule');
+        if (is_array($contextCapsule['obsidian_notes'] ?? null)) {
             $paths = $contextCapsule['obsidian_notes'];
         }
 
@@ -277,7 +336,7 @@ class ObsidianProjectNotes
      * @param  array<int, string>  $relativePaths
      * @return array<string, string>
      */
-    private function readNotes(Project $project, array $relativePaths): array
+    private function readNotes(Project $project, array $relativePaths, int $alreadySelected = 0): array
     {
         $directory = $this->projectDirectory($project);
         if ($directory === null || ! $this->files->isDirectory($directory)) {
@@ -290,7 +349,7 @@ class ObsidianProjectNotes
         $knowledge = [];
 
         foreach (array_unique($relativePaths) as $relativePath) {
-            if (count($knowledge) >= $maximumNotes || $remainingCharacters === 0) {
+            if (($alreadySelected + count($knowledge)) >= $maximumNotes || $remainingCharacters === 0) {
                 break;
             }
 
@@ -348,6 +407,34 @@ class ObsidianProjectNotes
         return array_map(fn (mixed $criterion): string => (string) $criterion, $decoded);
     }
 
+    /** @return array<string, mixed> */
+    private function taskArray(Task $task, string $attribute): array
+    {
+        $decoded = json_decode((string) $task->getRawOriginal($attribute), true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /** @return array<int, string> */
+    private function taskStringList(Task $task, string $attribute): array
+    {
+        return array_values(array_filter($this->taskArray($task, $attribute), is_string(...)));
+    }
+
+    /** @return array<string, mixed> */
+    private function attemptArray(TaskAttempt $attempt, string $attribute): array
+    {
+        $decoded = json_decode((string) $attempt->getRawOriginal($attribute), true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /** @return array<int, string> */
+    private function attemptStringList(TaskAttempt $attempt, string $attribute): array
+    {
+        return array_values(array_filter($this->attemptArray($attempt, $attribute), is_string(...)));
+    }
+
     private function projectDirectory(Project $project): ?string
     {
         $vault = config('aios.obsidian_vault_path');
@@ -368,5 +455,25 @@ class ObsidianProjectNotes
         $this->files->put($path, $content);
 
         return $path;
+    }
+
+    private function taskBriefFilename(Task $task): string
+    {
+        return $task->key.' - '.Str::slug($task->title).'.md';
+    }
+
+    private function phaseReviewBriefFilename(Task $task): string
+    {
+        return str_pad((string) ($task->phase_id === null ? $task->position : $task->phase->position), 2, '0', STR_PAD_LEFT).' - '.Str::slug($this->phaseTitle($task)).'.md';
+    }
+
+    private function phaseTitle(Task $task): string
+    {
+        return $task->phase_id === null ? $task->title : $task->phase->title;
+    }
+
+    private function phaseObjective(Task $task): string
+    {
+        return $task->phase_id === null ? $task->objective : $task->phase->objective;
     }
 }

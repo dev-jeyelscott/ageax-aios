@@ -125,22 +125,22 @@ test('a task context capsule prioritizes state and excludes unrelated Obsidian n
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
     $task = taskForDetail($project);
     $projectDirectory = $vault.'/Projects/example';
-    File::ensureDirectoryExists($projectDirectory.'/Tasks');
+    File::ensureDirectoryExists($projectDirectory.'/Task Briefs');
     File::ensureDirectoryExists($projectDirectory.'/Specifications');
     File::ensureDirectoryExists($projectDirectory.'/Decisions');
     File::ensureDirectoryExists($projectDirectory.'/Notes');
     File::put($projectDirectory.'/STATE.md', 'The repository is paused until TASK-001 is reviewed.');
-    File::put($projectDirectory.'/Tasks/TASK-001 - implement-the-task-detail-page.md', 'Use [[Specifications/Task Detail]] and [[Decisions/No New Dependencies]].');
+    File::put($projectDirectory.'/Task Briefs/TASK-001 - implement-the-task-detail-page.md', 'Use [[Specifications/Task Detail]] and [[Decisions/No New Dependencies]].');
     File::put($projectDirectory.'/Specifications/Task Detail.md', 'The task detail page must retain audit evidence.');
     File::put($projectDirectory.'/Decisions/No New Dependencies.md', 'Keep the current stack.');
     File::put($projectDirectory.'/Notes/unrelated.md', 'UNRELATED NOTE MUST NOT REACH CODEX.');
-    File::put($projectDirectory.'/Tasks/TASK-000 - prior-work.md', 'PRIOR WORK MUST NOT REACH CODEX.');
+    File::put($projectDirectory.'/Task Briefs/TASK-000 - prior-work.md', 'PRIOR WORK MUST NOT REACH CODEX.');
 
     $capsule = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Coder);
 
     expect(array_keys($capsule['obsidian_project_knowledge']))->toBe([
         'STATE.md',
-        'Tasks/TASK-001 - implement-the-task-detail-page.md',
+        'Task Briefs/TASK-001 - implement-the-task-detail-page.md',
         'Specifications/Task Detail.md',
         'Decisions/No New Dependencies.md',
     ])
@@ -157,15 +157,15 @@ test('a task context capsule enforces per-note and overall Obsidian budgets', fu
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
     $task = taskForDetail($project);
     $directory = $vault.'/Projects/example';
-    File::ensureDirectoryExists($directory.'/Tasks');
+    File::ensureDirectoryExists($directory.'/Task Briefs');
     File::put($directory.'/STATE.md', '0123456789-state');
-    File::put($directory.'/Tasks/TASK-001 - implement-the-task-detail-page.md', 'abcdefghij-task');
+    File::put($directory.'/Task Briefs/TASK-001 - implement-the-task-detail-page.md', 'abcdefghij-task');
 
     $knowledge = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Coder)['obsidian_project_knowledge'];
 
     expect($knowledge)->toBe([
         'STATE.md' => '0123456789',
-        'Tasks/TASK-001 - implement-the-task-detail-page.md' => 'abc',
+        'Task Briefs/TASK-001 - implement-the-task-detail-page.md' => 'abc',
     ]);
 });
 

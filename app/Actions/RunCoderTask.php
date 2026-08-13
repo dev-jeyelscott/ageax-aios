@@ -43,7 +43,8 @@ class RunCoderTask
         }
 
         $baseSha = $preflight['base_sha'];
-        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($this->capsules->make($task), JSON_THROW_ON_ERROR);
+        $context = $this->capsules->make($task);
+        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($context, JSON_THROW_ON_ERROR);
         $attempt = TaskAttempt::create([
             'task_id' => $task->id,
             'number' => $task->attempts()->max('number') + 1,
@@ -58,7 +59,7 @@ class RunCoderTask
             ],
             'started_at' => now(),
         ]);
-        $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt, $lease);
+        $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt, $lease, $context['retrieval_manifest']);
 
         try {
             $execution = $this->runner->run($task->project, $prompt, function (string $type, string $output) use ($run, $task, $lease): void {

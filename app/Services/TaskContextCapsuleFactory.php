@@ -13,6 +13,7 @@ class TaskContextCapsuleFactory
     /** @return array<string, mixed> */
     public function make(Task $task, AgentRole $recipientRole = AgentRole::Coder): array
     {
+        $retrieval = $this->notes->taskRetrieval($task, $recipientRole);
         $previousAttempt = $task->attempts()
             ->latest('number')
             ->first(['id', 'task_id', 'number', 'base_sha', 'head_sha', 'commit_sha', 'status', 'validation_results', 'changed_files', 'log_path', 'finished_at']);
@@ -29,7 +30,8 @@ class TaskContextCapsuleFactory
             'relevant_paths' => $task->relevant_paths,
             'verification_commands' => $task->verification_commands,
             'previous_attempt' => $this->previousAttemptContext($previousAttempt, $recipientRole),
-            'obsidian_project_knowledge' => $this->notes->taskKnowledge($task),
+            'obsidian_project_knowledge' => $retrieval['notes'],
+            'retrieval_manifest' => $retrieval['manifest'],
             'operator_messages' => $task->operatorMessages()
                 ->where('recipient_role', $recipientRole)
                 ->whereNull('delivered_at')

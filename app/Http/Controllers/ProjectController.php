@@ -21,6 +21,7 @@ use App\Models\User;
 use App\ProjectStatus;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
+use App\Services\TokenUsageObservability;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -41,7 +42,7 @@ class ProjectController extends Controller
         return to_route('projects.show', $project);
     }
 
-    public function show(Project $project, Request $request, AuditLogger $audit): Response
+    public function show(Project $project, Request $request, AuditLogger $audit, TokenUsageObservability $tokens): Response
     {
         if ($request->session()->get('aios.selected_project_id') !== $project->id) {
             $request->session()->put('aios.selected_project_id', $project->id);
@@ -51,6 +52,7 @@ class ProjectController extends Controller
         $project->load(['workers', 'roadmaps' => fn ($query) => $query->latest(), 'tasks' => fn ($query) => $query->orderBy('position')->with(['attempts' => fn ($attempts) => $attempts->latest('number')->limit(1), 'reviews' => fn ($reviews) => $reviews->latest()->limit(1)]), 'auditEvents' => fn ($query) => $query->latest('occurred_at')->limit(20)]);
         $project->loadSum('runs', 'token_usage');
         $project->setAttribute('token_usage_total', (int) ($project->runs_sum_token_usage ?? 0));
+        $project->setAttribute('token_observability', $tokens->forProject($project));
         $project->setRelation('recent_agent_runs', $project->runs()
             ->select(['id', 'project_id', 'task_id', 'role', 'status', 'attempt_number', 'token_usage', 'exit_code', 'started_at', 'finished_at'])
             ->latest('started_at')
