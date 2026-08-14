@@ -30,6 +30,8 @@ test('the reviewer verifies Git evidence in the managed project checkout', funct
             && str_contains($prompt, 'run verification commands only from the managed project checkout')
             && str_contains($prompt, 'Do not create temporary checkouts')
             && str_contains($prompt, 'Never edit files')
+            && str_contains($prompt, 'non-empty `findings` array')
+            && str_contains($prompt, 'Do not use `actionable_findings`')
             && str_contains($prompt, 'phase_review_brief');
     })->andReturn(['exit_code' => 1, 'output' => '', 'error_output' => 'stop after prompt verification']);
 

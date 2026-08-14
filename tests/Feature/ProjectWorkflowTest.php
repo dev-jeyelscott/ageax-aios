@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\ClaimTask;
+use App\Actions\RequeueBlockedTask;
 use App\Actions\TransitionTask;
 use App\AgentRole;
 use App\Models\Phase;
@@ -61,6 +62,26 @@ test('a rejected review returns the same task to the coder with a legal transiti
     $transitionTask->handle($task, TaskStatus::ChangesRequired);
 
     expect($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($task->id);
+});
+
+test('an exhausted reviewer operational retry blocks and can be requeued for review', function () {
+    config()->set('aios.max_reviewer_attempts', 1);
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = createWorkflowTask($project, 1);
+    app(TransitionTask::class)->handle($task, TaskStatus::Coding);
+    app(TransitionTask::class)->handle($task, TaskStatus::Validating);
+    app(TransitionTask::class)->handle($task, TaskStatus::ReadyForReview);
+    app(TransitionTask::class)->handle($task, TaskStatus::Reviewing);
+
+    app(TaskWorkflow::class)->recordReviewerOperationalFailure($task, null, ['reason' => 'invalid_structured_decision', 'exit_code' => 0]);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($task->auditEvents()->where('event_type', 'review.retry_exhausted')->exists())->toBeTrue();
+
+    app(RequeueBlockedTask::class)->handle($task);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview);
 });
 
 test('the reviewer is called once after every task in a phase is ready', function () {
