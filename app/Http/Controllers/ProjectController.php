@@ -51,15 +51,15 @@ class ProjectController extends Controller
             $audit->record('project.selected', [], $project);
         }
 
+        return Inertia::render('projects/show', [
+            'project' => fn (): Project => $this->projectPayload($project, $tokens),
+            'officeWorkers' => fn (): array => $this->officeWorkers($project),
+        ]);
+    }
+
+    private function projectPayload(Project $project, TokenUsageObservability $tokens): Project
+    {
         $project->load([
-            'workers' => fn ($workers) => $workers
-                ->select(['id', 'project_id', 'role', 'status', 'last_heartbeat_at', 'lease_expires_at'])
-                ->orderBy('role')
-                ->with(['runs' => fn ($runs) => $runs
-                    ->select(['id', 'project_id', 'task_id', 'agent_worker_id', 'role', 'status', 'attempt_number', 'started_at', 'finished_at'])
-                    ->latest('started_at')
-                    ->limit(1)
-                    ->with('task:id,key,title,status')]),
             'roadmaps' => fn ($query) => $query->latest(),
             'tasks' => fn ($query) => $query->orderBy('position')->with(['attempts' => fn ($attempts) => $attempts->latest('number')->limit(1), 'reviews' => fn ($reviews) => $reviews->latest()->limit(1)]),
             'auditEvents' => fn ($query) => $query->latest('occurred_at')->limit(20),
@@ -67,9 +67,40 @@ class ProjectController extends Controller
         $project->loadSum('runs', 'token_usage');
         $project->setAttribute('token_usage_total', (int) ($project->runs_sum_token_usage ?? 0));
         $project->setAttribute('token_observability', $tokens->forProject($project));
+        $project->setRelation('recent_agent_runs', $project->runs()
+            ->select(['id', 'project_id', 'task_id', 'role', 'status', 'attempt_number', 'token_usage', 'exit_code', 'started_at', 'finished_at'])
+            ->latest('started_at')
+            ->limit(8)
+            ->get());
+
+        return $project;
+    }
+
+    /**
+     * @return array<int, array{
+     *     id: int,
+     *     role: string,
+     *     status: string,
+     *     last_heartbeat_at: ?string,
+     *     lease_state: string,
+     *     run: ?array{id: int, status: string, attempt_number: ?int, started_at: ?string, finished_at: ?string},
+     *     task: ?array{id: int, key: string, title: string, status: string}
+     * }>
+     */
+    private function officeWorkers(Project $project): array
+    {
+        $workers = $project->workers()
+            ->select(['id', 'project_id', 'role', 'status', 'last_heartbeat_at', 'lease_expires_at'])
+            ->orderBy('role')
+            ->with(['runs' => fn ($runs) => $runs
+                ->select(['id', 'project_id', 'task_id', 'agent_worker_id', 'role', 'status', 'attempt_number', 'started_at', 'finished_at'])
+                ->latest('started_at')
+                ->limit(1)
+                ->with('task:id,key,title,status')])
+            ->get();
         $officeWorkers = [];
 
-        foreach ($project->workers as $worker) {
+        foreach ($workers as $worker) {
             $run = $worker->runs->first();
             $task = $run?->task;
             $leaseExpiresAt = $worker->getAttribute('lease_expires_at');
@@ -98,16 +129,7 @@ class ProjectController extends Controller
             ];
         }
 
-        $project->setAttribute('office_workers', $officeWorkers);
-        $project->setRelation('recent_agent_runs', $project->runs()
-            ->select(['id', 'project_id', 'task_id', 'role', 'status', 'attempt_number', 'token_usage', 'exit_code', 'started_at', 'finished_at'])
-            ->latest('started_at')
-            ->limit(8)
-            ->get());
-
-        return Inertia::render('projects/show', [
-            'project' => $project,
-        ]);
+        return $officeWorkers;
     }
 
     private function serializeDateAttribute(AgentRun|AgentWorker $model, string $attribute): ?string

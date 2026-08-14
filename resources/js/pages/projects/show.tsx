@@ -7,6 +7,7 @@ import {
     Play,
     RotateCcw,
 } from 'lucide-react';
+import { lazy, Suspense, useSyncExternalStore } from 'react';
 import {
     index,
     requeueTask,
@@ -14,7 +15,6 @@ import {
     showTask,
     updateStatus,
 } from '@/actions/App/Http/Controllers/ProjectController';
-import { AgentOffice } from '@/components/agent-office';
 import type { OfficeWorker } from '@/components/agent-office';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +27,46 @@ import {
     CardTitle,
 } from '@/components/ui/card';
 import { store as storeRoadmap } from '@/routes/projects/roadmaps';
+
+const LazyAgentOffice = lazy(() =>
+    import('@/components/agent-office').then(({ AgentOffice }) => ({
+        default: AgentOffice,
+    })),
+);
+
+function ClientAgentOffice({
+    projectId,
+    workers,
+}: {
+    projectId: number;
+    workers: OfficeWorker[];
+}) {
+    const isClient = useSyncExternalStore(
+        () => () => undefined,
+        () => true,
+        () => false,
+    );
+
+    if (!isClient) {
+        return (
+            <div className="grid min-h-[calc(100svh-8.5rem)] place-items-center rounded-2xl border border-slate-700/70 bg-slate-950 px-6 text-center text-slate-300 shadow-2xl">
+                Loading the live office…
+            </div>
+        );
+    }
+
+    return (
+        <Suspense
+            fallback={
+                <div className="grid min-h-[calc(100svh-8.5rem)] place-items-center rounded-2xl border border-slate-700/70 bg-slate-950 px-6 text-center text-slate-300 shadow-2xl">
+                    Loading the live office…
+                </div>
+            }
+        >
+            <LazyAgentOffice projectId={projectId} workers={workers} />
+        </Suspense>
+    );
+}
 
 type Task = {
     id: number;
@@ -53,7 +93,6 @@ type Project = {
     git_status: string;
     git_head_sha: string | null;
     roadmaps: { id: number; original_filename: string; status: string }[];
-    office_workers: OfficeWorker[];
     tasks: Task[];
     token_usage_total: number;
     token_observability: Record<
@@ -74,8 +113,21 @@ function formatTokens(tokens: number): string {
     return new Intl.NumberFormat().format(tokens);
 }
 
-export default function ProjectShow({ project }: { project: Project }) {
-    usePoll(2_000, { only: ['project'] }, { mode: 'rest' });
+export default function ProjectShow({
+    project,
+    officeWorkers,
+}: {
+    project: Project;
+    officeWorkers: OfficeWorker[];
+}) {
+    usePoll(
+        5_000,
+        {
+            only: ['officeWorkers'],
+            preserveErrors: true,
+        },
+        { mode: 'rest' },
+    );
     const currentTask = project.tasks.find(
         (task) => !['done', 'cancelled'].includes(task.status),
     );
@@ -84,7 +136,7 @@ export default function ProjectShow({ project }: { project: Project }) {
     return (
         <>
             <Head title={project.name} />
-            <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-4 md:p-8">
+            <div className="flex w-full flex-col gap-5 px-3 py-4 md:px-5 md:py-6 2xl:px-6">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                     <div>
                         <Link
@@ -141,9 +193,9 @@ export default function ProjectShow({ project }: { project: Project }) {
                         </Badge>
                     </div>
                 </div>
-                <AgentOffice
+                <ClientAgentOffice
                     projectId={project.id}
-                    workers={project.office_workers}
+                    workers={officeWorkers}
                 />
                 <div className="grid gap-4 md:grid-cols-3">
                     <Card>

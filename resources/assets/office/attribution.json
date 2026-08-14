@@ -1,0 +1,17 @@
+{
+    "environment": {
+        "source": "https://vnbp.itch.io/low-poly-3d-office-set-vnb",
+        "creator": "VNBP Leo",
+        "license": "CC BY 4.0"
+    },
+    "characters": {
+        "source": "https://quaternius.itch.io/universal-base-characters",
+        "creator": "Quaternius",
+        "license": "CC0 1.0"
+    },
+    "animations": {
+        "source": "https://quaternius.itch.io/universal-animation-library",
+        "creator": "Quaternius",
+        "license": "CC0 1.0"
+    }
+}
