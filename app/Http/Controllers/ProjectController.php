@@ -15,6 +15,7 @@ use App\Http\Requests\StoreRoadmapRequest;
 use App\Http\Requests\StoreTaskOperatorMessageRequest;
 use App\Http\Requests\UpdateProjectStatusRequest;
 use App\Models\AgentRun;
+use App\Models\AgentWorker;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
@@ -22,6 +23,7 @@ use App\ProjectStatus;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use App\Services\TokenUsageObservability;
+use Carbon\CarbonInterface;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -49,10 +51,54 @@ class ProjectController extends Controller
             $audit->record('project.selected', [], $project);
         }
 
-        $project->load(['workers', 'roadmaps' => fn ($query) => $query->latest(), 'tasks' => fn ($query) => $query->orderBy('position')->with(['attempts' => fn ($attempts) => $attempts->latest('number')->limit(1), 'reviews' => fn ($reviews) => $reviews->latest()->limit(1)]), 'auditEvents' => fn ($query) => $query->latest('occurred_at')->limit(20)]);
+        $project->load([
+            'workers' => fn ($workers) => $workers
+                ->select(['id', 'project_id', 'role', 'status', 'last_heartbeat_at', 'lease_expires_at'])
+                ->orderBy('role')
+                ->with(['runs' => fn ($runs) => $runs
+                    ->select(['id', 'project_id', 'task_id', 'agent_worker_id', 'role', 'status', 'attempt_number', 'started_at', 'finished_at'])
+                    ->latest('started_at')
+                    ->limit(1)
+                    ->with('task:id,key,title,status')]),
+            'roadmaps' => fn ($query) => $query->latest(),
+            'tasks' => fn ($query) => $query->orderBy('position')->with(['attempts' => fn ($attempts) => $attempts->latest('number')->limit(1), 'reviews' => fn ($reviews) => $reviews->latest()->limit(1)]),
+            'auditEvents' => fn ($query) => $query->latest('occurred_at')->limit(20),
+        ]);
         $project->loadSum('runs', 'token_usage');
         $project->setAttribute('token_usage_total', (int) ($project->runs_sum_token_usage ?? 0));
         $project->setAttribute('token_observability', $tokens->forProject($project));
+        $officeWorkers = [];
+
+        foreach ($project->workers as $worker) {
+            $run = $worker->runs->first();
+            $task = $run?->task;
+            $leaseExpiresAt = $worker->getAttribute('lease_expires_at');
+
+            $officeWorkers[] = [
+                'id' => $worker->id,
+                'role' => $worker->getRawOriginal('role'),
+                'status' => $worker->status,
+                'last_heartbeat_at' => $this->serializeDateAttribute($worker, 'last_heartbeat_at'),
+                'lease_state' => ! $leaseExpiresAt instanceof CarbonInterface
+                    ? 'none'
+                    : ($leaseExpiresAt->isFuture() ? 'active' : 'expired'),
+                'run' => $run === null ? null : [
+                    'id' => $run->id,
+                    'status' => $run->getRawOriginal('status'),
+                    'attempt_number' => $run->attempt_number,
+                    'started_at' => $this->serializeDateAttribute($run, 'started_at'),
+                    'finished_at' => $this->serializeDateAttribute($run, 'finished_at'),
+                ],
+                'task' => $task === null ? null : [
+                    'id' => $task->id,
+                    'key' => $task->key,
+                    'title' => $task->title,
+                    'status' => $task->getRawOriginal('status'),
+                ],
+            ];
+        }
+
+        $project->setAttribute('office_workers', $officeWorkers);
         $project->setRelation('recent_agent_runs', $project->runs()
             ->select(['id', 'project_id', 'task_id', 'role', 'status', 'attempt_number', 'token_usage', 'exit_code', 'started_at', 'finished_at'])
             ->latest('started_at')
@@ -62,6 +108,13 @@ class ProjectController extends Controller
         return Inertia::render('projects/show', [
             'project' => $project,
         ]);
+    }
+
+    private function serializeDateAttribute(AgentRun|AgentWorker $model, string $attribute): ?string
+    {
+        $value = $model->getAttribute($attribute);
+
+        return $value instanceof CarbonInterface ? $value->toISOString() : null;
     }
 
     public function updateStatus(UpdateProjectStatusRequest $request, Project $project, SetProjectStatus $setProjectStatus): RedirectResponse

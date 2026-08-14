@@ -14,6 +14,8 @@ import {
     showTask,
     updateStatus,
 } from '@/actions/App/Http/Controllers/ProjectController';
+import { AgentOffice } from '@/components/agent-office';
+import type { OfficeWorker } from '@/components/agent-office';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,7 +28,6 @@ import {
 } from '@/components/ui/card';
 import { store as storeRoadmap } from '@/routes/projects/roadmaps';
 
-type Worker = { id: number; role: string; status: string };
 type Task = {
     id: number;
     key: string;
@@ -52,7 +53,7 @@ type Project = {
     git_status: string;
     git_head_sha: string | null;
     roadmaps: { id: number; original_filename: string; status: string }[];
-    workers: Worker[];
+    office_workers: OfficeWorker[];
     tasks: Task[];
     token_usage_total: number;
     token_observability: Record<
@@ -140,27 +141,11 @@ export default function ProjectShow({ project }: { project: Project }) {
                         </Badge>
                     </div>
                 </div>
-                <div className="grid gap-4 md:grid-cols-4">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Workers</CardTitle>
-                        </CardHeader>
-                        <CardContent className="grid gap-3">
-                            {project.workers.map((worker) => (
-                                <div
-                                    key={worker.id}
-                                    className="flex items-center justify-between gap-3"
-                                >
-                                    <span className="capitalize">
-                                        {worker.role.replace('_', ' ')}
-                                    </span>
-                                    <Badge variant="secondary">
-                                        {worker.status}
-                                    </Badge>
-                                </div>
-                            ))}
-                        </CardContent>
-                    </Card>
+                <AgentOffice
+                    projectId={project.id}
+                    workers={project.office_workers}
+                />
+                <div className="grid gap-4 md:grid-cols-3">
                     <Card>
                         <CardHeader>
                             <CardTitle>Roadmap</CardTitle>
@@ -218,16 +203,19 @@ export default function ProjectShow({ project }: { project: Project }) {
                         <CardContent className="text-sm text-muted-foreground">
                             {formatTokens(project.token_usage_total)} tokens
                             <div className="mt-2 grid gap-1 text-xs">
-                                {Object.entries(project.token_observability).map(
-                                    ([role, usage]) => (
-                                        <span key={role}>
-                                            {role}: {usage.rolling_average === null ? 'no runs' : `${formatTokens(usage.rolling_average)} avg / ${formatTokens(usage.warning_threshold)} warning`}
-                                            {usage.change_percentage === null
-                                                ? ''
-                                                : ` (${usage.change_percentage > 0 ? '+' : ''}${usage.change_percentage}% vs baseline)`}
-                                        </span>
-                                    ),
-                                )}
+                                {Object.entries(
+                                    project.token_observability,
+                                ).map(([role, usage]) => (
+                                    <span key={role}>
+                                        {role}:{' '}
+                                        {usage.rolling_average === null
+                                            ? 'no runs'
+                                            : `${formatTokens(usage.rolling_average)} avg / ${formatTokens(usage.warning_threshold)} warning`}
+                                        {usage.change_percentage === null
+                                            ? ''
+                                            : ` (${usage.change_percentage > 0 ? '+' : ''}${usage.change_percentage}% vs baseline)`}
+                                    </span>
+                                ))}
                             </div>
                         </CardContent>
                     </Card>

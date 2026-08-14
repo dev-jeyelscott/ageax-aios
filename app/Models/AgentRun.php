@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\AgentRole;
 use App\AgentRunStatus;
+use Carbon\CarbonImmutable;
 use Database\Factories\AgentRunFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -14,6 +15,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * @property AgentRole $role
  * @property AgentRunStatus $status
+ * @property CarbonImmutable $started_at
+ * @property CarbonImmutable|null $finished_at
  */
 class AgentRun extends Model
 {
