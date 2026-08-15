@@ -1,11 +1,17 @@
 import { Link } from '@inertiajs/react';
 import { Activity, Bot, CircleDot, Radio } from 'lucide-react';
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import {
     showAgentRun,
     showTask,
 } from '@/actions/App/Http/Controllers/ProjectController';
 import { Badge } from '@/components/ui/badge';
+
+const ProjectManagerBotVisual = lazy(() =>
+    import('@/components/project-manager-bot').then((module) => ({
+        default: module.ProjectManagerBotVisual,
+    })),
+);
 
 export type OfficeWorker = {
     id: number;
@@ -248,10 +254,36 @@ function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
     const roleLabel = labelForRole(worker.role);
 
     return (
-        <div className="relative h-28 overflow-hidden rounded-lg border border-cyan-300/10 bg-[radial-gradient(circle_at_50%_35%,rgba(34,211,238,0.14),transparent_48%),linear-gradient(145deg,#0b1424,#020617)]">
+        <div className="relative h-20 overflow-hidden rounded-lg border border-cyan-300/10 bg-[radial-gradient(circle_at_50%_35%,rgba(34,211,238,0.14),transparent_48%),linear-gradient(145deg,#0b1424,#020617)]">
             <div className="pointer-events-none absolute inset-x-8 bottom-0 h-8 rounded-full bg-cyan-300/5 blur-xl" />
 
-            {visual ? (
+            {worker.role === 'project_manager' ? (
+                <>
+                    <div className="h-full w-full motion-reduce:hidden">
+                        <Suspense fallback={null}>
+                            <ProjectManagerBotVisual
+                                working={worker.status === 'working'}
+                                label={
+                                    worker.status === 'working'
+                                        ? `${roleLabel} reading a futuristic book while planning.`
+                                        : `${roleLabel} idle, holding a futuristic book.`
+                                }
+                            />
+                        </Suspense>
+                    </div>
+
+                    <div
+                        role="img"
+                        aria-label={`${roleLabel} ${worker.status}. Animation disabled because reduced motion is requested.`}
+                        className="hidden h-full w-full place-items-center text-center motion-reduce:grid"
+                    >
+                        <Bot
+                            aria-hidden="true"
+                            className="size-10 text-cyan-300"
+                        />
+                    </div>
+                </>
+            ) : visual ? (
                 <>
                     <img
                         src={visual.src}
@@ -298,7 +330,7 @@ function AgentCard({
     const presentation = officePresentation(worker.status);
 
     return (
-        <article className="relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/70 p-3 shadow-panel">
+        <article className="relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/70 p-2.5 shadow-panel">
             <div className="glow-edge pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/50 to-transparent" />
 
             <div className="flex items-start justify-between gap-2">
@@ -307,41 +339,39 @@ function AgentCard({
                         {labelForRole(worker.role)}
                     </p>
 
-                    <h3 className="mt-1 truncate text-sm font-semibold text-white">
+                    <h3 className="mt-0.5 truncate text-sm font-semibold text-white">
                         {agent?.name ?? 'Unbound agent'}
                     </h3>
                 </div>
 
                 <span
                     className={`mt-1 size-2 shrink-0 rounded-full ${presentation.dotClass} ${
-                        worker.status === 'working'
-                            ? 'animate-breathe'
-                            : ''
+                        worker.status === 'working' ? 'animate-breathe' : ''
                     }`}
                     title={presentation.label}
                 />
             </div>
 
-            <div className="mt-2.5">
+            <div className="mt-2">
                 <AgentVisualPanel worker={worker} />
             </div>
 
-            <div className="mt-2.5 grid grid-cols-2 gap-1.5 text-[11px]">
-                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1.5">
+            <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px]">
+                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1">
                     <p className="text-slate-500">Harness</p>
                     <p className="mt-0.5 truncate font-medium text-cyan-100">
                         {agent ? labelForHarness(agent.harness) : '—'}
                     </p>
                 </div>
 
-                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1.5">
+                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1">
                     <p className="text-slate-500">Model</p>
                     <p className="mt-0.5 truncate font-medium text-slate-200">
                         {agent?.model ?? 'Harness default'}
                     </p>
                 </div>
 
-                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1.5">
+                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1">
                     <p className="text-slate-500">Worker</p>
                     <p
                         className={`mt-0.5 font-medium ${presentation.textClass}`}
@@ -350,7 +380,7 @@ function AgentCard({
                     </p>
                 </div>
 
-                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1.5">
+                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1">
                     <p className="text-slate-500">Lease</p>
                     <p className="mt-0.5 font-medium text-slate-200 capitalize">
                         {worker.lease_state}
@@ -358,7 +388,7 @@ function AgentCard({
                 </div>
             </div>
 
-            <div className="mt-2.5 min-h-12 rounded-lg border border-white/8 bg-slate-900/60 p-2.5">
+            <div className="mt-2 min-h-10 rounded-lg border border-white/8 bg-slate-900/60 p-2">
                 {worker.task ? (
                     <Link
                         href={
@@ -373,8 +403,9 @@ function AgentCard({
                             Current task · {worker.task.status}
                         </p>
 
-                        <p className="mt-1 truncate text-xs font-medium text-slate-100">
-                            <span className="font-mono">{worker.task.key}</span>: {worker.task.title}
+                        <p className="mt-0.5 truncate text-xs font-medium text-slate-100">
+                            <span className="font-mono">{worker.task.key}</span>
+                            : {worker.task.title}
                         </p>
                     </Link>
                 ) : (
@@ -384,7 +415,7 @@ function AgentCard({
                 )}
             </div>
 
-            <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-slate-500">
+            <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] text-slate-500">
                 <span title={formatDate(worker.last_heartbeat_at)}>
                     Heartbeat {worker.last_heartbeat_at ? 'recorded' : '—'}
                 </span>
@@ -425,7 +456,7 @@ function Metric({
     tone: string;
 }) {
     return (
-        <div className="flex min-w-24 items-center gap-2 rounded-lg border border-white/8 bg-black/20 px-2.5 py-1.5">
+        <div className="flex min-w-24 items-center gap-2 rounded-lg border border-white/8 bg-black/20 px-2.5 py-1">
             <span className={`size-1.5 rounded-full ${tone}`} />
 
             <div>
@@ -457,7 +488,7 @@ function WorkflowPipeline({
     const activeIndex = workflowStageIndex(currentTask?.status, isComplete);
 
     return (
-        <div className="rounded-xl border border-white/8 bg-slate-950/55 px-3 py-3">
+        <div className="rounded-xl border border-white/8 bg-slate-950/55 px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
                 <div>
                     <p className="font-mono text-[10px] tracking-[0.15em] text-violet-300 uppercase">
@@ -474,7 +505,7 @@ function WorkflowPipeline({
                 </span>
             </div>
 
-            <div className="relative mt-3">
+            <div className="relative mt-2.5">
                 <div className="absolute top-2.5 right-[9%] left-[9%] h-px bg-slate-800" />
 
                 <div className="relative grid grid-cols-5 gap-1">
@@ -514,7 +545,7 @@ function WorkflowPipeline({
                 </div>
             </div>
 
-            <div className="mt-3 flex min-w-0 items-center justify-between gap-3 border-t border-white/5 pt-2.5">
+            <div className="mt-2.5 flex min-w-0 items-center justify-between gap-3 border-t border-white/5 pt-2">
                 <div className="min-w-0">
                     <p className="text-[10px] text-slate-500 uppercase">
                         Active operation
@@ -612,7 +643,7 @@ export function AgentOffice({
 
             <div className="pointer-events-none absolute -right-24 bottom-0 size-64 animate-pulse rounded-full bg-violet-500/8 blur-3xl motion-reduce:animate-none" />
 
-            <header className="relative shrink-0 border-b border-cyan-300/10 bg-[linear-gradient(110deg,rgba(8,17,31,0.98),rgba(6,14,27,0.96),rgba(8,47,73,0.42))] px-4 py-3.5">
+            <header className="relative shrink-0 border-b border-cyan-300/10 bg-[linear-gradient(110deg,rgba(8,17,31,0.98),rgba(6,14,27,0.96),rgba(8,47,73,0.42))] px-4 py-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
                         <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-cyan-300 uppercase">
@@ -622,7 +653,7 @@ export function AgentOffice({
 
                         <h2
                             id="agent-office-title"
-                            className="mt-1 truncate text-xl font-semibold tracking-tight text-white"
+                            className="mt-0.5 truncate text-base font-semibold tracking-tight text-white"
                         >
                             AI Engineering Office
                         </h2>
@@ -650,7 +681,7 @@ export function AgentOffice({
                     </div>
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-1.5">
+                <div className="mt-2 flex flex-wrap gap-1.5">
                     <Metric
                         label="working"
                         value={workingWorkers}
@@ -671,9 +702,9 @@ export function AgentOffice({
                 </div>
             </header>
 
-            <div className="relative min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="relative min-h-0 flex-1 overflow-y-auto p-2.5">
                 {displayedWorkers.length > 0 ? (
-                    <div className="grid gap-3 md:grid-cols-3">
+                    <div className="grid gap-2.5 md:grid-cols-3">
                         {displayedWorkers.map((worker) => (
                             <AgentCard
                                 key={worker.id}
@@ -684,7 +715,7 @@ export function AgentOffice({
                         ))}
                     </div>
                 ) : (
-                    <div className="grid min-h-52 place-items-center rounded-xl border border-dashed border-slate-700 bg-slate-950/40 text-center">
+                    <div className="grid min-h-32 place-items-center rounded-xl border border-dashed border-slate-700 bg-slate-950/40 text-center">
                         <div>
                             <Bot className="mx-auto size-10 text-slate-600" />
 
@@ -695,15 +726,15 @@ export function AgentOffice({
                     </div>
                 )}
 
-                <div className="mt-3">
+                <div className="mt-2.5">
                     <WorkflowPipeline
                         currentTask={currentTask}
                         taskProgress={taskProgress}
                     />
                 </div>
 
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                    <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
+                <div className="mt-2.5 grid gap-2 sm:grid-cols-3">
+                    <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-1.5">
                         <Radio className="size-3.5 text-cyan-300" />
 
                         <div>
@@ -717,7 +748,7 @@ export function AgentOffice({
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
+                    <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-1.5">
                         <Bot className="size-3.5 text-violet-300" />
 
                         <div>
@@ -731,7 +762,7 @@ export function AgentOffice({
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
+                    <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-1.5">
                         <CircleDot className="size-3.5 text-emerald-300" />
 
                         <div>
