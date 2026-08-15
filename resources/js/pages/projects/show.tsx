@@ -18,6 +18,7 @@ import {
     updateStatus,
 } from '@/actions/App/Http/Controllers/ProjectController';
 import type { OfficeWorker } from '@/components/agent-office';
+import { useAppHeaderSlot } from '@/components/app-header-slot';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -208,15 +209,15 @@ function OpsPanel({
     children: React.ReactNode;
 }) {
     return (
-        <section className="relative overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/75 p-3 shadow-panel">
+        <section className="relative overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/75 p-2.5 shadow-panel">
             <div className="glow-edge pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-violet-300/40 to-transparent" />
             <p className="font-mono text-[9px] tracking-[0.16em] text-violet-300 uppercase">
                 {eyebrow}
             </p>
-            <h3 className="mt-1 text-sm font-semibold text-slate-100">
+            <h3 className="mt-0.5 text-sm font-semibold text-slate-100">
                 {title}
             </h3>
-            <div className="mt-3">{children}</div>
+            <div className="mt-2">{children}</div>
         </section>
     );
 }
@@ -258,14 +259,14 @@ function RoadmapPanel({
                 )}
             </div>
 
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800">
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
                 <div
                     className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-blue-400 to-violet-400 transition-[width]"
                     style={{ width: `${progress}%` }}
                 />
             </div>
 
-            <div className="mt-3 min-w-0 rounded-lg border border-white/5 bg-white/[0.02] p-2.5">
+            <div className="mt-2 min-w-0 rounded-lg border border-white/5 bg-white/[0.02] p-2">
                 <p className="font-mono text-[9px] text-slate-500 uppercase">
                     Current operation
                 </p>
@@ -277,12 +278,12 @@ function RoadmapPanel({
                                 task: currentTask.id,
                             }).url
                         }
-                        className="mt-1 block truncate text-xs font-medium text-slate-200 hover:text-cyan-200"
+                        className="mt-0.5 block truncate text-xs font-medium text-slate-200 hover:text-cyan-200"
                     >
                         {currentTask.key}: {currentTask.title}
                     </Link>
                 ) : (
-                    <p className="mt-1 text-xs text-slate-400">
+                    <p className="mt-0.5 text-xs text-slate-400">
                         {project.tasks.length > 0
                             ? 'No unfinished task.'
                             : 'Upload a roadmap to begin planning.'}
@@ -292,7 +293,7 @@ function RoadmapPanel({
 
             {latestRoadmap && (
                 <p
-                    className="mt-2 truncate text-[10px] text-slate-500"
+                    className="mt-1.5 truncate text-[10px] text-slate-500"
                     title={latestRoadmap.original_filename}
                 >
                     {latestRoadmap.original_filename}
@@ -302,11 +303,11 @@ function RoadmapPanel({
             <Form
                 {...storeRoadmap.form(project.id)}
                 encType="multipart/form-data"
-                className="mt-2"
+                className="mt-1.5"
             >
                 {({ errors, processing }) => (
                     <>
-                        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-cyan-300/15 bg-cyan-400/5 px-3 py-2 text-[11px] font-medium text-cyan-200 transition hover:border-cyan-300/30 hover:bg-cyan-400/10">
+                        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-cyan-300/15 bg-cyan-400/5 px-2.5 py-1.5 text-[11px] font-medium text-cyan-200 transition hover:border-cyan-300/30 hover:bg-cyan-400/10">
                             <input
                                 name="roadmap"
                                 type="file"
@@ -814,6 +815,85 @@ export default function ProjectShow({
         { value: 'activity', label: 'Recent Activity' },
     ];
 
+    useAppHeaderSlot(
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+                <Link
+                    href={index().url}
+                    aria-label="Back to projects"
+                    className="grid size-8 shrink-0 place-items-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-500 transition hover:border-cyan-300/30 hover:text-cyan-200"
+                >
+                    <ArrowLeft className="size-4" />
+                </Link>
+
+                <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                        <h1 className="truncate text-base font-semibold text-white">
+                            {project.name}
+                        </h1>
+                        <span className="hidden font-mono text-[9px] tracking-[0.14em] text-cyan-400 uppercase sm:inline">
+                            AIOS project
+                        </span>
+                    </div>
+                    <p className="mt-0.5 truncate font-mono text-[9px] text-slate-600">
+                        {project.path}
+                    </p>
+                </div>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+                <Badge
+                    variant="outline"
+                    className="border-emerald-300/20 bg-emerald-400/5 font-mono text-[9px] text-emerald-300"
+                >
+                    {project.status}
+                </Badge>
+                <Badge
+                    variant="outline"
+                    className="hidden border-violet-300/20 bg-violet-400/5 font-mono text-[9px] text-violet-200 sm:inline-flex"
+                >
+                    Git · {project.git_status}
+                </Badge>
+
+                <Form {...updateStatus.form(project.id)}>
+                    {({ processing }) => (
+                        <>
+                            <input
+                                name="status"
+                                type="hidden"
+                                value={
+                                    project.status === 'running'
+                                        ? 'paused'
+                                        : 'running'
+                                }
+                            />
+                            <Button
+                                size="sm"
+                                type="submit"
+                                variant="outline"
+                                disabled={
+                                    processing || project.status === 'stopping'
+                                }
+                                className="h-7 border-slate-700 bg-slate-900/50 px-2 text-[10px]"
+                            >
+                                {project.status === 'running' ? (
+                                    <Pause className="size-3" />
+                                ) : (
+                                    <Play className="size-3" />
+                                )}
+                                {project.status === 'running'
+                                    ? 'Pause'
+                                    : project.status === 'stopping'
+                                      ? 'Pending'
+                                      : 'Resume'}
+                            </Button>
+                        </>
+                    )}
+                </Form>
+            </div>
+        </div>,
+    );
+
     return (
         <>
             <Head title={project.name} />
@@ -824,84 +904,6 @@ export default function ProjectShow({
                 <div className="pointer-events-none absolute right-0 bottom-0 size-72 rounded-full bg-violet-500/5 blur-3xl" />
 
                 <div className="relative flex min-h-0 flex-1 flex-col gap-2.5 px-3 py-3 md:px-4">
-                    <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800/80 bg-slate-950/70 px-3 py-2.5 backdrop-blur">
-                        <div className="flex min-w-0 items-center gap-3">
-                            <Link
-                                href={index().url}
-                                aria-label="Back to projects"
-                                className="grid size-8 shrink-0 place-items-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-500 transition hover:border-cyan-300/30 hover:text-cyan-200"
-                            >
-                                <ArrowLeft className="size-4" />
-                            </Link>
-
-                            <div className="min-w-0">
-                                <div className="flex min-w-0 items-center gap-2">
-                                    <h1 className="truncate text-base font-semibold text-white">
-                                        {project.name}
-                                    </h1>
-                                    <span className="hidden font-mono text-[9px] tracking-[0.14em] text-cyan-400 uppercase sm:inline">
-                                        AIOS project
-                                    </span>
-                                </div>
-                                <p className="mt-0.5 truncate font-mono text-[9px] text-slate-600">
-                                    {project.path}
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5">
-                            <Badge
-                                variant="outline"
-                                className="border-emerald-300/20 bg-emerald-400/5 font-mono text-[9px] text-emerald-300"
-                            >
-                                {project.status}
-                            </Badge>
-                            <Badge
-                                variant="outline"
-                                className="hidden border-violet-300/20 bg-violet-400/5 font-mono text-[9px] text-violet-200 sm:inline-flex"
-                            >
-                                Git · {project.git_status}
-                            </Badge>
-
-                            <Form {...updateStatus.form(project.id)}>
-                                {({ processing }) => (
-                                    <>
-                                        <input
-                                            name="status"
-                                            type="hidden"
-                                            value={
-                                                project.status === 'running'
-                                                    ? 'paused'
-                                                    : 'running'
-                                            }
-                                        />
-                                        <Button
-                                            size="sm"
-                                            type="submit"
-                                            variant="outline"
-                                            disabled={
-                                                processing ||
-                                                project.status === 'stopping'
-                                            }
-                                            className="h-7 border-slate-700 bg-slate-900/50 px-2 text-[10px]"
-                                        >
-                                            {project.status === 'running' ? (
-                                                <Pause className="size-3" />
-                                            ) : (
-                                                <Play className="size-3" />
-                                            )}
-                                            {project.status === 'running'
-                                                ? 'Pause'
-                                                : project.status === 'stopping'
-                                                  ? 'Pending'
-                                                  : 'Resume'}
-                                        </Button>
-                                    </>
-                                )}
-                            </Form>
-                        </div>
-                    </header>
-
                     <nav
                         role="tablist"
                         aria-label="Project sections"
