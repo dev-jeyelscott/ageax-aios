@@ -44,7 +44,7 @@ class ProjectController extends Controller
         return to_route('projects.show', $project);
     }
 
-    public function show(Project $project, Request $request, AuditLogger $audit, TokenUsageObservability $tokens): Response
+    public function show(Project $project, Request $request, AuditLogger $audit, TokenUsageObservability $tokens, AgentRunRecorder $runs): Response
     {
         if ($request->session()->get('aios.selected_project_id') !== $project->id) {
             $request->session()->put('aios.selected_project_id', $project->id);
@@ -52,11 +52,11 @@ class ProjectController extends Controller
         }
 
         return Inertia::render('projects/show', [
-            'project' => fn (): Project => $this->projectPayload($project, $tokens),
+            'project' => fn (): Project => $this->projectPayload($project, $tokens, $runs),
         ]);
     }
 
-    private function projectPayload(Project $project, TokenUsageObservability $tokens): Project
+    private function projectPayload(Project $project, TokenUsageObservability $tokens, AgentRunRecorder $runs): Project
     {
         $project->load([
             'roadmaps' => fn ($query) => $query->latest(),
@@ -66,12 +66,17 @@ class ProjectController extends Controller
         $project->loadSum('runs', 'token_usage');
         $project->setAttribute('token_usage_total', (int) ($project->runs_sum_token_usage ?? 0));
         $project->setAttribute('token_observability', $tokens->forProject($project));
-        $project->setAttribute('office_workers', $this->officeWorkers($project));
-        $project->setRelation('recent_agent_runs', $project->runs()
-            ->select(['id', 'project_id', 'task_id', 'role', 'status', 'attempt_number', 'token_usage', 'exit_code', 'started_at', 'finished_at'])
+        $project->setAttribute('office_workers', $this->officeWorkers($project, $runs));
+        $recentRuns = $project->runs()
+            ->select(['id', 'project_id', 'task_id', 'role', 'status', 'attempt_number', 'token_usage', 'exit_code', 'live_output', 'log_path', 'started_at', 'finished_at'])
             ->latest('started_at')
             ->limit(8)
-            ->get());
+            ->get();
+        $recentRuns->each(function (AgentRun $run) use ($runs): void {
+            $run->setAttribute('failure_reason', $run->getRawOriginal('status') === 'failed' ? $runs->failureReason($run) : null);
+            $run->makeHidden(['live_output', 'log_path']);
+        });
+        $project->setRelation('recent_agent_runs', $recentRuns);
 
         return $project;
     }
@@ -83,17 +88,17 @@ class ProjectController extends Controller
      *     status: string,
      *     last_heartbeat_at: ?string,
      *     lease_state: string,
-     *     run: ?array{id: int, status: string, attempt_number: ?int, started_at: ?string, finished_at: ?string},
+     *     run: ?array{id: int, status: string, attempt_number: ?int, started_at: ?string, finished_at: ?string, failure_reason: ?string},
      *     task: ?array{id: int, key: string, title: string, status: string}
      * }>
      */
-    private function officeWorkers(Project $project): array
+    private function officeWorkers(Project $project, AgentRunRecorder $runs): array
     {
         $workers = $project->workers()
             ->select(['id', 'project_id', 'role', 'status', 'last_heartbeat_at', 'lease_expires_at'])
             ->orderBy('role')
-            ->with(['runs' => fn ($runs) => $runs
-                ->select(['id', 'project_id', 'task_id', 'agent_worker_id', 'role', 'status', 'attempt_number', 'started_at', 'finished_at'])
+            ->with(['runs' => fn ($query) => $query
+                ->select(['id', 'project_id', 'task_id', 'agent_worker_id', 'role', 'status', 'attempt_number', 'live_output', 'log_path', 'started_at', 'finished_at'])
                 ->latest('started_at')
                 ->limit(1)
                 ->with('task:id,key,title,status')])
@@ -119,6 +124,7 @@ class ProjectController extends Controller
                     'attempt_number' => $run->attempt_number,
                     'started_at' => $this->serializeDateAttribute($run, 'started_at'),
                     'finished_at' => $this->serializeDateAttribute($run, 'finished_at'),
+                    'failure_reason' => $run->getRawOriginal('status') === 'failed' ? $runs->failureReason($run) : null,
                 ],
                 'task' => $task === null ? null : [
                     'id' => $task->id,

@@ -163,6 +163,34 @@ class AgentRunRecorder
         return $this->redactSensitiveOutput($output);
     }
 
+    public function failureReason(AgentRun $run): ?string
+    {
+        $output = $this->transcript($run);
+        if ($output === null) {
+            return null;
+        }
+
+        $reason = null;
+        foreach (preg_split('/\R/', $output) ?: [] as $line) {
+            $event = json_decode($line, true);
+            if (! is_array($event)) {
+                continue;
+            }
+
+            $message = match (true) {
+                is_string($event['message'] ?? null) && in_array($event['type'] ?? null, ['error', 'turn.failed'], true) => $event['message'],
+                is_array($event['error'] ?? null) && is_string($event['error']['message'] ?? null) => $event['error']['message'],
+                default => null,
+            };
+
+            if ($message !== null) {
+                $reason = $message;
+            }
+        }
+
+        return $reason;
+    }
+
     /** @param array{exit_code: int, output: string, error_output: string} $execution */
     public function record(Project $project, AgentRole $role, string $prompt, array $execution, ?Task $task = null): AgentRun
     {

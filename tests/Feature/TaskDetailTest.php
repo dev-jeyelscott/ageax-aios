@@ -191,6 +191,22 @@ test('a completed agent run retains its execution transcript for the task consol
     expect($run->refresh()->live_output)->toContain('Implemented the focused fix.');
 });
 
+test('a failed agent run exposes the harness error as a human-readable failure reason', function () {
+    Storage::fake('local');
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
+    $task = taskForDetail($project);
+    $run = AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'role' => AgentRole::Coder, 'status' => AgentRunStatus::Running, 'prompt_hash' => hash('sha256', 'test'), 'started_at' => now()]);
+    $output = implode("\n", [
+        json_encode(['type' => 'turn.started']),
+        json_encode(['type' => 'error', 'message' => "You've hit your usage limit. Try again at Aug 20th, 2026."]),
+        json_encode(['type' => 'turn.failed', 'error' => ['message' => "You've hit your usage limit. Try again at Aug 20th, 2026."]]),
+    ]);
+
+    app(AgentRunRecorder::class)->complete($run, ['exit_code' => 1, 'output' => $output, 'error_output' => '']);
+
+    expect(app(AgentRunRecorder::class)->failureReason($run->refresh()))->toBe("You've hit your usage limit. Try again at Aug 20th, 2026.");
+});
+
 test('agent output redacts dotenv values, credentials, and private keys before storage', function () {
     Storage::fake('local');
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);

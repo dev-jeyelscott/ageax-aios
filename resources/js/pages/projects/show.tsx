@@ -84,6 +84,7 @@ type AgentRun = {
     token_usage: number | null;
     exit_code: number | null;
     started_at: string;
+    failure_reason: string | null;
 };
 type Project = {
     id: number;
@@ -398,15 +399,24 @@ export default function ProjectShow({ project }: { project: Project }) {
                                                 : `${formatTokens(run.token_usage)} tokens`}
                                         </p>
                                     </div>
-                                    <Badge
-                                        variant={
-                                            failed ? 'destructive' : 'secondary'
-                                        }
-                                    >
-                                        {failed
-                                            ? `error${run.exit_code === null ? '' : ` · exit ${run.exit_code}`}`
-                                            : run.status}
-                                    </Badge>
+                                    <div className="flex flex-col items-end gap-1">
+                                        <Badge
+                                            variant={
+                                                failed
+                                                    ? 'destructive'
+                                                    : 'secondary'
+                                            }
+                                        >
+                                            {failed
+                                                ? `error${run.exit_code === null ? '' : ` · exit ${run.exit_code}`}`
+                                                : run.status}
+                                        </Badge>
+                                        {run.failure_reason && (
+                                            <span className="max-w-xs text-right text-xs text-destructive">
+                                                {run.failure_reason}
+                                            </span>
+                                        )}
+                                    </div>
                                 </Link>
                             );
                         })}

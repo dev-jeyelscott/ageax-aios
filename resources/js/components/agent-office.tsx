@@ -19,6 +19,7 @@ export type OfficeWorker = {
         attempt_number: number | null;
         started_at: string;
         finished_at: string | null;
+        failure_reason: string | null;
     } | null;
     task: { id: number; key: string; title: string; status: string } | null;
 };
@@ -321,21 +322,28 @@ function AgentCard({
             )}
 
             {worker.run ? (
-                <Link
-                    href={
-                        showAgentRun({
-                            project: projectId,
-                            run: worker.run.id,
-                        }).url
-                    }
-                    className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-cyan-200 focus-visible:outline-none"
-                >
-                    <span>Run #{worker.run.id}</span>
-                    <span className="text-right text-xs text-slate-500">
-                        {worker.run.status} · Attempt{' '}
-                        {worker.run.attempt_number ?? '—'}
-                    </span>
-                </Link>
+                <>
+                    <Link
+                        href={
+                            showAgentRun({
+                                project: projectId,
+                                run: worker.run.id,
+                            }).url
+                        }
+                        className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-cyan-200 focus-visible:outline-none"
+                    >
+                        <span>Run #{worker.run.id}</span>
+                        <span className="text-right text-xs text-slate-500">
+                            {worker.run.status} · Attempt{' '}
+                            {worker.run.attempt_number ?? '—'}
+                        </span>
+                    </Link>
+                    {worker.run.failure_reason && (
+                        <p className="mt-2 rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">
+                            {worker.run.failure_reason}
+                        </p>
+                    )}
+                </>
             ) : (
                 <p className="mt-3 rounded-lg border border-dashed border-white/10 px-3 py-2 text-sm text-slate-400">
                     No run is recorded for this agent.
