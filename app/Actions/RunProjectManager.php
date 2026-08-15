@@ -3,8 +3,14 @@
 namespace App\Actions;
 
 use App\AgentRole;
+use App\Models\Agent;
+use App\Models\Project;
 use App\Models\Roadmap;
 use App\Models\RoadmapAttempt;
+use App\Services\AgentContextAssembler;
+use App\Services\AgentHarness;
+use App\Services\AgentHarnessResolver;
+use App\Services\AgentResolver;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use App\Services\CodexCliRunner;
@@ -16,11 +22,12 @@ use App\WorkerLease;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Validator;
+use LogicException;
 use Throwable;
 
 class RunProjectManager
 {
-    public function __construct(private CodexCliRunner $runner, private AgentRunRecorder $runs, private StructuredResultParser $parser, private ApplyRoadmapPlan $plans, private ObsidianProjectNotes $notes, private ProjectRuntimeCapabilityDetector $runtime, private WorkerHeartbeat $heartbeat, private AuditLogger $audit) {}
+    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private StructuredResultParser $parser, private ApplyRoadmapPlan $plans, private ObsidianProjectNotes $notes, private ProjectRuntimeCapabilityDetector $runtime, private WorkerHeartbeat $heartbeat, private AuditLogger $audit) {}
 
     /** @return array{exit_code: int, output: string, error_output: string} */
     public function handle(Roadmap $roadmap, ?WorkerLease $lease = null): array
@@ -39,16 +46,28 @@ class RunProjectManager
             ->get(['id', 'body', 'created_at']);
         $retrieval = $this->notes->roadmapRetrieval($roadmap->project);
         $runtimeCapabilities = $this->runtime->detect($roadmap->project);
-        $prompt = "You are the Project Manager. Read AGENTS.md, repository documentation, Git history, the current implementation, and the provided targeted Obsidian project knowledge before planning. Treat Obsidian notes as context, but verify the repository before marking a task complete. Treat project_runtime_capabilities as authoritative environment-topology evidence: host-only tool or PHP-extension absence does not mean a project capability is unavailable when the repository configures it in Docker Compose. For container-managed projects, prefer the repository's existing Docker Compose service conventions when generating verification_commands. Produce only JSON: {project_knowledge:{overview,architecture_decisions:[{title,rationale}],constraints,handoff},phases:[{title,objective,tasks:[{title,objective,acceptance_criteria,scope,constraints,relevant_paths,verification_commands,implementation_prompt,obsidian_notes,depends_on,completion_status,completion_evidence}]}]}. Keep tasks ordered and implementation-ready. obsidian_notes is an optional list of intentionally relevant project-local Markdown paths; never include absolute paths, traversal, or non-Markdown files. depends_on is an array of one-based positions of earlier tasks in the complete plan; declare only real dependencies. If a task has no additional dependency, use an empty array. In project_knowledge, record only concise, verified facts that will be useful to fresh agents; do not include secrets or raw repository dumps. Use concise arrays for scope, constraints, relevant_paths, and verification_commands. Verification commands must be safe, simple commands from the approved project toolchain, with no shell operators or redirects. For Docker Compose projects, prefer safe `docker compose exec -T <service> ...` verification against the detected repository-defined application service when appropriate. For every task, set completion_status to done only when the current repository already satisfies its acceptance criteria; provide concise, concrete completion_evidence with paths, commands, or commits. Otherwise set completion_status to queued and completion_evidence to null. Do not infer completion from intent or documentation alone.\n\n".json_encode(['roadmap' => $roadmap->content, 'project_runtime_capabilities' => $runtimeCapabilities, 'obsidian_project_knowledge' => $retrieval['notes'], 'operator_messages' => $pendingMessages->map(fn ($message): array => ['id' => $message->id, 'body' => $message->body, 'created_at' => $message->created_at?->toIso8601String()])->all()], JSON_THROW_ON_ERROR);
-        $run = $this->runs->start($roadmap->project, AgentRole::ProjectManager, $prompt, lease: $lease, retrievalManifest: $retrieval['manifest']);
+
+        // AIOS resolves the Agent bound to this workflow role for the deterministic context
+        // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
+        // Agent fall back to the legacy default execution path; such runs remain legacy runs.
+        [$agent, $harness] = $this->resolveAgent($roadmap->project, AgentRole::ProjectManager);
+
+        $roadmapContext = ['roadmap' => $roadmap->content, 'project_runtime_capabilities' => $runtimeCapabilities, 'obsidian_project_knowledge' => $retrieval['notes'], 'operator_messages' => $pendingMessages->map(fn ($message): array => ['id' => $message->id, 'body' => $message->body, 'created_at' => $message->created_at?->toIso8601String()])->all()];
+        $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::ProjectManager, $roadmapContext);
+        $prompt = "You are the Project Manager. Read AGENTS.md, repository documentation, Git history, the current implementation, and the provided targeted Obsidian project knowledge before planning. Treat Obsidian notes as context, but verify the repository before marking a task complete. Treat project_runtime_capabilities as authoritative environment-topology evidence: host-only tool or PHP-extension absence does not mean a project capability is unavailable when the repository configures it in Docker Compose. For container-managed projects, prefer the repository's existing Docker Compose service conventions when generating verification_commands. Produce only JSON: {project_knowledge:{overview,architecture_decisions:[{title,rationale}],constraints,handoff},phases:[{title,objective,tasks:[{title,objective,acceptance_criteria,scope,constraints,relevant_paths,verification_commands,implementation_prompt,obsidian_notes,depends_on,completion_status,completion_evidence}]}]}. Keep tasks ordered and implementation-ready. obsidian_notes is an optional list of intentionally relevant project-local Markdown paths; never include absolute paths, traversal, or non-Markdown files. depends_on is an array of one-based positions of earlier tasks in the complete plan; declare only real dependencies. If a task has no additional dependency, use an empty array. In project_knowledge, record only concise, verified facts that will be useful to fresh agents; do not include secrets or raw repository dumps. Use concise arrays for scope, constraints, relevant_paths, and verification_commands. Verification commands must be safe, simple commands from the approved project toolchain, with no shell operators or redirects. For Docker Compose projects, prefer safe `docker compose exec -T <service> ...` verification against the detected repository-defined application service when appropriate. For every task, set completion_status to done only when the current repository already satisfies its acceptance criteria; provide concise, concrete completion_evidence with paths, commands, or commits. Otherwise set completion_status to queued and completion_evidence to null. Do not infer completion from intent or documentation alone.\n\n".json_encode($assembled?->toArray() ?? $roadmapContext, JSON_THROW_ON_ERROR);
+        $run = $this->runs->start($roadmap->project, AgentRole::ProjectManager, $prompt, lease: $lease, retrievalManifest: $retrieval['manifest'], agent: $agent, context: $assembled);
         $attempt->update(['agent_run_id' => $run->id, 'status' => 'running']);
         try {
-            $execution = $this->runner->run($roadmap->project, $prompt, function (string $type, string $output) use ($run, $roadmap, $lease): void {
+            $onOutput = function (string $type, string $output) use ($run, $roadmap, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
                 if ($lease === null) {
                     $this->heartbeat->beat($roadmap->project, AgentRole::ProjectManager);
                 }
-            }, $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease));
+            };
+            $onHeartbeat = $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease);
+            $execution = $harness !== null && $agent !== null
+                ? $harness->execute($roadmap->project, $agent, $prompt, $onOutput, $onHeartbeat)->toArray()
+                : $this->runner->run($roadmap->project, $prompt, $onOutput, $onHeartbeat);
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
         }
@@ -84,6 +103,18 @@ class RunProjectManager
         $this->notes->writeProjectManagerKnowledge($roadmap->project, $plan['project_knowledge'] ?? [], $plan['phases']);
 
         return $execution;
+    }
+
+    /** @return array{0: ?Agent, 1: ?AgentHarness} */
+    private function resolveAgent(Project $project, AgentRole $role): array
+    {
+        try {
+            $agent = $this->agents->forRole($project, $role);
+
+            return [$agent, $this->harnesses->resolve($agent)];
+        } catch (LogicException) {
+            return [null, null];
+        }
     }
 
     private function claimRoadmap(Roadmap $roadmap): ?RoadmapAttempt

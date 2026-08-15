@@ -4,8 +4,14 @@ namespace App\Actions;
 
 use App\AgentRole;
 use App\Exceptions\UnsafeProjectPath;
+use App\Models\Agent;
+use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
+use App\Services\AgentContextAssembler;
+use App\Services\AgentHarness;
+use App\Services\AgentHarnessResolver;
+use App\Services\AgentResolver;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use App\Services\CoderRepositoryGuard;
@@ -19,11 +25,12 @@ use App\Services\WorkerHeartbeat;
 use App\Services\WorkspacePathResolver;
 use App\TaskStatus;
 use App\WorkerLease;
+use LogicException;
 use Throwable;
 
 class RunCoderTask
 {
-    public function __construct(private CodexCliRunner $runner, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git) {}
+    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git) {}
 
     public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
     {
@@ -43,8 +50,15 @@ class RunCoderTask
         }
 
         $baseSha = $preflight['base_sha'];
+
+        // AIOS resolves the Agent bound to this workflow role for the deterministic context
+        // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
+        // Agent fall back to the legacy default execution path; such runs remain legacy runs.
+        [$agent, $harness] = $this->resolveAgent($task->project, AgentRole::Coder);
+
         $context = $this->capsules->make($task);
-        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($context, JSON_THROW_ON_ERROR);
+        $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Coder, $context);
+        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
         $attempt = TaskAttempt::create([
             'task_id' => $task->id,
             'number' => $task->attempts()->max('number') + 1,
@@ -59,15 +73,19 @@ class RunCoderTask
             ],
             'started_at' => now(),
         ]);
-        $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt, $lease, $context['retrieval_manifest']);
+        $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt, $lease, $context['retrieval_manifest'], $agent, $assembled);
 
         try {
-            $execution = $this->runner->run($task->project, $prompt, function (string $type, string $output) use ($run, $task, $lease): void {
+            $onOutput = function (string $type, string $output) use ($run, $task, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
                 if ($lease === null) {
                     $this->heartbeat->beat($task->project, AgentRole::Coder);
                 }
-            }, $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease));
+            };
+            $onHeartbeat = $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease);
+            $execution = $harness !== null && $agent !== null
+                ? $harness->execute($task->project, $agent, $prompt, $onOutput, $onHeartbeat)->toArray()
+                : $this->runner->run($task->project, $prompt, $onOutput, $onHeartbeat);
             $this->runs->complete($run, $execution);
 
             if ($execution['exit_code'] === 0) {
@@ -201,6 +219,18 @@ class RunCoderTask
     private function retryStatus(TaskAttempt $attempt): TaskStatus
     {
         return $attempt->number >= (int) config('aios.max_coder_attempts') ? TaskStatus::Blocked : TaskStatus::Failed;
+    }
+
+    /** @return array{0: ?Agent, 1: ?AgentHarness} */
+    private function resolveAgent(Project $project, AgentRole $role): array
+    {
+        try {
+            $agent = $this->agents->forRole($project, $role);
+
+            return [$agent, $this->harnesses->resolve($agent)];
+        } catch (LogicException) {
+            return [null, null];
+        }
     }
 
     private function blockUnsafeProjectPath(Task $task, UnsafeProjectPath $exception): TaskAttempt

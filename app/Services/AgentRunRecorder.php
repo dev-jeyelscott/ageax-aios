@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\AgentRole;
 use App\AgentRunStatus;
+use App\Models\Agent;
 use App\Models\AgentRun;
 use App\Models\AgentWorker;
 use App\Models\Project;
@@ -22,20 +23,30 @@ class AgentRunRecorder
 
     public function __construct(private AuditLogger $audit, private TokenUsageObservability $tokens) {}
 
-    /** @param array<string, mixed>|null $retrievalManifest */
-    public function start(Project $project, AgentRole $role, string $prompt, ?Task $task = null, ?TaskAttempt $attempt = null, ?WorkerLease $lease = null, ?array $retrievalManifest = null): AgentRun
+    /**
+     * @param  array<string, mixed>|null  $retrievalManifest
+     *
+     * $agent and $context, when supplied, capture an immutable configuration snapshot on the
+     * run at creation time (P2-012). Editing the Agent or its Skills afterward never changes
+     * this persisted snapshot; a future run resolves and snapshots the then-current configuration.
+     */
+    public function start(Project $project, AgentRole $role, string $prompt, ?Task $task = null, ?TaskAttempt $attempt = null, ?WorkerLease $lease = null, ?array $retrievalManifest = null, ?Agent $agent = null, ?AssembledAgentContext $context = null): AgentRun
     {
         $run = AgentRun::create([
             'project_id' => $project->id,
             'task_id' => $task?->id,
             'agent_worker_id' => $lease === null ? AgentWorker::query()->whereBelongsTo($project)->where('role', $role)->value('id') : $lease->workerId,
+            'agent_id' => $agent?->id,
             'worker_instance_id' => $lease?->workerInstanceId,
             'worker_lease_id' => $lease?->leaseId,
             'role' => $role,
+            'harness' => $agent?->getRawOriginal('harness'),
             'status' => AgentRunStatus::Running,
             'attempt_number' => $attempt?->number,
             'prompt_hash' => hash('sha256', $prompt),
             'result' => $retrievalManifest === null ? null : ['retrieval_manifest' => $retrievalManifest],
+            'configuration_snapshot' => $context?->configurationSnapshot(),
+            'context_schema_version' => $context?->contextSchemaVersion,
             'started_at' => now(),
         ]);
 
@@ -47,12 +58,16 @@ class AgentRunRecorder
             'worker_instance_id' => $run->worker_instance_id,
             'worker_lease_id' => $run->worker_lease_id,
             'retrieval_manifest' => $retrievalManifest,
+            'agent_id' => $agent?->id,
+            'agent_configuration_version' => $agent?->configuration_version,
+            'harness' => $run->harness,
+            'context_hash' => $context?->hash,
         ], $project, $task);
 
         return $run;
     }
 
-    /** @param array{exit_code: int, output: string, error_output: string} $execution */
+    /** @param array{exit_code: int, output: string, error_output: string, external_run_id?: string|null} $execution */
     public function complete(AgentRun $run, array $execution): AgentRun
     {
         $logPath = 'agent-runs/'.Str::uuid().'.jsonl';
@@ -66,10 +81,12 @@ class AgentRunRecorder
         }
 
         $existingResult = $this->result($run->fresh());
+        $externalRunId = is_string($execution['external_run_id'] ?? null) ? $execution['external_run_id'] : $metadata['codex_run_id'];
         $run->update([
             'status' => $execution['exit_code'] === 0 ? AgentRunStatus::Completed : AgentRunStatus::Failed,
             'exit_code' => $execution['exit_code'],
             'codex_run_id' => $metadata['codex_run_id'],
+            'external_run_id' => $externalRunId,
             'result' => [...$existingResult, ...$metadata['result']],
             'commands' => $metadata['commands'],
             'file_modifications' => $metadata['file_modifications'],
@@ -88,6 +105,9 @@ class AgentRunRecorder
             'attempt_number' => $completedRun->attempt_number,
             'exit_code' => $completedRun->exit_code,
             'codex_run_id' => $completedRun->codex_run_id,
+            'external_run_id' => $completedRun->external_run_id,
+            'agent_id' => $completedRun->agent_id,
+            'harness' => $completedRun->harness,
             'token_usage' => $completedRun->token_usage,
             'commands' => $completedRun->commands ?? [],
             'file_modifications' => $completedRun->file_modifications ?? [],

@@ -3,11 +3,17 @@
 namespace App\Actions;
 
 use App\AgentRole;
+use App\Models\Agent;
+use App\Models\Project;
 use App\Models\Review;
 use App\Models\ReviewFinding;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use App\ReviewStatus;
+use App\Services\AgentContextAssembler;
+use App\Services\AgentHarness;
+use App\Services\AgentHarnessResolver;
+use App\Services\AgentResolver;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use App\Services\CodexCliRunner;
@@ -19,11 +25,12 @@ use App\Services\WorkerHeartbeat;
 use App\TaskStatus;
 use App\WorkerLease;
 use Illuminate\Validation\ValidationException;
+use LogicException;
 use Throwable;
 
 class RunReviewerTask
 {
-    public function __construct(private TaskWorkflow $workflow, private CodexCliRunner $runner, private AgentRunRecorder $runs, private StructuredResultParser $parser, private TaskContextCapsuleFactory $capsules, private ObsidianProjectNotes $notes, private WorkerHeartbeat $heartbeat, private AuditLogger $audit) {}
+    public function __construct(private TaskWorkflow $workflow, private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private StructuredResultParser $parser, private TaskContextCapsuleFactory $capsules, private ObsidianProjectNotes $notes, private WorkerHeartbeat $heartbeat, private AuditLogger $audit) {}
 
     /** @return array{exit_code: int, output: string, error_output: string} */
     public function run(Task $task, TaskAttempt $attempt, ?WorkerLease $lease = null): array
@@ -31,17 +38,28 @@ class RunReviewerTask
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Reviewing, 409, 'Only claimed review tasks may execute.');
         $task->loadMissing('project', 'phase');
         $this->audit->record('review.started', ['attempt_number' => $attempt->number], $task->project, $task);
+
+        // AIOS resolves the Agent bound to this workflow role for the deterministic context
+        // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
+        // Agent fall back to the legacy default execution path; such runs remain legacy runs.
+        [$agent, $harness] = $this->resolveAgent($task->project, AgentRole::Reviewer);
+
         $context = $this->capsules->make($task, AgentRole::Reviewer);
+        $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Reviewer, $context);
         $phaseBrief = $this->notes->writePhaseReviewBrief($task);
-        $prompt = "You are the Reviewer. This is a read-only phase review: independently inspect every task in the supplied phase, repository documentation, current implementation, verification results, and exact Git diffs. Never edit files, create tests, format code, commit, or otherwise mutate the project. Use Git to inspect the recorded base and head SHAs, but run verification commands only from the managed project checkout provided as your working directory. Do not create temporary checkouts, copy repositories or tests, or invoke Artisan/Pest from another directory: those environments do not have the managed runtime, dependencies, or assets and their failures are invalid evidence. Approve only when the complete phase meets its acceptance criteria; approval completes every task in the phase. If changes are needed, return findings for the final task so the Coder can correct the phase in a fresh attempt. Return exactly one JSON object with `outcome` (`approved` or `changes_required`) and `summary`. For `changes_required`, include a non-empty `findings` array. Every finding must contain these string fields: `severity`, `location`, `current_implementation`, `expected_implementation`, `why_incorrect`, `required_fix`, `verification_requirement`, and `implementation_fix_context`. Do not use `actionable_findings`, `task_key`, `path`, `lines`, `finding`, or `required_action` as substitutes. When approved, make summary a concise, concrete implementation summary suitable for an Obsidian project record, covering the phase changes and verification.\n\n".json_encode(['task' => $context, 'attempt' => $attempt->only(['number', 'base_sha', 'head_sha', 'commit_sha', 'validation_results', 'changed_files']), 'phase_review_brief' => $this->phaseReviewContext($task), 'phase_review_brief_path' => $phaseBrief], JSON_THROW_ON_ERROR);
-        $run = $this->runs->start($task->project, AgentRole::Reviewer, $prompt, $task, $attempt, $lease, $context['retrieval_manifest']);
+        $prompt = "You are the Reviewer. This is a read-only phase review: independently inspect every task in the supplied phase, repository documentation, current implementation, verification results, and exact Git diffs. Never edit files, create tests, format code, commit, or otherwise mutate the project. Use Git to inspect the recorded base and head SHAs, but run verification commands only from the managed project checkout provided as your working directory. Do not create temporary checkouts, copy repositories or tests, or invoke Artisan/Pest from another directory: those environments do not have the managed runtime, dependencies, or assets and their failures are invalid evidence. Approve only when the complete phase meets its acceptance criteria; approval completes every task in the phase. If changes are needed, return findings for the final task so the Coder can correct the phase in a fresh attempt. Return exactly one JSON object with `outcome` (`approved` or `changes_required`) and `summary`. For `changes_required`, include a non-empty `findings` array. Every finding must contain these string fields: `severity`, `location`, `current_implementation`, `expected_implementation`, `why_incorrect`, `required_fix`, `verification_requirement`, and `implementation_fix_context`. Do not use `actionable_findings`, `task_key`, `path`, `lines`, `finding`, or `required_action` as substitutes. When approved, make summary a concise, concrete implementation summary suitable for an Obsidian project record, covering the phase changes and verification.\n\n".json_encode(['task' => $assembled?->toArray() ?? $context, 'attempt' => $attempt->only(['number', 'base_sha', 'head_sha', 'commit_sha', 'validation_results', 'changed_files']), 'phase_review_brief' => $this->phaseReviewContext($task), 'phase_review_brief_path' => $phaseBrief], JSON_THROW_ON_ERROR);
+        $run = $this->runs->start($task->project, AgentRole::Reviewer, $prompt, $task, $attempt, $lease, $context['retrieval_manifest'], $agent, $assembled);
         try {
-            $execution = $this->runner->run($task->project, $prompt, function (string $type, string $output) use ($run, $task, $lease): void {
+            $onOutput = function (string $type, string $output) use ($run, $task, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
                 if ($lease === null) {
                     $this->heartbeat->beat($task->project, AgentRole::Reviewer);
                 }
-            }, $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease));
+            };
+            $onHeartbeat = $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease);
+            $execution = $harness !== null && $agent !== null
+                ? $harness->execute($task->project, $agent, $prompt, $onOutput, $onHeartbeat)->toArray()
+                : $this->runner->run($task->project, $prompt, $onOutput, $onHeartbeat);
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
         }
@@ -115,6 +133,18 @@ class RunReviewerTask
         }
 
         return $review;
+    }
+
+    /** @return array{0: ?Agent, 1: ?AgentHarness} */
+    private function resolveAgent(Project $project, AgentRole $role): array
+    {
+        try {
+            $agent = $this->agents->forRole($project, $role);
+
+            return [$agent, $this->harnesses->resolve($agent)];
+        } catch (LogicException) {
+            return [null, null];
+        }
     }
 
     /** @return array<string, mixed> */
