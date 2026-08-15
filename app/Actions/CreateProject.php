@@ -15,7 +15,12 @@ use Illuminate\Validation\ValidationException;
 
 class CreateProject
 {
-    public function __construct(private WorkspacePathResolver $paths, private AuditLogger $audit, private ObsidianProjectNotes $notes) {}
+    public function __construct(
+        private WorkspacePathResolver $paths,
+        private AuditLogger $audit,
+        private ObsidianProjectNotes $notes,
+        private ProvisionDefaultProjectAgents $agentProvisioner,
+    ) {}
 
     public function handle(string $name, string $path, bool $existing = false): Project
     {
@@ -51,6 +56,8 @@ class CreateProject
 
         $project = DB::transaction(function () use ($name, $projectPath, $existing, $gitState): Project {
             $project = Project::create(['name' => $name, 'path' => $projectPath, 'status' => ProjectStatus::Paused, 'git_status' => $gitState['status'], 'git_head_sha' => $gitState['head_sha']]);
+
+            $this->agentProvisioner->handle($project);
 
             foreach ([AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer] as $role) {
                 AgentWorker::create(['project_id' => $project->id, 'role' => $role, 'status' => 'idle']);
