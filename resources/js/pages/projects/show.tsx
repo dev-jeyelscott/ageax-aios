@@ -357,7 +357,7 @@ function GitEvidencePanel({ project }: { project: Project }) {
                         </Badge>
                     </div>
 
-                    <dl className="mt-3 grid grid-cols-3 gap-1.5">
+                    <dl className="mt-2 grid grid-cols-3 gap-1.5">
                         {[
                             ['Base', evidence.base_sha],
                             ['Head', evidence.head_sha],
@@ -365,13 +365,13 @@ function GitEvidencePanel({ project }: { project: Project }) {
                         ].map(([label, value]) => (
                             <div
                                 key={label}
-                                className="min-w-0 rounded-md border border-white/5 bg-white/[0.02] p-2"
+                                className="min-w-0 rounded-md border border-white/5 bg-white/[0.02] p-1.5"
                             >
                                 <dt className="font-mono text-[8px] text-slate-600 uppercase">
                                     {label}
                                 </dt>
                                 <dd
-                                    className="mt-1 truncate font-mono text-[9px] text-cyan-200"
+                                    className="mt-0.5 truncate font-mono text-[9px] text-cyan-200"
                                     title={value ?? undefined}
                                 >
                                     {shortSha(value)}
@@ -380,7 +380,7 @@ function GitEvidencePanel({ project }: { project: Project }) {
                         ))}
                     </dl>
 
-                    <div className="mt-3 rounded-lg border border-white/5 bg-white/[0.02] p-2.5">
+                    <div className="mt-2 rounded-lg border border-white/5 bg-white/[0.02] p-2">
                         <div className="flex items-center justify-between gap-2">
                             <p className="font-mono text-[9px] text-slate-500 uppercase">
                                 Changed files
@@ -390,8 +390,8 @@ function GitEvidencePanel({ project }: { project: Project }) {
                             </span>
                         </div>
 
-                        <div className="mt-1.5 grid gap-1">
-                            {evidence.changed_files?.slice(0, 3).map((file) => (
+                        <div className="mt-1 grid gap-1">
+                            {evidence.changed_files?.slice(0, 2).map((file) => (
                                 <p
                                     key={file}
                                     title={file}
@@ -405,16 +405,16 @@ function GitEvidencePanel({ project }: { project: Project }) {
                                     No changed-file evidence recorded.
                                 </p>
                             )}
-                            {(evidence.changed_files?.length ?? 0) > 3 && (
+                            {(evidence.changed_files?.length ?? 0) > 2 && (
                                 <p className="text-[9px] text-slate-600">
-                                    +{(evidence.changed_files?.length ?? 0) - 3}{' '}
+                                    +{(evidence.changed_files?.length ?? 0) - 2}{' '}
                                     more
                                 </p>
                             )}
                         </div>
                     </div>
 
-                    <div className="mt-2">
+                    <div className="mt-1.5">
                         <div className="flex items-center justify-between">
                             <p className="font-mono text-[9px] text-slate-500 uppercase">
                                 Validation
@@ -439,7 +439,7 @@ function GitEvidencePanel({ project }: { project: Project }) {
                         </div>
 
                         {checks.length > 0 && (
-                            <div className="mt-1.5 grid grid-cols-2 gap-1">
+                            <div className="mt-1 grid grid-cols-2 gap-1">
                                 {checks.map(([name, passed]) => (
                                     <div
                                         key={name}
@@ -462,9 +462,9 @@ function GitEvidencePanel({ project }: { project: Project }) {
                     </div>
                 </>
             ) : (
-                <div className="rounded-lg border border-dashed border-slate-700 p-3 text-center">
+                <div className="rounded-lg border border-dashed border-slate-700 p-2.5 text-center">
                     <GitCommitHorizontal className="mx-auto size-5 text-slate-600" />
-                    <p className="mt-2 text-xs text-slate-500">
+                    <p className="mt-1.5 text-xs text-slate-500">
                         No task-attempt Git evidence yet.
                     </p>
                     {project.git_head_sha && (
@@ -489,14 +489,14 @@ function ProviderUsage({
     usage: HarnessUsage;
 }) {
     return (
-        <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2.5">
+        <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2">
             <div className="flex items-center justify-between">
                 <p className="text-xs font-medium text-slate-200">{label}</p>
                 <span className="font-mono text-[9px] text-slate-500">
                     {usage.run_count} runs
                 </span>
             </div>
-            <p className="mt-1 font-mono text-[10px] text-cyan-300">
+            <p className="mt-0.5 font-mono text-[10px] text-cyan-300">
                 {formatTokens(usage.token_usage)} tokens
             </p>
         </div>
@@ -518,14 +518,14 @@ function HarnessUsagePanel({ project }: { project: Project }) {
                     <p className="font-mono text-[9px] text-slate-500 uppercase">
                         Total observed
                     </p>
-                    <p className="mt-1 text-lg font-semibold text-violet-200">
+                    <p className="mt-0.5 text-lg font-semibold text-violet-200">
                         {formatTokens(project.token_usage_total)}
                     </p>
                 </div>
                 <Activity className="size-4 text-violet-300" />
             </div>
 
-            <div className="mt-3 grid gap-1.5">
+            <div className="mt-2 grid gap-1.5">
                 <ProviderUsage
                     label="Codex"
                     usage={project.harness_usage.codex ?? zeroUsage}
@@ -539,13 +539,13 @@ function HarnessUsagePanel({ project }: { project: Project }) {
                 )}
             </div>
 
-            <div className="mt-3 border-t border-white/5 pt-2">
+            <div className="mt-2 border-t border-white/5 pt-1.5">
                 <p className="font-mono text-[9px] text-slate-600 uppercase">
                     Rolling role averages
                 </p>
-                <div className="mt-1.5 grid gap-1">
+                <div className="mt-1 grid gap-1">
                     {Object.entries(project.token_observability)
-                        .slice(0, 3)
+                        .slice(0, 2)
                         .map(([role, usage]) => (
                             <div
                                 key={role}
@@ -577,7 +577,7 @@ function OverviewDashboard({
     completedTasks: number;
 }) {
     return (
-        <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)]">
+        <div className="grid h-full min-h-0 gap-2.5 lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)]">
             <div className="min-h-0">
                 <ClientAgentOffice
                     project={project}
@@ -586,7 +586,7 @@ function OverviewDashboard({
                 />
             </div>
 
-            <aside className="min-h-0 space-y-3 overflow-y-auto pr-1">
+            <aside className="min-h-0 space-y-2 overflow-y-auto pr-1">
                 <RoadmapPanel
                     project={project}
                     currentTask={currentTask}

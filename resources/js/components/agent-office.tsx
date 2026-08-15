@@ -117,32 +117,32 @@ export function officePresentation(status: string): OfficePresentation {
         case 'working':
             return {
                 label: 'Working',
-                dotClass: 'bg-emerald-400',
-                textClass: 'text-emerald-300',
+                dotClass: 'bg-success',
+                textClass: 'text-success-foreground',
             };
         case 'recovering':
             return {
                 label: 'Recovering',
-                dotClass: 'bg-amber-400',
-                textClass: 'text-amber-300',
+                dotClass: 'bg-warning',
+                textClass: 'text-warning-foreground',
             };
         case 'interrupted':
             return {
                 label: 'Needs attention',
-                dotClass: 'bg-rose-400',
-                textClass: 'text-rose-300',
+                dotClass: 'bg-destructive',
+                textClass: 'text-destructive-foreground',
             };
         case 'idle':
             return {
                 label: 'Available',
-                dotClass: 'bg-slate-400',
-                textClass: 'text-slate-300',
+                dotClass: 'bg-muted-foreground',
+                textClass: 'text-muted-foreground',
             };
         default:
             return {
                 label: 'Status unavailable',
-                dotClass: 'bg-slate-500',
-                textClass: 'text-slate-400',
+                dotClass: 'bg-muted-foreground/70',
+                textClass: 'text-muted-foreground',
             };
     }
 }
@@ -254,8 +254,8 @@ function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
     const roleLabel = labelForRole(worker.role);
 
     return (
-        <div className="relative h-20 overflow-hidden rounded-lg border border-cyan-300/10 bg-[radial-gradient(circle_at_50%_35%,rgba(34,211,238,0.14),transparent_48%),linear-gradient(145deg,#0b1424,#020617)]">
-            <div className="pointer-events-none absolute inset-x-8 bottom-0 h-8 rounded-full bg-cyan-300/5 blur-xl" />
+        <div className="visual-stage relative h-full overflow-hidden rounded-lg border border-primary/10">
+            <div className="pointer-events-none absolute inset-x-8 bottom-0 h-8 rounded-full bg-primary/5 blur-xl" />
 
             {worker.role === 'project_manager' ? (
                 <>
@@ -279,7 +279,7 @@ function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
                     >
                         <Bot
                             aria-hidden="true"
-                            className="size-10 text-cyan-300"
+                            className="size-10 text-primary"
                         />
                     </div>
                 </>
@@ -298,7 +298,7 @@ function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
                     >
                         <Bot
                             aria-hidden="true"
-                            className="size-10 text-cyan-300"
+                            className="size-10 text-primary"
                         />
                     </div>
                 </>
@@ -310,7 +310,7 @@ function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
                 >
                     <Bot
                         aria-hidden="true"
-                        className="size-10 text-slate-500"
+                        className="size-10 text-muted-foreground"
                     />
                 </div>
             )}
@@ -330,16 +330,16 @@ function AgentCard({
     const presentation = officePresentation(worker.status);
 
     return (
-        <article className="relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/70 p-2.5 shadow-panel">
-            <div className="glow-edge pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/50 to-transparent" />
+        <article className="panel-elevated relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-2.5">
+            <div className="glow-edge glow-line-accent" />
 
             <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                    <p className="font-mono text-[10px] tracking-[0.16em] text-cyan-300 uppercase">
+                    <p className="font-mono text-2xs tracking-[0.16em] text-primary uppercase">
                         {labelForRole(worker.role)}
                     </p>
 
-                    <h3 className="mt-0.5 truncate text-sm font-semibold text-white">
+                    <h3 className="mt-0.5 truncate text-sm font-semibold text-foreground">
                         {agent?.name ?? 'Unbound agent'}
                     </h3>
                 </div>
@@ -352,27 +352,27 @@ function AgentCard({
                 />
             </div>
 
-            <div className="mt-2">
+            <div className="mt-2 min-h-0 flex-1">
                 <AgentVisualPanel worker={worker} />
             </div>
 
-            <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px]">
-                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1">
-                    <p className="text-slate-500">Harness</p>
-                    <p className="mt-0.5 truncate font-medium text-cyan-100">
+            <div className="mt-2 grid grid-cols-2 gap-1.5 text-2xs">
+                <div className="tile-inset px-2 py-1">
+                    <p className="text-muted-foreground">Harness</p>
+                    <p className="mt-0.5 truncate font-medium text-primary/80">
                         {agent ? labelForHarness(agent.harness) : '—'}
                     </p>
                 </div>
 
-                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1">
-                    <p className="text-slate-500">Model</p>
-                    <p className="mt-0.5 truncate font-medium text-slate-200">
+                <div className="tile-inset px-2 py-1">
+                    <p className="text-muted-foreground">Model</p>
+                    <p className="mt-0.5 truncate font-medium text-foreground">
                         {agent?.model ?? 'Harness default'}
                     </p>
                 </div>
 
-                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1">
-                    <p className="text-slate-500">Worker</p>
+                <div className="tile-inset px-2 py-1">
+                    <p className="text-muted-foreground">Worker</p>
                     <p
                         className={`mt-0.5 font-medium ${presentation.textClass}`}
                     >
@@ -380,15 +380,15 @@ function AgentCard({
                     </p>
                 </div>
 
-                <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1">
-                    <p className="text-slate-500">Lease</p>
-                    <p className="mt-0.5 font-medium text-slate-200 capitalize">
+                <div className="tile-inset px-2 py-1">
+                    <p className="text-muted-foreground">Lease</p>
+                    <p className="mt-0.5 font-medium text-foreground capitalize">
                         {worker.lease_state}
                     </p>
                 </div>
             </div>
 
-            <div className="mt-2 min-h-10 rounded-lg border border-white/8 bg-slate-900/60 p-2">
+            <div className="panel-recessed mt-2 min-h-10 p-2">
                 {worker.task ? (
                     <Link
                         href={
@@ -397,25 +397,25 @@ function AgentCard({
                                 task: worker.task.id,
                             }).url
                         }
-                        className="block focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none"
+                        className="block focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
                     >
-                        <p className="font-mono text-[10px] text-cyan-300 uppercase">
+                        <p className="font-mono text-2xs text-primary uppercase">
                             Current task · {worker.task.status}
                         </p>
 
-                        <p className="mt-0.5 truncate text-xs font-medium text-slate-100">
+                        <p className="mt-0.5 truncate text-xs font-medium text-foreground">
                             <span className="font-mono">{worker.task.key}</span>
                             : {worker.task.title}
                         </p>
                     </Link>
                 ) : (
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-muted-foreground">
                         No task currently assigned.
                     </p>
                 )}
             </div>
 
-            <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] text-slate-500">
+            <div className="mt-1.5 flex items-center justify-between gap-2 text-2xs text-muted-foreground">
                 <span title={formatDate(worker.last_heartbeat_at)}>
                     Heartbeat {worker.last_heartbeat_at ? 'recorded' : '—'}
                 </span>
@@ -428,7 +428,7 @@ function AgentCard({
                                 run: worker.run.id,
                             }).url
                         }
-                        className="font-mono text-violet-300 hover:text-violet-200"
+                        className="font-mono text-secondary-foreground hover:text-secondary-foreground/80"
                     >
                         Run #{worker.run.id}
                     </Link>
@@ -438,7 +438,7 @@ function AgentCard({
             </div>
 
             {worker.run?.failure_reason && (
-                <p className="mt-2 line-clamp-2 rounded-md border border-rose-400/20 bg-rose-400/10 px-2 py-1.5 text-[10px] text-rose-200">
+                <p className="mt-2 line-clamp-2 rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1.5 text-2xs text-destructive-foreground">
                     {worker.run.failure_reason}
                 </p>
             )}
@@ -456,15 +456,15 @@ function Metric({
     tone: string;
 }) {
     return (
-        <div className="flex min-w-24 items-center gap-2 rounded-lg border border-white/8 bg-black/20 px-2.5 py-1">
+        <div className="flex min-w-24 items-center gap-2 rounded-lg border border-border-subtle bg-background/40 px-2.5 py-1">
             <span className={`size-1.5 rounded-full ${tone}`} />
 
             <div>
-                <p className="text-sm leading-none font-semibold text-white">
+                <p className="text-sm leading-none font-semibold text-foreground">
                     {value}
                 </p>
 
-                <p className="mt-1 font-mono text-[9px] tracking-wide text-slate-500 uppercase">
+                <p className="mt-1 font-mono text-2xs tracking-wide text-muted-foreground uppercase">
                     {label}
                 </p>
             </div>
@@ -488,25 +488,25 @@ function WorkflowPipeline({
     const activeIndex = workflowStageIndex(currentTask?.status, isComplete);
 
     return (
-        <div className="rounded-xl border border-white/8 bg-slate-950/55 px-3 py-2.5">
+        <div className="panel-recessed px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
                 <div>
-                    <p className="font-mono text-[10px] tracking-[0.15em] text-violet-300 uppercase">
+                    <p className="font-mono text-2xs tracking-[0.15em] text-secondary-foreground uppercase">
                         Workflow pipeline
                     </p>
 
-                    <p className="mt-0.5 text-xs text-slate-500">
+                    <p className="mt-0.5 text-xs text-muted-foreground">
                         AIOS-controlled deterministic lifecycle
                     </p>
                 </div>
 
-                <span className="font-mono text-[10px] text-slate-500">
+                <span className="font-mono text-2xs text-muted-foreground">
                     {taskProgress.completed}/{taskProgress.total} done
                 </span>
             </div>
 
             <div className="relative mt-2.5">
-                <div className="absolute top-2.5 right-[9%] left-[9%] h-px bg-slate-800" />
+                <div className="absolute top-2.5 right-[9%] left-[9%] h-px bg-border" />
 
                 <div className="relative grid grid-cols-5 gap-1">
                     {workflowStages.map((stage, index) => {
@@ -521,20 +521,20 @@ function WorkflowPipeline({
                                 <span
                                     className={`z-10 size-5 rounded-full border ${
                                         active
-                                            ? 'glow-border border-cyan-200 bg-cyan-300'
+                                            ? 'glow-border border-primary bg-primary'
                                             : passed
-                                              ? 'border-emerald-300/70 bg-emerald-400/60'
-                                              : 'border-slate-700 bg-slate-950'
+                                              ? 'border-success/70 bg-success/60'
+                                              : 'border-border bg-background'
                                     }`}
                                 />
 
                                 <span
-                                    className={`mt-1.5 truncate font-mono text-[9px] uppercase ${
+                                    className={`mt-1.5 truncate font-mono text-2xs uppercase ${
                                         active
-                                            ? 'text-cyan-200'
+                                            ? 'text-primary'
                                             : passed
-                                              ? 'text-emerald-300'
-                                              : 'text-slate-600'
+                                              ? 'text-success-foreground'
+                                              : 'text-muted-foreground'
                                     }`}
                                 >
                                     {stage.label}
@@ -545,13 +545,13 @@ function WorkflowPipeline({
                 </div>
             </div>
 
-            <div className="mt-2.5 flex min-w-0 items-center justify-between gap-3 border-t border-white/5 pt-2">
+            <div className="mt-2.5 flex min-w-0 items-center justify-between gap-3 border-t border-border-subtle pt-2">
                 <div className="min-w-0">
-                    <p className="text-[10px] text-slate-500 uppercase">
+                    <p className="text-2xs text-muted-foreground uppercase">
                         Active operation
                     </p>
 
-                    <p className="truncate text-xs font-medium text-slate-200">
+                    <p className="truncate text-xs font-medium text-foreground">
                         {currentTask
                             ? `${currentTask.key}: ${currentTask.title}`
                             : isComplete
@@ -563,7 +563,7 @@ function WorkflowPipeline({
                 {currentTask && (
                     <Badge
                         variant="outline"
-                        className="shrink-0 border-cyan-300/20 bg-cyan-400/5 font-mono text-[9px] text-cyan-200"
+                        className="shrink-0 border-primary/20 bg-primary/5 font-mono text-2xs text-primary"
                     >
                         {currentTask.status}
                     </Badge>
@@ -702,9 +702,9 @@ export function AgentOffice({
                 </div>
             </header>
 
-            <div className="relative min-h-0 flex-1 overflow-y-auto p-2.5">
+            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden p-2.5">
                 {displayedWorkers.length > 0 ? (
-                    <div className="grid gap-2.5 md:grid-cols-3">
+                    <div className="grid min-h-0 flex-1 gap-2.5 md:grid-cols-3">
                         {displayedWorkers.map((worker) => (
                             <AgentCard
                                 key={worker.id}
@@ -715,7 +715,7 @@ export function AgentOffice({
                         ))}
                     </div>
                 ) : (
-                    <div className="grid min-h-32 place-items-center rounded-xl border border-dashed border-slate-700 bg-slate-950/40 text-center">
+                    <div className="grid min-h-32 flex-1 place-items-center rounded-xl border border-dashed border-slate-700 bg-slate-950/40 text-center">
                         <div>
                             <Bot className="mx-auto size-10 text-slate-600" />
 
@@ -726,14 +726,14 @@ export function AgentOffice({
                     </div>
                 )}
 
-                <div className="mt-2.5">
+                <div className="mt-2.5 shrink-0">
                     <WorkflowPipeline
                         currentTask={currentTask}
                         taskProgress={taskProgress}
                     />
                 </div>
 
-                <div className="mt-2.5 grid gap-2 sm:grid-cols-3">
+                <div className="mt-2.5 grid shrink-0 gap-2 sm:grid-cols-3">
                     <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-1.5">
                         <Radio className="size-3.5 text-cyan-300" />
 
