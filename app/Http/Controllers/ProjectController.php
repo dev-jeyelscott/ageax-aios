@@ -53,7 +53,6 @@ class ProjectController extends Controller
 
         return Inertia::render('projects/show', [
             'project' => fn (): Project => $this->projectPayload($project, $tokens),
-            'officeWorkers' => fn (): array => $this->officeWorkers($project),
         ]);
     }
 
@@ -67,6 +66,7 @@ class ProjectController extends Controller
         $project->loadSum('runs', 'token_usage');
         $project->setAttribute('token_usage_total', (int) ($project->runs_sum_token_usage ?? 0));
         $project->setAttribute('token_observability', $tokens->forProject($project));
+        $project->setAttribute('office_workers', $this->officeWorkers($project));
         $project->setRelation('recent_agent_runs', $project->runs()
             ->select(['id', 'project_id', 'task_id', 'role', 'status', 'attempt_number', 'token_usage', 'exit_code', 'started_at', 'finished_at'])
             ->latest('started_at')

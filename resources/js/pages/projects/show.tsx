@@ -93,6 +93,7 @@ type Project = {
     git_status: string;
     git_head_sha: string | null;
     roadmaps: { id: number; original_filename: string; status: string }[];
+    office_workers: OfficeWorker[];
     tasks: Task[];
     token_usage_total: number;
     token_observability: Record<
@@ -113,17 +114,11 @@ function formatTokens(tokens: number): string {
     return new Intl.NumberFormat().format(tokens);
 }
 
-export default function ProjectShow({
-    project,
-    officeWorkers,
-}: {
-    project: Project;
-    officeWorkers: OfficeWorker[];
-}) {
+export default function ProjectShow({ project }: { project: Project }) {
     usePoll(
-        5_000,
+        2_000,
         {
-            only: ['officeWorkers'],
+            only: ['project'],
             preserveErrors: true,
         },
         { mode: 'rest' },
@@ -195,7 +190,7 @@ export default function ProjectShow({
                 </div>
                 <ClientAgentOffice
                     projectId={project.id}
-                    workers={officeWorkers}
+                    workers={project.office_workers}
                 />
                 <div className="grid gap-4 md:grid-cols-3">
                     <Card>

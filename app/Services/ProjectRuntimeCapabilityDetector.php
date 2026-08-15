@@ -161,8 +161,8 @@ class ProjectRuntimeCapabilityDetector
 
     private function safeProjectFile(string $path, string $filename): ?string
     {
-        $resolved = realpath($path . DIRECTORY_SEPARATOR . $filename);
-        $prefix = rtrim($path, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+        $resolved = realpath($path.DIRECTORY_SEPARATOR.$filename);
+        $prefix = rtrim($path, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
 
         if ($resolved === false || ! str_starts_with($resolved, $prefix) || ! $this->files->isFile($resolved)) {
             return null;
@@ -183,7 +183,7 @@ class ProjectRuntimeCapabilityDetector
                 continue;
             }
 
-            $candidate = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $binary;
+            $candidate = rtrim($directory, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$binary;
             if (is_file($candidate) && is_executable($candidate)) {
                 return true;
             }
@@ -199,7 +199,7 @@ class ProjectRuntimeCapabilityDetector
     }
 
     /**
-     * @param list<string> $command
+     * @param  list<string>  $command
      * @return list<string>
      */
     private function serviceNamesFromProbe(string $path, array $command): array
@@ -232,7 +232,7 @@ class ProjectRuntimeCapabilityDetector
     {
         $sanitized = array_values(array_unique(array_filter(
             array_map('trim', $services),
-            fn(string $service): bool => strlen($service) <= self::MaxServiceNameLength
+            fn (string $service): bool => strlen($service) <= self::MaxServiceNameLength
                 && preg_match('/^[A-Za-z0-9_.-]+$/', $service) === 1,
         )));
 
