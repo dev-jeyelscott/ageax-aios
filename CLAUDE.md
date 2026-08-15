@@ -1,3 +1,17 @@
+# AGEAX AIOS 2.0 — Claude Code Governance
+
+`AGENTS.md` contains the authoritative project governance and must be read before Claude Code performs AIOS work. This file supplements, but does not override, that contract.
+
+- Claude Code is a supported AIOS execution harness, not the workflow orchestrator.
+- Core workflow roles remain **Project Manager**, **Coder**, and **Reviewer**.
+- Project Agent configuration is project-scoped and separate from `AgentWorker` runtime, lease, heartbeat, and orchestration state.
+- Every roadmap analysis, implementation attempt, fix/retry attempt, and review must use a fresh Claude Code execution context when Claude Code is the selected harness. Do not rely on persistent Claude conversations for durable project state.
+- AIOS-managed Agent Skills are project-scoped, declarative, deterministic context only. They are non-executable and cannot introduce shell hooks, arbitrary code execution, package installation, or workflow control. They are separate from repository/harness tooling such as `.agents/skills/**` and `.claude/skills/**`, which AIOS must not automatically mutate.
+- AIOS must persist an immutable configuration snapshot for each new execution attempt, including the selected Agent, harness, model/reasoning settings, bounded execution settings, default context, effective Skills and versions/order/content, and context schema version where applicable. Snapshots must exclude credentials, `.env` contents, and raw host environment values. Historical runs must not be reconstructed from mutable current configuration.
+- AIOS exclusively controls state transitions, permissions, task ordering, Git lifecycle, deterministic validation, persistence, recovery, auditing, worker leases, and context assembly. Claude Code may reason, inspect, implement, and review only within the context AIOS provides.
+- Do not introduce global Agents, parallel task execution, agent self-scheduling, persistent shared LLM conversations, or executable Skills.
+- Preserve the existing clean/recoverable Git preflight, task-only commit discipline, reviewer independence, operational-failure retry behavior, and same-task recovery guarantees.
+
 <laravel-boost-guidelines>
 === foundation rules ===
 

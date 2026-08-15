@@ -3,9 +3,12 @@
 ## Purpose
 
 - AIOS 2.0 orchestrates local software development under `~/workspace`.
-- Roles: **Project Manager**, **Coder**, **Reviewer**.
-- Principle: **Codex contexts are disposable; system state is durable.**
+- Core workflow roles remain **Project Manager**, **Coder**, and **Reviewer**.
+- Principle: **LLM execution contexts are disposable; system state is durable.**
 - Durable truth: PostgreSQL, Git, repository docs, scoped Obsidian notes, and audit logs.
+- Project Agents are project-scoped execution configuration; `AgentWorker` is durable orchestration, lease, heartbeat, and runtime state.
+- Supported execution harnesses are **Codex** and **Claude Code**.
+- No global Agents or parallel task execution are introduced in Phase 2.
 
 ## Rules of precedence
 
@@ -27,9 +30,17 @@ Never contradict a higher-priority source.
 
 Priority: correctness → security → data integrity → deterministic workflow → requirements → architecture → simplicity → testability → observability → justified performance.
 
-## Codex runs
+## Agent execution
 
-- Every roadmap, coding, retry, and review uses a fresh, ephemeral Codex run.
+- Every roadmap analysis, implementation attempt, fix/retry attempt, and review uses a fresh, ephemeral execution context regardless of whether the selected harness is Codex or Claude Code.
+- Never depend on a persistent Codex or Claude Code conversation for project or workflow state.
+- AIOS resolves the project Agent bound to the required workflow role and validates its harness, model, reasoning/effort setting, and bounded execution settings before execution.
+- Project Agent configuration is not worker state. Agent configuration describes identity and execution behavior; `AgentWorker` remains the durable AIOS-controlled workflow slot and lease/runtime state for a core role.
+- AIOS-managed Agent Skills are project-scoped, declarative context/capability packages only. They may provide instructions, constraints, and guidance, but they are non-executable and must never introduce shell hooks, arbitrary code execution, package installation, or workflow control. They are separate from repository/harness tooling such as `.agents/skills/**` and `.claude/skills/**`, which AIOS must not automatically mutate.
+- Skill application order must be deterministic, and Agent or Skill text must not override AIOS-owned workflow, security, Git, validation, recovery, persistence, audit, or context-assembly rules.
+- At the start of every new execution attempt, AIOS must persist an immutable snapshot of the effective run configuration, including the selected Agent identity/role/configuration version, harness, model, reasoning/effort setting, bounded execution settings, default context, assigned Skill identities/versions/order/effective content, and context schema version where applicable. Run snapshots must exclude credentials, `.env` contents, and raw host environment values.
+- Historical runs must be resolved from their persisted snapshot, not from mutable current Agent or Skill records. Editing Agent or Skill configuration affects future runs only.
+- Recovery of the same interrupted execution attempt must preserve its persisted snapshot/evidence; a new retry or future attempt captures a new snapshot from the then-current valid configuration.
 - Send only task context: objective, criteria, scope, constraints, dependencies, relevant paths/docs, prior evidence, findings, and verification commands.
 - Never send full conversations, repositories, logs, or vaults unless required.
 
@@ -57,7 +68,8 @@ queued → coding → validating → ready_for_review → reviewing → done
 
 - Exceptional states: `blocked`, `interrupted`, `failed`, `cancelled`.
 - AIOS alone validates transitions, with database transactions and row locks.
-- One task claim runs at a time per project. Ordering follows persisted dependencies; phase tasks may advance to review together.
+- Task execution remains strictly serial per project. One task claim runs at a time, and ordering follows persisted dependencies.
+- Additional project Agents do not self-schedule or create additional worker lanes; only AIOS-controlled supported workflow-role slots execute work.
 - Failed validation never reaches review; retry context includes failed validation evidence.
 
 ## Git and validation
@@ -77,13 +89,13 @@ clean/recoverable preflight → Coder edits → deterministic checks → exact d
 - Store meaningful state changes and approved outcomes. Do not store chain-of-thought.
 - Resolve every managed project path inside `~/workspace`; prevent traversal, absolute-path injection, and symlink escapes.
 - Never expose or commit secrets, credentials, keys, tokens, or `.env` contents.
-- Audit transitions, runs, commands, Git changes, validation, reviews, failures, and recovery. Heartbeats detect crashes; resume the same task from persisted Git state and evidence.
+- Audit transitions, runs, commands, Git changes, validation, reviews, failures, Agent/harness selection, configuration snapshots, and recovery. Heartbeats detect crashes; resume the same task from persisted Git state and execution evidence.
 
 ## Guardrails
 
 - Prefer framework-native code, explicit state machines, transactions, locking, schema-validated structured output, immutable attempts, append-only audit logs, idempotency, and focused services.
-- Do not add persistent shared LLM chats, parallel task execution, hidden state, broad prompts, full vault/repo dumps, blind retries, or new infrastructure without a demonstrated need.
-- AI reasons and edits. **AIOS controls state, permissions, ordering, validation, Git, persistence, recovery, audit, context assembly, and knowledge storage.**
+- Do not add persistent shared LLM chats, global Agent templates, executable Skills/plugins, agent self-scheduling, parallel task execution, hidden state, broad prompts, full vault/repo dumps, blind retries, or new infrastructure without a demonstrated need.
+- Agents and harnesses may reason, inspect, implement, and review. **AIOS controls state, permissions, task ordering, validation, Git lifecycle, persistence, recovery, auditing, context assembly, knowledge storage, worker leases, and run configuration snapshots.**
 
 <laravel-boost-guidelines>
 === foundation rules ===
