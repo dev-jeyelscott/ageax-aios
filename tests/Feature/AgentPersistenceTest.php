@@ -111,7 +111,9 @@ test('agent configuration rejects high confidence secret material', function (st
         ->toThrow(LogicException::class, 'Agent configuration cannot contain secret material.');
 })->with([
     'provider token' => 'sk-'.str_repeat('a', 24),
+    'bearer credential' => 'Authorization: Bearer provider-secret-token',
     'environment credential' => 'API_KEY=super-secret-value',
+    'lowercase environment credential' => 'provider_token=super-secret-value',
     'private key' => "-----BEGIN PRIVATE KEY-----\nsecret-material",
 ]);
 
