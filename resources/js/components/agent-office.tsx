@@ -637,28 +637,28 @@ export function AgentOffice({
     return (
         <section
             aria-labelledby="agent-office-title"
-            className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-cyan-300/15 bg-[#040a14]/95 text-slate-100 shadow-panel"
+            className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-primary/15 bg-background/95 text-foreground shadow-panel"
         >
-            <div className="pointer-events-none absolute -top-24 -left-16 size-56 animate-pulse rounded-full bg-cyan-400/8 blur-3xl motion-reduce:animate-none" />
+            <div className="pointer-events-none absolute -top-24 -left-16 size-56 animate-pulse rounded-full bg-primary/8 blur-3xl motion-reduce:animate-none" />
 
-            <div className="pointer-events-none absolute -right-24 bottom-0 size-64 animate-pulse rounded-full bg-violet-500/8 blur-3xl motion-reduce:animate-none" />
+            <div className="pointer-events-none absolute -right-24 bottom-0 size-64 animate-pulse rounded-full bg-secondary/20 blur-3xl motion-reduce:animate-none" />
 
-            <header className="relative shrink-0 border-b border-cyan-300/10 bg-[linear-gradient(110deg,rgba(8,17,31,0.98),rgba(6,14,27,0.96),rgba(8,47,73,0.42))] px-4 py-2.5">
+            <header className="relative shrink-0 border-b border-primary/10 bg-[linear-gradient(110deg,var(--sidebar),var(--background),color-mix(in_oklch,var(--primary)_18%,transparent))] px-4 py-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
-                        <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-cyan-300 uppercase">
+                        <div className="flex items-center gap-2 font-mono text-2xs tracking-[0.18em] text-primary uppercase">
                             <Activity className="size-3.5" aria-hidden="true" />
                             Live operations
                         </div>
 
                         <h2
                             id="agent-office-title"
-                            className="mt-0.5 truncate text-base font-semibold tracking-tight text-white"
+                            className="mt-0.5 truncate text-base font-semibold tracking-tight text-foreground"
                         >
                             AI Engineering Office
                         </h2>
 
-                        <p className="mt-0.5 truncate text-xs text-slate-500">
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
                             {projectName} · AIOS controlled execution
                         </p>
                     </div>
@@ -666,7 +666,7 @@ export function AgentOffice({
                     <div className="flex flex-wrap items-center gap-1.5">
                         <Badge
                             variant="outline"
-                            className="border-emerald-300/20 bg-emerald-400/5 font-mono text-[9px] text-emerald-300"
+                            className="border-success/20 bg-success/5 font-mono text-2xs text-success-foreground"
                         >
                             <CircleDot className="mr-1 size-3" />
                             {projectStatus}
@@ -674,7 +674,7 @@ export function AgentOffice({
 
                         <Badge
                             variant="outline"
-                            className="border-violet-300/20 bg-violet-400/5 font-mono text-[9px] text-violet-200"
+                            className="border-secondary/30 bg-secondary/10 font-mono text-2xs text-secondary-foreground"
                         >
                             Git · {gitStatus}
                         </Badge>
@@ -685,19 +685,19 @@ export function AgentOffice({
                     <Metric
                         label="working"
                         value={workingWorkers}
-                        tone="bg-emerald-400"
+                        tone="bg-success"
                     />
 
                     <Metric
                         label="bound"
                         value={boundWorkers}
-                        tone="bg-cyan-400"
+                        tone="bg-primary"
                     />
 
                     <Metric
                         label="attention"
                         value={attentionWorkers}
-                        tone="bg-rose-400"
+                        tone="bg-destructive"
                     />
                 </div>
             </header>
@@ -715,11 +715,11 @@ export function AgentOffice({
                         ))}
                     </div>
                 ) : (
-                    <div className="grid min-h-32 flex-1 place-items-center rounded-xl border border-dashed border-slate-700 bg-slate-950/40 text-center">
+                    <div className="grid min-h-32 flex-1 place-items-center rounded-xl border border-dashed border-border bg-background/40 text-center">
                         <div>
-                            <Bot className="mx-auto size-10 text-slate-600" />
+                            <Bot className="mx-auto size-10 text-muted-foreground" />
 
-                            <p className="mt-2 text-sm text-slate-400">
+                            <p className="mt-2 text-sm text-muted-foreground">
                                 No workflow workers are provisioned.
                             </p>
                         </div>
@@ -734,43 +734,43 @@ export function AgentOffice({
                 </div>
 
                 <div className="mt-2.5 grid shrink-0 gap-2 sm:grid-cols-3">
-                    <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-1.5">
-                        <Radio className="size-3.5 text-cyan-300" />
+                    <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-foreground/2 px-3 py-1.5">
+                        <Radio className="size-3.5 text-primary" />
 
                         <div>
-                            <p className="font-mono text-[9px] text-slate-500 uppercase">
+                            <p className="font-mono text-2xs text-muted-foreground uppercase">
                                 Worker lanes
                             </p>
 
-                            <p className="text-xs text-slate-200">
+                            <p className="text-xs text-foreground">
                                 {displayedWorkers.length} visible
                             </p>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-1.5">
-                        <Bot className="size-3.5 text-violet-300" />
+                    <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-foreground/2 px-3 py-1.5">
+                        <Bot className="size-3.5 text-secondary-foreground" />
 
                         <div>
-                            <p className="font-mono text-[9px] text-slate-500 uppercase">
+                            <p className="font-mono text-2xs text-muted-foreground uppercase">
                                 Agents
                             </p>
 
-                            <p className="text-xs text-slate-200">
+                            <p className="text-xs text-foreground">
                                 {boundWorkers} bound
                             </p>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-1.5">
-                        <CircleDot className="size-3.5 text-emerald-300" />
+                    <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-foreground/2 px-3 py-1.5">
+                        <CircleDot className="size-3.5 text-success-foreground" />
 
                         <div>
-                            <p className="font-mono text-[9px] text-slate-500 uppercase">
+                            <p className="font-mono text-2xs text-muted-foreground uppercase">
                                 Roadmap
                             </p>
 
-                            <p className="text-xs text-slate-200">
+                            <p className="text-xs text-foreground">
                                 {taskProgress.completed}/{taskProgress.total}{' '}
                                 complete
                             </p>

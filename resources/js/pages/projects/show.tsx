@@ -167,7 +167,7 @@ function ClientAgentOffice({
 
     if (!isClient) {
         return (
-            <div className="grid h-full min-h-80 place-items-center rounded-2xl border border-cyan-300/15 bg-slate-950 px-6 text-center text-slate-400">
+            <div className="grid h-full min-h-80 place-items-center rounded-2xl border border-primary/15 bg-background px-6 text-center text-muted-foreground">
                 Loading live office…
             </div>
         );
@@ -176,7 +176,7 @@ function ClientAgentOffice({
     return (
         <Suspense
             fallback={
-                <div className="grid h-full min-h-80 place-items-center rounded-2xl border border-cyan-300/15 bg-slate-950 px-6 text-center text-slate-400">
+                <div className="grid h-full min-h-80 place-items-center rounded-2xl border border-primary/15 bg-background px-6 text-center text-muted-foreground">
                     Loading live office…
                 </div>
             }
@@ -209,12 +209,12 @@ function OpsPanel({
     children: React.ReactNode;
 }) {
     return (
-        <section className="relative overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/75 p-2.5 shadow-panel">
-            <div className="glow-edge pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-violet-300/40 to-transparent" />
-            <p className="font-mono text-[9px] tracking-[0.16em] text-violet-300 uppercase">
+        <section className="panel-elevated relative overflow-hidden p-2.5">
+            <div className="glow-edge glow-line-secondary" />
+            <p className="font-mono text-2xs tracking-[0.16em] text-secondary-foreground uppercase">
                 {eyebrow}
             </p>
-            <h3 className="mt-0.5 text-sm font-semibold text-slate-100">
+            <h3 className="mt-0.5 text-sm font-semibold text-foreground">
                 {title}
             </h3>
             <div className="mt-2">{children}</div>
@@ -241,10 +241,10 @@ function RoadmapPanel({
         <OpsPanel title="Roadmap progress" eyebrow="Planning">
             <div className="flex items-end justify-between gap-3">
                 <div>
-                    <p className="text-2xl font-semibold text-cyan-200">
+                    <p className="text-2xl font-semibold text-primary">
                         {progress}%
                     </p>
-                    <p className="mt-0.5 text-[10px] text-slate-500">
+                    <p className="mt-0.5 text-xs text-muted-foreground">
                         {completedTasks} of {project.tasks.length} tasks
                         complete
                     </p>
@@ -252,22 +252,22 @@ function RoadmapPanel({
                 {latestRoadmap && (
                     <Badge
                         variant="outline"
-                        className="border-cyan-300/20 bg-cyan-400/5 font-mono text-[9px] text-cyan-200"
+                        className="border-primary/20 bg-primary/5 font-mono text-2xs text-primary"
                     >
                         {latestRoadmap.status}
                     </Badge>
                 )}
             </div>
 
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
                 <div
-                    className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-blue-400 to-violet-400 transition-[width]"
+                    className="h-full rounded-full bg-gradient-to-r from-primary via-primary/70 to-secondary-foreground transition-[width]"
                     style={{ width: `${progress}%` }}
                 />
             </div>
 
-            <div className="mt-2 min-w-0 rounded-lg border border-white/5 bg-white/[0.02] p-2">
-                <p className="font-mono text-[9px] text-slate-500 uppercase">
+            <div className="mt-2 min-w-0 rounded-lg border border-border-subtle bg-foreground/2 p-2">
+                <p className="font-mono text-2xs text-muted-foreground uppercase">
                     Current operation
                 </p>
                 {currentTask ? (
@@ -278,12 +278,12 @@ function RoadmapPanel({
                                 task: currentTask.id,
                             }).url
                         }
-                        className="mt-0.5 block truncate text-xs font-medium text-slate-200 hover:text-cyan-200"
+                        className="mt-0.5 block truncate text-xs font-medium text-foreground hover:text-primary"
                     >
                         {currentTask.key}: {currentTask.title}
                     </Link>
                 ) : (
-                    <p className="mt-0.5 text-xs text-slate-400">
+                    <p className="mt-0.5 text-xs text-muted-foreground">
                         {project.tasks.length > 0
                             ? 'No unfinished task.'
                             : 'Upload a roadmap to begin planning.'}
@@ -293,7 +293,7 @@ function RoadmapPanel({
 
             {latestRoadmap && (
                 <p
-                    className="mt-1.5 truncate text-[10px] text-slate-500"
+                    className="mt-1.5 truncate text-xs text-muted-foreground"
                     title={latestRoadmap.original_filename}
                 >
                     {latestRoadmap.original_filename}
@@ -307,7 +307,7 @@ function RoadmapPanel({
             >
                 {({ errors, processing }) => (
                     <>
-                        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-cyan-300/15 bg-cyan-400/5 px-2.5 py-1.5 text-[11px] font-medium text-cyan-200 transition hover:border-cyan-300/30 hover:bg-cyan-400/10">
+                        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary/15 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-primary transition hover:border-primary/30 hover:bg-primary/10">
                             <input
                                 name="roadmap"
                                 type="file"
@@ -345,13 +345,13 @@ function GitEvidencePanel({ project }: { project: Project }) {
                                     task: evidence.task.id,
                                 }).url
                             }
-                            className="min-w-0 truncate text-xs font-medium text-slate-200 hover:text-cyan-200"
+                            className="min-w-0 truncate text-xs font-medium text-foreground hover:text-primary"
                         >
                             {evidence.task.key}
                         </Link>
                         <Badge
                             variant="outline"
-                            className="border-slate-700 bg-slate-900 font-mono text-[9px] text-slate-300"
+                            className="border-border bg-card font-mono text-2xs text-muted-foreground"
                         >
                             Attempt {evidence.attempt_number}
                         </Badge>
@@ -365,13 +365,13 @@ function GitEvidencePanel({ project }: { project: Project }) {
                         ].map(([label, value]) => (
                             <div
                                 key={label}
-                                className="min-w-0 rounded-md border border-white/5 bg-white/[0.02] p-1.5"
+                                className="min-w-0 rounded-md border border-border-subtle bg-foreground/2 p-1.5"
                             >
-                                <dt className="font-mono text-[8px] text-slate-600 uppercase">
+                                <dt className="font-mono text-2xs text-muted-foreground uppercase">
                                     {label}
                                 </dt>
                                 <dd
-                                    className="mt-0.5 truncate font-mono text-[9px] text-cyan-200"
+                                    className="mt-0.5 truncate font-mono text-2xs text-primary"
                                     title={value ?? undefined}
                                 >
                                     {shortSha(value)}
@@ -380,12 +380,12 @@ function GitEvidencePanel({ project }: { project: Project }) {
                         ))}
                     </dl>
 
-                    <div className="mt-2 rounded-lg border border-white/5 bg-white/[0.02] p-2">
+                    <div className="mt-2 rounded-lg border border-border-subtle bg-foreground/2 p-2">
                         <div className="flex items-center justify-between gap-2">
-                            <p className="font-mono text-[9px] text-slate-500 uppercase">
+                            <p className="font-mono text-2xs text-muted-foreground uppercase">
                                 Changed files
                             </p>
-                            <span className="text-[10px] text-slate-500">
+                            <span className="text-xs text-muted-foreground">
                                 {evidence.changed_files?.length ?? 0}
                             </span>
                         </div>
@@ -395,18 +395,18 @@ function GitEvidencePanel({ project }: { project: Project }) {
                                 <p
                                     key={file}
                                     title={file}
-                                    className="truncate font-mono text-[9px] text-slate-400"
+                                    className="truncate font-mono text-2xs text-muted-foreground"
                                 >
                                     {file}
                                 </p>
                             ))}
                             {!evidence.changed_files?.length && (
-                                <p className="text-[10px] text-slate-600">
+                                <p className="text-xs text-muted-foreground">
                                     No changed-file evidence recorded.
                                 </p>
                             )}
                             {(evidence.changed_files?.length ?? 0) > 2 && (
-                                <p className="text-[9px] text-slate-600">
+                                <p className="text-2xs text-muted-foreground">
                                     +{(evidence.changed_files?.length ?? 0) - 2}{' '}
                                     more
                                 </p>
@@ -416,17 +416,17 @@ function GitEvidencePanel({ project }: { project: Project }) {
 
                     <div className="mt-1.5">
                         <div className="flex items-center justify-between">
-                            <p className="font-mono text-[9px] text-slate-500 uppercase">
+                            <p className="font-mono text-2xs text-muted-foreground uppercase">
                                 Validation
                             </p>
                             <span
-                                className={`text-[10px] ${
+                                className={`text-xs ${
                                     evidence.validation_results?.passed === true
-                                        ? 'text-emerald-300'
+                                        ? 'text-success-foreground'
                                         : evidence.validation_results
                                                 ?.passed === false
-                                          ? 'text-rose-300'
-                                          : 'text-slate-500'
+                                          ? 'text-destructive-foreground'
+                                          : 'text-muted-foreground'
                                 }`}
                             >
                                 {evidence.validation_results?.passed === true
@@ -443,16 +443,16 @@ function GitEvidencePanel({ project }: { project: Project }) {
                                 {checks.map(([name, passed]) => (
                                     <div
                                         key={name}
-                                        className="flex min-w-0 items-center gap-1.5 rounded-md bg-white/[0.02] px-2 py-1"
+                                        className="flex min-w-0 items-center gap-1.5 rounded-md bg-foreground/2 px-2 py-1"
                                     >
                                         <span
                                             className={`size-1.5 shrink-0 rounded-full ${
                                                 passed
-                                                    ? 'bg-emerald-400'
-                                                    : 'bg-rose-400'
+                                                    ? 'bg-success'
+                                                    : 'bg-destructive'
                                             }`}
                                         />
-                                        <span className="truncate font-mono text-[8px] text-slate-500">
+                                        <span className="truncate font-mono text-2xs text-muted-foreground">
                                             {name.replaceAll('_', ' ')}
                                         </span>
                                     </div>
@@ -462,14 +462,14 @@ function GitEvidencePanel({ project }: { project: Project }) {
                     </div>
                 </>
             ) : (
-                <div className="rounded-lg border border-dashed border-slate-700 p-2.5 text-center">
-                    <GitCommitHorizontal className="mx-auto size-5 text-slate-600" />
-                    <p className="mt-1.5 text-xs text-slate-500">
+                <div className="rounded-lg border border-dashed border-border p-2.5 text-center">
+                    <GitCommitHorizontal className="mx-auto size-5 text-muted-foreground" />
+                    <p className="mt-1.5 text-xs text-muted-foreground">
                         No task-attempt Git evidence yet.
                     </p>
                     {project.git_head_sha && (
                         <p
-                            className="mt-1 truncate font-mono text-[9px] text-slate-600"
+                            className="mt-1 truncate font-mono text-2xs text-muted-foreground"
                             title={project.git_head_sha}
                         >
                             Repository HEAD · {shortSha(project.git_head_sha)}
@@ -489,14 +489,14 @@ function ProviderUsage({
     usage: HarnessUsage;
 }) {
     return (
-        <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2">
+        <div className="rounded-lg border border-border-subtle bg-foreground/2 p-2">
             <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-slate-200">{label}</p>
-                <span className="font-mono text-[9px] text-slate-500">
+                <p className="text-xs font-medium text-foreground">{label}</p>
+                <span className="font-mono text-2xs text-muted-foreground">
                     {usage.run_count} runs
                 </span>
             </div>
-            <p className="mt-0.5 font-mono text-[10px] text-cyan-300">
+            <p className="mt-0.5 font-mono text-xs text-primary">
                 {formatTokens(usage.token_usage)} tokens
             </p>
         </div>
@@ -515,14 +515,14 @@ function HarnessUsagePanel({ project }: { project: Project }) {
         <OpsPanel title="Codex / Claude usage" eyebrow="Execution">
             <div className="flex items-end justify-between gap-3">
                 <div>
-                    <p className="font-mono text-[9px] text-slate-500 uppercase">
+                    <p className="font-mono text-2xs text-muted-foreground uppercase">
                         Total observed
                     </p>
-                    <p className="mt-0.5 text-lg font-semibold text-violet-200">
+                    <p className="mt-0.5 text-lg font-semibold text-secondary-foreground">
                         {formatTokens(project.token_usage_total)}
                     </p>
                 </div>
-                <Activity className="size-4 text-violet-300" />
+                <Activity className="size-4 text-secondary-foreground" />
             </div>
 
             <div className="mt-2 grid gap-1.5">
@@ -539,8 +539,8 @@ function HarnessUsagePanel({ project }: { project: Project }) {
                 )}
             </div>
 
-            <div className="mt-2 border-t border-white/5 pt-1.5">
-                <p className="font-mono text-[9px] text-slate-600 uppercase">
+            <div className="mt-2 border-t border-border-subtle pt-1.5">
+                <p className="font-mono text-2xs text-muted-foreground uppercase">
                     Rolling role averages
                 </p>
                 <div className="mt-1 grid gap-1">
@@ -549,12 +549,12 @@ function HarnessUsagePanel({ project }: { project: Project }) {
                         .map(([role, usage]) => (
                             <div
                                 key={role}
-                                className="flex items-center justify-between gap-2 text-[9px]"
+                                className="flex items-center justify-between gap-2 text-2xs"
                             >
-                                <span className="truncate text-slate-500">
+                                <span className="truncate text-muted-foreground">
                                     {role.replaceAll('_', ' ')}
                                 </span>
-                                <span className="shrink-0 font-mono text-slate-400">
+                                <span className="shrink-0 font-mono text-muted-foreground">
                                     {usage.rolling_average === null
                                         ? 'no runs'
                                         : `${formatTokens(usage.rolling_average)} avg`}
@@ -601,7 +601,7 @@ function OverviewDashboard({
 
 function TasksPanel({ project }: { project: Project }) {
     return (
-        <Card className="border-slate-700/70 bg-slate-950/75 text-slate-100">
+        <Card className="border-border/70 bg-background/75 text-foreground">
             <CardHeader>
                 <CardTitle>Ordered tasks</CardTitle>
                 <CardDescription>
@@ -613,7 +613,7 @@ function TasksPanel({ project }: { project: Project }) {
                 {project.tasks.map((task) => (
                     <div
                         key={task.id}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/45 p-3"
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/45 p-3"
                     >
                         <div className="min-w-0">
                             <Link
@@ -623,11 +623,11 @@ function TasksPanel({ project }: { project: Project }) {
                                         task: task.id,
                                     }).url
                                 }
-                                className="font-medium text-slate-100 hover:text-cyan-200"
+                                className="font-medium text-foreground hover:text-primary"
                             >
                                 {task.key}: {task.title}
                             </Link>
-                            <p className="mt-1 text-xs text-slate-500">
+                            <p className="mt-1 text-xs text-muted-foreground">
                                 Attempt {task.attempts[0]?.number ?? '—'} ·
                                 Review {task.reviews[0]?.status ?? '—'}
                             </p>
@@ -669,7 +669,7 @@ function TasksPanel({ project }: { project: Project }) {
                 ))}
 
                 {project.tasks.length === 0 && (
-                    <p className="py-8 text-center text-sm text-slate-500">
+                    <p className="py-8 text-center text-sm text-muted-foreground">
                         Upload a roadmap to generate implementation tasks.
                     </p>
                 )}
@@ -681,7 +681,7 @@ function TasksPanel({ project }: { project: Project }) {
 function RecentActivityPanel({ project }: { project: Project }) {
     return (
         <div className="grid gap-3 xl:grid-cols-2">
-            <Card className="border-slate-700/70 bg-slate-950/75 text-slate-100">
+            <Card className="border-border/70 bg-background/75 text-foreground">
                 <CardHeader>
                     <CardTitle>Agent executions</CardTitle>
                     <CardDescription>
@@ -704,13 +704,13 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                         run: run.id,
                                     }).url
                                 }
-                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/45 p-3 transition hover:border-cyan-300/20"
+                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/45 p-3 transition hover:border-primary/20"
                             >
                                 <div>
-                                    <p className="text-sm font-medium text-slate-200 capitalize">
+                                    <p className="text-sm font-medium text-foreground capitalize">
                                         {run.role.replaceAll('_', ' ')}
                                     </p>
-                                    <p className="mt-1 text-xs text-slate-500">
+                                    <p className="mt-1 text-xs text-muted-foreground">
                                         {harnessLabel(run.harness)} · Attempt{' '}
                                         {run.attempt_number ?? '—'} ·{' '}
                                         {run.token_usage === null
@@ -730,7 +730,7 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                 </Badge>
 
                                 {run.failure_reason && (
-                                    <p className="w-full text-xs text-rose-300">
+                                    <p className="w-full text-xs text-destructive-foreground">
                                         {run.failure_reason}
                                     </p>
                                 )}
@@ -739,14 +739,14 @@ function RecentActivityPanel({ project }: { project: Project }) {
                     })}
 
                     {project.recent_agent_runs.length === 0 && (
-                        <p className="py-6 text-center text-sm text-slate-500">
+                        <p className="py-6 text-center text-sm text-muted-foreground">
                             No agent executions recorded yet.
                         </p>
                     )}
                 </CardContent>
             </Card>
 
-            <Card className="border-slate-700/70 bg-slate-950/75 text-slate-100">
+            <Card className="border-border/70 bg-background/75 text-foreground">
                 <CardHeader>
                     <CardTitle>Audit trail</CardTitle>
                     <CardDescription>
@@ -758,22 +758,22 @@ function RecentActivityPanel({ project }: { project: Project }) {
                     {project.audit_events.map((event) => (
                         <div
                             key={event.id}
-                            className="flex items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-900/45 px-3 py-2.5"
+                            className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card/45 px-3 py-2.5"
                         >
                             <div className="flex min-w-0 items-center gap-2">
-                                <CheckCircle2 className="size-3.5 shrink-0 text-emerald-300" />
-                                <span className="truncate text-xs text-slate-300">
+                                <CheckCircle2 className="size-3.5 shrink-0 text-success-foreground" />
+                                <span className="truncate text-xs text-muted-foreground">
                                     {event.event_type}
                                 </span>
                             </div>
-                            <time className="shrink-0 font-mono text-[9px] text-slate-600">
+                            <time className="shrink-0 font-mono text-2xs text-muted-foreground">
                                 {new Date(event.occurred_at).toLocaleString()}
                             </time>
                         </div>
                     ))}
 
                     {project.audit_events.length === 0 && (
-                        <p className="py-6 text-center text-sm text-slate-500">
+                        <p className="py-6 text-center text-sm text-muted-foreground">
                             No audit activity recorded.
                         </p>
                     )}
@@ -821,21 +821,21 @@ export default function ProjectShow({
                 <Link
                     href={index().url}
                     aria-label="Back to projects"
-                    className="grid size-8 shrink-0 place-items-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-500 transition hover:border-cyan-300/30 hover:text-cyan-200"
+                    className="grid size-8 shrink-0 place-items-center rounded-lg border border-border bg-card/60 text-muted-foreground transition hover:border-primary/30 hover:text-primary"
                 >
                     <ArrowLeft className="size-4" />
                 </Link>
 
                 <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
-                        <h1 className="truncate text-base font-semibold text-white">
+                        <h1 className="truncate text-base font-semibold text-foreground">
                             {project.name}
                         </h1>
-                        <span className="hidden font-mono text-[9px] tracking-[0.14em] text-cyan-400 uppercase sm:inline">
+                        <span className="hidden font-mono text-2xs tracking-[0.14em] text-primary uppercase sm:inline">
                             AIOS project
                         </span>
                     </div>
-                    <p className="mt-0.5 truncate font-mono text-[9px] text-slate-600">
+                    <p className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">
                         {project.path}
                     </p>
                 </div>
@@ -844,13 +844,13 @@ export default function ProjectShow({
             <div className="flex items-center gap-1.5">
                 <Badge
                     variant="outline"
-                    className="border-emerald-300/20 bg-emerald-400/5 font-mono text-[9px] text-emerald-300"
+                    className="border-success/20 bg-success/5 font-mono text-2xs text-success-foreground"
                 >
                     {project.status}
                 </Badge>
                 <Badge
                     variant="outline"
-                    className="hidden border-violet-300/20 bg-violet-400/5 font-mono text-[9px] text-violet-200 sm:inline-flex"
+                    className="hidden border-secondary/20 bg-secondary/5 font-mono text-2xs text-secondary-foreground sm:inline-flex"
                 >
                     Git · {project.git_status}
                 </Badge>
@@ -874,7 +874,7 @@ export default function ProjectShow({
                                 disabled={
                                     processing || project.status === 'stopping'
                                 }
-                                className="h-7 border-slate-700 bg-slate-900/50 px-2 text-[10px]"
+                                className="h-7 border-border bg-card/50 px-2 text-xs"
                             >
                                 {project.status === 'running' ? (
                                     <Pause className="size-3" />
@@ -898,16 +898,16 @@ export default function ProjectShow({
         <>
             <Head title={project.name} />
 
-            <div className="dark relative flex w-full flex-col overflow-hidden bg-[#020711] text-slate-100 lg:h-[calc(100svh-4rem)]">
-                <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(56,189,248,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(56,189,248,0.025)_1px,transparent_1px)] bg-[size:32px_32px]" />
-                <div className="pointer-events-none absolute -top-32 left-1/4 size-72 rounded-full bg-cyan-500/5 blur-3xl" />
-                <div className="pointer-events-none absolute right-0 bottom-0 size-72 rounded-full bg-violet-500/5 blur-3xl" />
+            <div className="dark relative flex w-full flex-col overflow-hidden bg-background text-foreground lg:h-[calc(100svh-4rem)]">
+                <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(color-mix(in_oklch,var(--primary)_4%,transparent)_1px,transparent_1px),linear-gradient(90deg,color-mix(in_oklch,var(--primary)_4%,transparent)_1px,transparent_1px)] bg-size-[32px_32px]" />
+                <div className="pointer-events-none absolute -top-32 left-1/4 size-72 rounded-full bg-primary/8 blur-3xl" />
+                <div className="pointer-events-none absolute right-0 bottom-0 size-72 rounded-full bg-secondary/20 blur-3xl" />
 
                 <div className="relative flex min-h-0 flex-1 flex-col gap-2.5 px-3 py-3 md:px-4">
                     <nav
                         role="tablist"
                         aria-label="Project sections"
-                        className="flex shrink-0 gap-1 overflow-x-auto rounded-xl border border-slate-800/80 bg-slate-950/60 p-1"
+                        className="flex shrink-0 gap-1 overflow-x-auto rounded-xl border border-border/80 bg-background/60 p-1"
                     >
                         {tabs.map(({ value, label }) => (
                             <button
@@ -916,10 +916,10 @@ export default function ProjectShow({
                                 role="tab"
                                 aria-selected={tab === value}
                                 onClick={() => setTab(value)}
-                                className={`shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-medium transition ${
+                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                                     tab === value
-                                        ? 'glow-border border border-cyan-300/20 bg-cyan-400/10 text-cyan-100'
-                                        : 'border border-transparent text-slate-500 hover:bg-white/[0.03] hover:text-slate-300'
+                                        ? 'glow-border border border-primary/20 bg-primary/10 text-primary/80'
+                                        : 'border border-transparent text-muted-foreground hover:bg-foreground/3 hover:text-muted-foreground'
                                 }`}
                             >
                                 {label}

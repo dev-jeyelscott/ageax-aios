@@ -134,7 +134,7 @@ function formatAgentOutput(
             {
                 isAgentMessage: false,
                 message: 'No output has reached AIOS yet.',
-                className: 'text-zinc-400',
+                className: 'text-muted-foreground',
             },
         ];
     }
@@ -146,9 +146,9 @@ function formatAgentOutput(
                 return {
                     isAgentMessage: false,
                     label: 'error>',
-                    labelClassName: 'text-rose-400',
+                    labelClassName: 'text-destructive',
                     message: line.slice(9),
-                    className: 'text-rose-300',
+                    className: 'text-destructive-foreground',
                 };
             }
 
@@ -169,9 +169,9 @@ function formatAgentOutput(
                     return {
                         isAgentMessage: true,
                         label: `${agentRole.replace('_', ' ')}>`,
-                        labelClassName: 'text-emerald-400',
+                        labelClassName: 'text-success',
                         message: item.text,
-                        className: 'text-emerald-200',
+                        className: 'text-success-foreground',
                     };
                 }
 
@@ -179,9 +179,9 @@ function formatAgentOutput(
                     return {
                         isAgentMessage: false,
                         label: 'thinking>',
-                        labelClassName: 'text-sky-400',
+                        labelClassName: 'text-primary',
                         message: item.text,
-                        className: 'text-sky-200',
+                        className: 'text-primary/80',
                     };
                 }
 
@@ -194,7 +194,7 @@ function formatAgentOutput(
                     return {
                         isAgentMessage: false,
                         message: `${command}${result}`.trim(),
-                        className: 'text-amber-200',
+                        className: 'text-warning-foreground',
                     };
                 }
 
@@ -202,23 +202,23 @@ function formatAgentOutput(
                     return {
                         isAgentMessage: false,
                         label: 'error>',
-                        labelClassName: 'text-rose-400',
+                        labelClassName: 'text-destructive',
                         message: event.message,
-                        className: 'text-rose-300',
+                        className: 'text-destructive-foreground',
                     };
                 }
             } catch {
                 return {
                     isAgentMessage: false,
                     message: line,
-                    className: 'text-zinc-100',
+                    className: 'text-foreground',
                 };
             }
 
             return {
                 isAgentMessage: false,
                 message: line,
-                className: 'text-zinc-100',
+                className: 'text-foreground',
             };
         })
         .filter((entry) => entry.message !== '');
@@ -367,7 +367,7 @@ export default function TaskShow({
                                 )}
                                 <pre
                                     ref={consoleRef}
-                                    className="max-h-[32rem] overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-5 whitespace-pre-wrap text-zinc-100"
+                                    className="max-h-[32rem] overflow-auto rounded-md bg-background p-4 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground"
                                 >
                                     <AgentConsoleOutput
                                         output={

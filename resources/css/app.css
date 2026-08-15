@@ -7,9 +7,8 @@
 
 @theme {
     --font-sans:
-        'Geist Sans', ui-sans-serif, system-ui, sans-serif,
-        'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
-        'Noto Color Emoji';
+        'Geist Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+        'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
     --font-mono:
         'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas,
         monospace;
@@ -180,12 +179,14 @@
     }
 
     .glow-border {
-        animation: aios-glow-pulse var(--duration-glow-pulse) ease-in-out infinite;
+        animation: aios-glow-pulse var(--duration-glow-pulse) ease-in-out
+            infinite;
     }
 
     .glow-edge {
         box-shadow: var(--shadow-glow-sm);
-        animation: aios-glow-pulse var(--duration-glow-pulse) ease-in-out infinite;
+        animation: aios-glow-pulse var(--duration-glow-pulse) ease-in-out
+            infinite;
     }
 
     @media (prefers-reduced-motion: reduce) {

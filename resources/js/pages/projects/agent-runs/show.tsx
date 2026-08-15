@@ -138,7 +138,7 @@ export default function AgentRunShow({
                             {agentRun.agent_messages.map((message, index) => (
                                 <p
                                     key={`${index}-${message}`}
-                                    className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm whitespace-pre-wrap text-emerald-100"
+                                    className="rounded-md border border-success/30 bg-success/10 p-3 text-sm whitespace-pre-wrap text-success-foreground"
                                 >
                                     {message}
                                 </p>
