@@ -162,7 +162,9 @@ class ClaudeCodeCliRunner
     /** @return list<string> */
     private function command(Agent $agent): array
     {
-        $isCoder = $agent->role === AgentRole::Coder;
+        $role = AgentRole::from((string) $agent->getRawOriginal('role'));
+        $isCoder = $role === AgentRole::Coder;
+
         $tools = $isCoder ? self::CoderTools : self::InspectionTools;
         $allowedTools = $isCoder ? self::CoderTools : self::InspectionAllowedTools;
 
