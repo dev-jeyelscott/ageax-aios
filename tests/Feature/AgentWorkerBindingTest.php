@@ -180,7 +180,7 @@ test('rebinding is blocked during active leases or runs and does not change in-p
         'result' => ['evidence' => 'unchanged'],
         'started_at' => now(),
     ]);
-    $runEvidence = $run->getRawOriginal();
+    $runEvidence = $run->refresh()->getRawOriginal();
 
     expect(fn () => $binder->handle($worker, $replacement))
         ->toThrow(LogicException::class, 'A workflow worker with an active lease or run cannot be rebound.');

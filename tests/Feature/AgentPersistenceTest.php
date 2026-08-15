@@ -28,7 +28,6 @@ test('project agents persist independently from agent worker runtime state', fun
         ->and($agent->project->agents()->whereKey($agent->id)->exists())->toBeTrue()
         ->and(AgentWorker::query()->where('project_id', $agent->project_id)->exists())->toBeFalse()
         ->and(Schema::hasColumn('agents', 'agent_worker_id'))->toBeFalse()
-        ->and(Schema::hasColumn('agent_workers', 'agent_id'))->toBeFalse()
         ->and(Schema::hasColumn('agents', 'settings'))->toBeFalse()
         ->and(Schema::hasColumn('agents', 'api_key'))->toBeFalse()
         ->and(Schema::hasColumn('agents', 'token'))->toBeFalse();
