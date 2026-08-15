@@ -3,6 +3,7 @@
 namespace App\Actions;
 
 use App\AgentRole;
+use App\Exceptions\AgentNotBoundToRole;
 use App\Exceptions\UnsafeProjectPath;
 use App\Models\Agent;
 use App\Models\Project;
@@ -54,7 +55,13 @@ class RunCoderTask
         // AIOS resolves the Agent bound to this workflow role for the deterministic context
         // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
         // Agent fall back to the legacy default execution path; such runs remain legacy runs.
-        [$agent, $harness] = $this->resolveAgent($task->project, AgentRole::Coder);
+        // A binding that exists but is disabled, missing, or otherwise misconfigured blocks
+        // processing with actionable audit evidence instead of silently falling back (P2-015).
+        try {
+            [$agent, $harness] = $this->resolveAgent($task->project, AgentRole::Coder);
+        } catch (LogicException $exception) {
+            return $this->blockMisconfiguredAgent($task, $exception);
+        }
 
         $context = $this->capsules->make($task);
         $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Coder, $context);
@@ -226,11 +233,35 @@ class RunCoderTask
     {
         try {
             $agent = $this->agents->forRole($project, $role);
-
-            return [$agent, $this->harnesses->resolve($agent)];
-        } catch (LogicException) {
+        } catch (AgentNotBoundToRole) {
             return [null, null];
         }
+
+        return [$agent, $this->harnesses->resolve($agent)];
+    }
+
+    private function blockMisconfiguredAgent(Task $task, LogicException $exception): TaskAttempt
+    {
+        $attempt = TaskAttempt::create([
+            'task_id' => $task->id,
+            'number' => $task->attempts()->max('number') + 1,
+            'status' => 'blocked',
+            'validation_results' => [
+                'passed' => false,
+                'checks' => ['agent_binding' => false],
+                'error' => $exception->getMessage(),
+                'action' => 'Resolve the bound Coder Agent configuration for this project, then requeue the task.',
+            ],
+            'started_at' => now(),
+            'finished_at' => now(),
+        ]);
+        $this->audit->record('task.blocked_agent_misconfigured', [
+            'attempt_number' => $attempt->number,
+            'reason' => $exception->getMessage(),
+        ], $task->project, $task);
+        $this->workflow->transition($task, TaskStatus::Blocked);
+
+        return $attempt;
     }
 
     private function blockUnsafeProjectPath(Task $task, UnsafeProjectPath $exception): TaskAttempt

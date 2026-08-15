@@ -3,6 +3,7 @@
 namespace App\Actions;
 
 use App\AgentRole;
+use App\Exceptions\AgentNotBoundToRole;
 use App\Models\Agent;
 use App\Models\Project;
 use App\Models\Review;
@@ -42,7 +43,22 @@ class RunReviewerTask
         // AIOS resolves the Agent bound to this workflow role for the deterministic context
         // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
         // Agent fall back to the legacy default execution path; such runs remain legacy runs.
-        [$agent, $harness] = $this->resolveAgent($task->project, AgentRole::Reviewer);
+        // A binding that exists but is disabled, missing, or otherwise misconfigured is an
+        // operational reviewer failure: it retains the completed implementation, records
+        // actionable audit evidence, and retries review until the bounded limit blocks for
+        // operator intervention, exactly like other reviewer operational failures (P2-016).
+        try {
+            [$agent, $harness] = $this->resolveAgent($task->project, AgentRole::Reviewer);
+        } catch (LogicException $exception) {
+            $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $exception->getMessage()];
+            $this->workflow->recordReviewerOperationalFailure($task, $attempt, [
+                'exit_code' => $execution['exit_code'],
+                'reason' => 'agent_misconfigured',
+                'error' => $exception->getMessage(),
+            ]);
+
+            return $execution;
+        }
 
         $context = $this->capsules->make($task, AgentRole::Reviewer);
         $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Reviewer, $context);
@@ -140,11 +156,11 @@ class RunReviewerTask
     {
         try {
             $agent = $this->agents->forRole($project, $role);
-
-            return [$agent, $this->harnesses->resolve($agent)];
-        } catch (LogicException) {
+        } catch (AgentNotBoundToRole) {
             return [null, null];
         }
+
+        return [$agent, $this->harnesses->resolve($agent)];
     }
 
     /** @return array<string, mixed> */

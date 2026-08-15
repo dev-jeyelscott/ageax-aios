@@ -3,6 +3,7 @@
 namespace App\Actions;
 
 use App\AgentRole;
+use App\Exceptions\AgentNotBoundToRole;
 use App\Models\Agent;
 use App\Models\Project;
 use App\Models\Roadmap;
@@ -50,7 +51,13 @@ class RunProjectManager
         // AIOS resolves the Agent bound to this workflow role for the deterministic context
         // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
         // Agent fall back to the legacy default execution path; such runs remain legacy runs.
-        [$agent, $harness] = $this->resolveAgent($roadmap->project, AgentRole::ProjectManager);
+        // A binding that exists but is disabled, missing, or otherwise misconfigured blocks
+        // processing with actionable audit evidence instead of silently falling back (P2-014).
+        try {
+            [$agent, $harness] = $this->resolveAgent($roadmap->project, AgentRole::ProjectManager);
+        } catch (LogicException $exception) {
+            return $this->blockMisconfiguredAgent($attempt, $exception);
+        }
 
         $roadmapContext = ['roadmap' => $roadmap->content, 'project_runtime_capabilities' => $runtimeCapabilities, 'obsidian_project_knowledge' => $retrieval['notes'], 'operator_messages' => $pendingMessages->map(fn ($message): array => ['id' => $message->id, 'body' => $message->body, 'created_at' => $message->created_at?->toIso8601String()])->all()];
         $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::ProjectManager, $roadmapContext);
@@ -110,11 +117,35 @@ class RunProjectManager
     {
         try {
             $agent = $this->agents->forRole($project, $role);
-
-            return [$agent, $this->harnesses->resolve($agent)];
-        } catch (LogicException) {
+        } catch (AgentNotBoundToRole) {
             return [null, null];
         }
+
+        return [$agent, $this->harnesses->resolve($agent)];
+    }
+
+    /** @return array{exit_code: int, output: string, error_output: string} */
+    private function blockMisconfiguredAgent(RoadmapAttempt $attempt, LogicException $exception): array
+    {
+        DB::transaction(function () use ($attempt, $exception): void {
+            $lockedAttempt = RoadmapAttempt::query()->lockForUpdate()->findOrFail($attempt->id);
+            $roadmap = Roadmap::query()->lockForUpdate()->findOrFail($lockedAttempt->roadmap_id);
+
+            if ($lockedAttempt->getRawOriginal('status') === 'persisted') {
+                return;
+            }
+
+            $lockedAttempt->update(['status' => 'failed', 'finished_at' => now()]);
+            $roadmap->update(['status' => 'failed']);
+            $this->audit->record('roadmap.blocked_agent_misconfigured', [
+                'roadmap_id' => $roadmap->id,
+                'roadmap_attempt_id' => $lockedAttempt->id,
+                'reason' => $exception->getMessage(),
+                'action' => 'Resolve the bound Project Manager Agent configuration, then it will be retried automatically.',
+            ], $roadmap->project);
+        }, attempts: 3);
+
+        return ['exit_code' => -1, 'output' => '', 'error_output' => $exception->getMessage()];
     }
 
     private function claimRoadmap(Roadmap $roadmap): ?RoadmapAttempt
