@@ -9,7 +9,10 @@ use Illuminate\Support\Facades\Process;
 
 class CodexCliRunner
 {
-    public function __construct(private WorkspacePathResolver $paths) {}
+    public function __construct(
+        private WorkspacePathResolver $paths,
+        private IsolatedProcessEnvironment $environment,
+    ) {}
 
     /** @return array{exit_code: int, output: string, error_output: string} */
     public function run(Project $project, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null): array
@@ -46,31 +49,14 @@ class CodexCliRunner
     /** @return list<string> */
     private function command(): array
     {
-        return [
-            '/usr/bin/env',
-            '-i',
-            ...$this->environment(),
+        return $this->environment->command([
             config('aios.codex_binary'),
             'exec',
             '--ephemeral',
             '--json',
             '--approve-for-me',
             '-',
-        ];
-    }
-
-    /** @return list<string> */
-    private function environment(): array
-    {
-        return array_values(collect(['HOME', 'PATH', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'CODEX_HOME'])
-            ->mapWithKeys(function (string $key): array {
-                $value = getenv($key);
-
-                return $value === false || $value === '' ? [] : [$key => $value];
-            })
-            ->map(fn (string $value, string $key): string => "{$key}={$value}")
-            ->values()
-            ->all());
+        ]);
     }
 
     /** @return array{exit_code: int, output: string, error_output: string} */

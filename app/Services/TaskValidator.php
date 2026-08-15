@@ -12,6 +12,24 @@ class TaskValidator
 {
     private const int EvidenceSummaryLimit = 4000;
 
+    /** @var list<string> */
+    private const array VERIFICATION_EXECUTABLES = [
+        'php',
+        'composer',
+        'npm',
+        'pnpm',
+        'yarn',
+        'bun',
+        'npx',
+        'git',
+        'vendor/bin/pest',
+        './vendor/bin/pest',
+        'vendor/bin/phpstan',
+        './vendor/bin/phpstan',
+        'vendor/bin/pint',
+        './vendor/bin/pint',
+    ];
+
     public function __construct(private WorkspacePathResolver $paths, private AgentRunRecorder $runs) {}
 
     /** @return array{passed: bool, checks: array<string, bool>, evidence: array<string, array<string, mixed>>} */
@@ -79,7 +97,7 @@ class TaskValidator
 
             $result = Process::path($this->paths->assertProjectPath($task->project->path))
                 ->timeout((int) config('aios.execution_timeout'))
-                ->run(preg_split('/\\s+/', trim($command)) ?: []);
+                ->run(preg_split('/\s+/', trim($command)) ?: []);
 
             $commandEvidence = $this->processEvidence('task_verification_command', $result->successful(), $command, $result);
             $evidence[] = $commandEvidence;
@@ -154,8 +172,54 @@ class TaskValidator
             return false;
         }
 
-        $executable = preg_split('/\\s+/', trim($command))[0] ?? '';
+        $arguments = preg_split('/\s+/', trim($command)) ?: [];
+        $executable = $arguments[0] ?? '';
 
-        return in_array($executable, ['php', 'composer', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'git', 'vendor/bin/pest', './vendor/bin/pest', 'vendor/bin/phpstan', './vendor/bin/phpstan', 'vendor/bin/pint', './vendor/bin/pint'], true);
+        if (in_array($executable, self::VERIFICATION_EXECUTABLES, true)) {
+            return true;
+        }
+
+        return $this->isSafeDockerComposeVerification($arguments)
+            || $this->isSafeSailVerification($arguments);
+    }
+
+    /** @param list<string> $arguments */
+    private function isSafeDockerComposeVerification(array $arguments): bool
+    {
+        if (($arguments[0] ?? null) !== 'docker' || ($arguments[1] ?? null) !== 'compose') {
+            return false;
+        }
+
+        $index = 2;
+        if (($arguments[$index] ?? null) === '-f') {
+            if (! in_array($arguments[$index + 1] ?? null, ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'], true)) {
+                return false;
+            }
+
+            $index += 2;
+        }
+
+        if (($arguments[$index] ?? null) !== 'exec' || ($arguments[$index + 1] ?? null) !== '-T') {
+            return false;
+        }
+
+        $service = $arguments[$index + 2] ?? '';
+        if (preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]*$/', $service) !== 1) {
+            return false;
+        }
+
+        $innerExecutable = $arguments[$index + 3] ?? '';
+
+        return in_array($innerExecutable, self::VERIFICATION_EXECUTABLES, true) && $innerExecutable !== 'git';
+    }
+
+    /** @param list<string> $arguments */
+    private function isSafeSailVerification(array $arguments): bool
+    {
+        if (! in_array($arguments[0] ?? null, ['vendor/bin/sail', './vendor/bin/sail'], true)) {
+            return false;
+        }
+
+        return in_array($arguments[1] ?? null, ['artisan', 'php', 'composer', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'pest', 'test'], true);
     }
 }
