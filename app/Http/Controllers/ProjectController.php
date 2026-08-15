@@ -19,6 +19,7 @@ use App\Models\AgentRun;
 use App\Models\AgentWorker;
 use App\Models\Project;
 use App\Models\Task;
+use App\Models\TaskAttempt;
 use App\Models\User;
 use App\ProjectStatus;
 use App\Services\AgentHarnessResolver;
@@ -117,13 +118,26 @@ class ProjectController extends Controller
             'agents' => fn ($query) => $query
                 ->with([
                     'skills' => fn ($skills) => $skills
-                        ->select('skills.id', 'skills.name', 'skills.slug', 'skills.version', 'skills.enabled'),
+                        ->select(
+                            'skills.id',
+                            'skills.name',
+                            'skills.slug',
+                            'skills.version',
+                            'skills.enabled',
+                        ),
                 ])
                 ->orderBy('role')
                 ->orderBy('name'),
             'skills' => fn ($query) => $query->orderBy('name'),
             'workers' => fn ($query) => $query
-                ->select(['id', 'project_id', 'role', 'agent_id', 'status', 'last_heartbeat_at'])
+                ->select([
+                    'id',
+                    'project_id',
+                    'role',
+                    'agent_id',
+                    'status',
+                    'last_heartbeat_at',
+                ])
                 ->orderBy('role'),
         ]);
 
@@ -131,7 +145,8 @@ class ProjectController extends Controller
         $project->agents->each(function ($agent) use ($defaultAgentNames): void {
             $agent->setAttribute(
                 'is_default',
-                ($defaultAgentNames[$agent->getRawOriginal('role')] ?? null) === $agent->name,
+                ($defaultAgentNames[$agent->getRawOriginal('role')] ?? null)
+                    === $agent->name,
             );
         });
 
@@ -148,6 +163,14 @@ class ProjectController extends Controller
             'office_workers',
             $this->officeWorkers($project, $runs),
         );
+        $project->setAttribute(
+            'git_evidence',
+            $this->gitEvidence($project),
+        );
+        $project->setAttribute(
+            'harness_usage',
+            $this->harnessUsage($project),
+        );
 
         $recentRuns = $project->runs()
             ->select([
@@ -155,6 +178,7 @@ class ProjectController extends Controller
                 'project_id',
                 'task_id',
                 'role',
+                'harness',
                 'status',
                 'attempt_number',
                 'token_usage',
@@ -190,6 +214,108 @@ class ProjectController extends Controller
         );
 
         return $project;
+    }
+
+    /**
+     * @return array{
+     *     task: array{id: int, key: string, title: string},
+     *     attempt_number: int,
+     *     status: string,
+     *     base_sha: ?string,
+     *     head_sha: ?string,
+     *     commit_sha: ?string,
+     *     changed_files: ?array<int, string>,
+     *     validation_results: ?array<string, mixed>
+     * }|null
+     */
+    private function gitEvidence(Project $project): ?array
+    {
+        $attempt = TaskAttempt::query()
+            ->whereHas(
+                'task',
+                fn ($query) => $query->where(
+                    'project_id',
+                    $project->id,
+                ),
+            )
+            ->with('task:id,key,title')
+            ->latest('id')
+            ->first([
+                'id',
+                'task_id',
+                'number',
+                'status',
+                'base_sha',
+                'head_sha',
+                'commit_sha',
+                'changed_files',
+                'validation_results',
+            ]);
+
+        if ($attempt === null) {
+            return null;
+        }
+
+        $task = $attempt->task;
+
+        if (! $task instanceof Task) {
+            return null;
+        }
+
+        $changedFiles = $attempt->getAttribute('changed_files');
+        $validationResults = $attempt->getAttribute('validation_results');
+
+        return [
+            'task' => [
+                'id' => $task->id,
+                'key' => $task->key,
+                'title' => $task->title,
+            ],
+            'attempt_number' => (int) $attempt->number,
+            'status' => (string) $attempt->getRawOriginal('status'),
+            'base_sha' => $attempt->getAttribute('base_sha'),
+            'head_sha' => $attempt->getAttribute('head_sha'),
+            'commit_sha' => $attempt->getAttribute('commit_sha'),
+            'changed_files' => is_array($changedFiles)
+                ? array_values($changedFiles)
+                : null,
+            'validation_results' => is_array($validationResults)
+                ? $validationResults
+                : null,
+        ];
+    }
+
+    /**
+     * @return array<string, array{run_count: int, token_usage: int}>
+     */
+    private function harnessUsage(Project $project): array
+    {
+        $rows = $project->runs()
+            ->selectRaw(
+                'harness, COUNT(*) AS aggregate_run_count, COALESCE(SUM(token_usage), 0) AS aggregate_token_usage',
+            )
+            ->groupBy('harness')
+            ->get();
+
+        $usage = [];
+
+        foreach ($rows as $row) {
+            $harness = $row->getRawOriginal('harness');
+            $key = is_string($harness) && $harness !== ''
+                ? $harness
+                : 'legacy';
+
+            $usage[$key] = [
+                'run_count' => (int) $row->getAttribute(
+                    'aggregate_run_count',
+                ),
+                'token_usage' => (int) $row->getAttribute(
+                    'aggregate_token_usage',
+                ),
+            ];
+        }
+
+        return $usage;
     }
 
     /**

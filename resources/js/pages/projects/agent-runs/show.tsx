@@ -294,10 +294,12 @@ export default function AgentRunShow({
                                 </div>
                                 <div>
                                     <p className="mb-1 text-xs font-medium text-muted-foreground">
-                                        Skills applied ({
+                                        Skills applied (
+                                        {
                                             agentRun.configuration_snapshot
                                                 .skills.length
-                                        })
+                                        }
+                                        )
                                     </p>
                                     {agentRun.configuration_snapshot.skills
                                         .length === 0 ? (
@@ -314,8 +316,7 @@ export default function AgentRunShow({
                                                         className="flex items-center justify-between rounded-md border px-2 py-1 text-xs"
                                                     >
                                                         <span>
-                                                            {skill.position +
-                                                                1}
+                                                            {skill.position + 1}
                                                             . {skill.name}
                                                         </span>
                                                         <Badge variant="outline">

@@ -52,8 +52,8 @@ function SkillFields({
     return (
         <div className="grid gap-3">
             <p className="text-xs text-muted-foreground">
-                This content is declarative prompt/context guidance for
-                Agents — it is not executable code.
+                This content is declarative prompt/context guidance for Agents —
+                it is not executable code.
             </p>
             <div className="grid gap-1.5">
                 <Label htmlFor="name">Name</Label>
@@ -62,7 +62,7 @@ function SkillFields({
                     name="name"
                     defaultValue={initial.name ?? ''}
                     required
-                    className="border-input flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                    className="flex h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 />
                 <InputError message={errors.name} />
             </div>
@@ -72,7 +72,7 @@ function SkillFields({
                     id="description"
                     name="description"
                     defaultValue={initial.description ?? ''}
-                    className="border-input flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                    className="flex h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 />
                 <InputError message={errors.description} />
             </div>
@@ -167,7 +167,11 @@ function CreateSkillForm({
                         <Button type="submit" disabled={processing}>
                             <Plus /> Create skill
                         </Button>
-                        <Button type="button" variant="outline" onClick={onDone}>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={onDone}
+                        >
                             Cancel
                         </Button>
                     </div>
@@ -199,7 +203,11 @@ function EditSkillForm({
                         <Button type="submit" disabled={processing}>
                             Save changes
                         </Button>
-                        <Button type="button" variant="outline" onClick={onDone}>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={onDone}
+                        >
                             Cancel
                         </Button>
                     </div>
@@ -337,18 +345,14 @@ export function SkillsPanel({
                                     <p className="mt-1 text-xs text-muted-foreground">
                                         {skill.applicable_roles.length === 0
                                             ? 'Applies to every role'
-                                            : skill.applicable_roles.join(
-                                                  ', ',
-                                              )}
+                                            : skill.applicable_roles.join(', ')}
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <Button
                                         size="sm"
                                         variant="outline"
-                                        onClick={() =>
-                                            setEditingId(skill.id)
-                                        }
+                                        onClick={() => setEditingId(skill.id)}
                                     >
                                         <Pencil /> Edit
                                     </Button>

@@ -243,7 +243,11 @@ function CreateAgentForm({
                         <Button type="submit" disabled={processing}>
                             <Plus /> Create agent
                         </Button>
-                        <Button type="button" variant="outline" onClick={onDone}>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={onDone}
+                        >
                             Cancel
                         </Button>
                     </div>
@@ -281,7 +285,11 @@ function EditAgentForm({
                         <Button type="submit" disabled={processing}>
                             Save changes
                         </Button>
-                        <Button type="button" variant="outline" onClick={onDone}>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={onDone}
+                        >
                             Cancel
                         </Button>
                     </div>
@@ -299,19 +307,12 @@ function ToggleEnabledForm({
     agent: Agent;
 }) {
     return (
-        <Form
-            {...updateAgent.form([projectId, agent.id])}
-            className="inline"
-        >
+        <Form {...updateAgent.form([projectId, agent.id])} className="inline">
             {({ errors, processing }) => (
                 <>
                     <input type="hidden" name="name" value={agent.name} />
                     <input type="hidden" name="role" value={agent.role} />
-                    <input
-                        type="hidden"
-                        name="harness"
-                        value={agent.harness}
-                    />
+                    <input type="hidden" name="harness" value={agent.harness} />
                     <input
                         type="hidden"
                         name="model"
@@ -496,10 +497,7 @@ function ReorderButton({
     ];
 
     return (
-        <Form
-            {...reorderSkills.form([projectId, agent.id])}
-            className="inline"
-        >
+        <Form {...reorderSkills.form([projectId, agent.id])} className="inline">
             {({ processing }) => (
                 <>
                     {reordered.map((skillId) => (
@@ -601,8 +599,8 @@ export function AgentsPanel({
                 <div>
                     <CardTitle>Agents</CardTitle>
                     <CardDescription>
-                        Project-scoped execution configuration for the
-                        Project Manager, Coder, and Reviewer roles.
+                        Project-scoped execution configuration for the Project
+                        Manager, Coder, and Reviewer roles.
                     </CardDescription>
                 </div>
                 {!creating && (
@@ -627,10 +625,7 @@ export function AgentsPanel({
                     );
 
                     return (
-                        <div
-                            key={agent.id}
-                            className="rounded-lg border p-4"
-                        >
+                        <div key={agent.id} className="rounded-lg border p-4">
                             {editingId === agent.id ? (
                                 <EditAgentForm
                                     projectId={projectId}
@@ -672,8 +667,7 @@ export function AgentsPanel({
                                                 {agent.reasoning_setting
                                                     ? ` · ${agent.reasoning_setting}`
                                                     : ''}{' '}
-                                                · v
-                                                {agent.configuration_version}
+                                                · v{agent.configuration_version}
                                             </p>
                                         </div>
                                         <div className="flex items-center gap-2">

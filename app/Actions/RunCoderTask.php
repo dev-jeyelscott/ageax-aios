@@ -163,10 +163,10 @@ class RunCoderTask
                 'base_sha' => $baseSha,
                 'changed_files' => $candidateFiles,
             ], $task->project, $task);
-            $this->workflow->transition($task, $execution['exit_code'] === 0 ? TaskStatus::Validating : $this->retryStatus($attempt));
+            $this->workflow->transition($task, $execution['exit_code'] === 0 ? TaskStatus::Validating : $this->retryStatus($task, $attempt));
 
             if ($execution['exit_code'] === 0) {
-                $this->workflow->transition($task, $passed ? TaskStatus::ReadyForReview : $this->retryStatus($attempt));
+                $this->workflow->transition($task, $passed ? TaskStatus::ReadyForReview : $this->retryStatus($task, $attempt));
             }
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
@@ -197,7 +197,7 @@ class RunCoderTask
                 'base_sha' => $baseSha,
                 'changed_files' => $changedFiles,
             ], $task->project, $task);
-            $this->workflow->transition($task, $this->retryStatus($attempt));
+            $this->workflow->transition($task, $this->retryStatus($task, $attempt));
         }
 
         return $attempt->refresh();
@@ -223,9 +223,28 @@ class RunCoderTask
         ]);
     }
 
-    private function retryStatus(TaskAttempt $attempt): TaskStatus
+    private function retryStatus(Task $task, TaskAttempt $attempt): TaskStatus
     {
-        return $attempt->number >= (int) config('aios.max_coder_attempts') ? TaskStatus::Blocked : TaskStatus::Failed;
+        $limit = max(1, (int) config('aios.max_coder_attempts'));
+        $lastRecovery = $task->auditEvents()
+            ->whereIn('event_type', ['task.requeued', 'task.coder_retry_exhausted'])
+            ->latest('occurred_at')
+            ->first();
+        $attemptsSinceRecovery = $task->attempts()
+            ->when($lastRecovery !== null, fn ($query) => $query->where('created_at', '>=', $lastRecovery->occurred_at))
+            ->count();
+
+        if ($attemptsSinceRecovery < $limit) {
+            return TaskStatus::Failed;
+        }
+
+        $this->audit->record('task.coder_retry_exhausted', [
+            'attempt_number' => $attempt->number,
+            'retry_count' => $attemptsSinceRecovery,
+            'retry_limit' => $limit,
+        ], $task->project, $task);
+
+        return TaskStatus::Blocked;
     }
 
     /** @return array{0: ?Agent, 1: ?AgentHarness} */
