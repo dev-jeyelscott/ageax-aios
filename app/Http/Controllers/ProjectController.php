@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Actions\CreateProject;
+use App\Actions\ProvisionDefaultProjectAgents;
 use App\Actions\RecordProjectManagerMessage;
 use App\Actions\RecordTaskOperatorMessage;
 use App\Actions\RequeueBlockedTask;
@@ -113,7 +114,26 @@ class ProjectController extends Controller
             'auditEvents' => fn ($query) => $query
                 ->latest('occurred_at')
                 ->limit(20),
+            'agents' => fn ($query) => $query
+                ->with([
+                    'skills' => fn ($skills) => $skills
+                        ->select('skills.id', 'skills.name', 'skills.slug', 'skills.version', 'skills.enabled'),
+                ])
+                ->orderBy('role')
+                ->orderBy('name'),
+            'skills' => fn ($query) => $query->orderBy('name'),
+            'workers' => fn ($query) => $query
+                ->select(['id', 'project_id', 'role', 'agent_id', 'status', 'last_heartbeat_at'])
+                ->orderBy('role'),
         ]);
+
+        $defaultAgentNames = ProvisionDefaultProjectAgents::defaultNames();
+        $project->agents->each(function ($agent) use ($defaultAgentNames): void {
+            $agent->setAttribute(
+                'is_default',
+                ($defaultAgentNames[$agent->getRawOriginal('role')] ?? null) === $agent->name,
+            );
+        });
 
         $project->loadSum('runs', 'token_usage');
         $project->setAttribute(
@@ -260,27 +280,27 @@ class ProjectController extends Controller
                 'run' => $run === null
                     ? null
                     : [
-                    'id' => $run->id,
-                    'status' => $run->getRawOriginal(
-                        'status',
-                    ),
-                    'attempt_number' => $run->attempt_number,
-                    'started_at' => $this->serializeDateAttribute(
-                        $run,
-                        'started_at',
-                    ),
-                    'finished_at' => $this->serializeDateAttribute(
-                        $run,
-                        'finished_at',
-                    ),
-                    'failure_reason' => $run->getRawOriginal(
-                        'status',
-                    ) === 'failed'
-                            ? $runs->failureReason(
-                                $run,
-                            )
-                            : null,
-                ],
+                        'id' => $run->id,
+                        'status' => $run->getRawOriginal(
+                            'status',
+                        ),
+                        'attempt_number' => $run->attempt_number,
+                        'started_at' => $this->serializeDateAttribute(
+                            $run,
+                            'started_at',
+                        ),
+                        'finished_at' => $this->serializeDateAttribute(
+                            $run,
+                            'finished_at',
+                        ),
+                        'failure_reason' => $run->getRawOriginal(
+                            'status',
+                        ) === 'failed'
+                                ? $runs->failureReason(
+                                    $run,
+                                )
+                                : null,
+                    ],
                 'task' => $task === null
                     ? null
                     : [

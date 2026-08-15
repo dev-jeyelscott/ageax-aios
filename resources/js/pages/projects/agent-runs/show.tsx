@@ -25,6 +25,28 @@ type Message = {
     created_at: string;
     user: { id: number; name: string };
 };
+type ConfigurationSnapshotAgent = {
+    id: number;
+    name: string;
+    role: string;
+    harness: string;
+    model: string | null;
+    reasoning_setting: string | null;
+    configuration_version: number;
+};
+type ConfigurationSnapshotSkill = {
+    id: number;
+    slug: string;
+    name: string;
+    version: number;
+    position: number;
+};
+type ConfigurationSnapshot = {
+    context_schema_version: number;
+    context_hash: string;
+    agent: ConfigurationSnapshotAgent;
+    skills: ConfigurationSnapshotSkill[];
+};
 type AgentRun = {
     id: number;
     role: string;
@@ -35,6 +57,10 @@ type AgentRun = {
     token_usage: number | null;
     started_at: string | null;
     finished_at: string | null;
+    harness: string | null;
+    external_run_id: string | null;
+    context_schema_version: number | null;
+    configuration_snapshot: ConfigurationSnapshot | null;
     task: { key: string; title: string } | null;
     worker: {
         role: string;
@@ -192,6 +218,121 @@ export default function AgentRunShow({
                         </Card>
                     )}
                 </div>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Configuration evidence</CardTitle>
+                        <CardDescription>
+                            {agentRun.configuration_snapshot
+                                ? 'Immutable snapshot captured at run start. Later Agent or Skill edits never change this record.'
+                                : 'This run predates immutable configuration snapshots.'}
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid gap-3 text-sm">
+                        {agentRun.configuration_snapshot ? (
+                            <>
+                                <div className="grid gap-1 text-muted-foreground">
+                                    <p>
+                                        Agent:{' '}
+                                        <span className="text-foreground">
+                                            {
+                                                agentRun.configuration_snapshot
+                                                    .agent.name
+                                            }
+                                        </span>{' '}
+                                        (v
+                                        {
+                                            agentRun.configuration_snapshot
+                                                .agent.configuration_version
+                                        }
+                                        )
+                                    </p>
+                                    <p>
+                                        Role:{' '}
+                                        {agentRun.configuration_snapshot.agent.role.replace(
+                                            '_',
+                                            ' ',
+                                        )}
+                                    </p>
+                                    <p>
+                                        Harness:{' '}
+                                        {agentRun.harness ??
+                                            agentRun.configuration_snapshot
+                                                .agent.harness}
+                                    </p>
+                                    <p>
+                                        Model:{' '}
+                                        {agentRun.configuration_snapshot.agent
+                                            .model ?? 'Harness default'}
+                                    </p>
+                                    <p>
+                                        Reasoning / effort:{' '}
+                                        {agentRun.configuration_snapshot.agent
+                                            .reasoning_setting ??
+                                            'Model default'}
+                                    </p>
+                                    <p>
+                                        Context schema version:{' '}
+                                        {
+                                            agentRun.configuration_snapshot
+                                                .context_schema_version
+                                        }
+                                    </p>
+                                    <p className="break-all">
+                                        Context hash:{' '}
+                                        {
+                                            agentRun.configuration_snapshot
+                                                .context_hash
+                                        }
+                                    </p>
+                                    {agentRun.external_run_id && (
+                                        <p>
+                                            External run ID:{' '}
+                                            {agentRun.external_run_id}
+                                        </p>
+                                    )}
+                                </div>
+                                <div>
+                                    <p className="mb-1 text-xs font-medium text-muted-foreground">
+                                        Skills applied ({
+                                            agentRun.configuration_snapshot
+                                                .skills.length
+                                        })
+                                    </p>
+                                    {agentRun.configuration_snapshot.skills
+                                        .length === 0 ? (
+                                        <p className="text-xs text-muted-foreground">
+                                            No skills were assigned to this
+                                            agent for this run.
+                                        </p>
+                                    ) : (
+                                        <ul className="grid gap-1">
+                                            {agentRun.configuration_snapshot.skills.map(
+                                                (skill) => (
+                                                    <li
+                                                        key={skill.id}
+                                                        className="flex items-center justify-between rounded-md border px-2 py-1 text-xs"
+                                                    >
+                                                        <span>
+                                                            {skill.position +
+                                                                1}
+                                                            . {skill.name}
+                                                        </span>
+                                                        <Badge variant="outline">
+                                                            v{skill.version}
+                                                        </Badge>
+                                                    </li>
+                                                ),
+                                            )}
+                                        </ul>
+                                    )}
+                                </div>
+                            </>
+                        ) : (
+                            <Badge variant="outline">Legacy run</Badge>
+                        )}
+                    </CardContent>
+                </Card>
 
                 {isProjectManager && (
                     <Card>

@@ -7,7 +7,7 @@ import {
     Play,
     RotateCcw,
 } from 'lucide-react';
-import { lazy, Suspense, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useState, useSyncExternalStore } from 'react';
 import {
     index,
     requeueTask,
@@ -26,6 +26,15 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import {
+    AgentsPanel
+    
+    
+    
+} from '@/pages/projects/agents-panel';
+import type {Agent, HarnessCapabilities, Worker} from '@/pages/projects/agents-panel';
+import { SkillsPanel  } from '@/pages/projects/skills-panel';
+import type {Skill} from '@/pages/projects/skills-panel';
 import { store as storeRoadmap } from '@/routes/projects/roadmaps';
 
 const LazyAgentOffice = lazy(() =>
@@ -109,13 +118,24 @@ type Project = {
     >;
     recent_agent_runs: AgentRun[];
     audit_events: { id: number; event_type: string; occurred_at: string }[];
+    agents: Agent[];
+    skills: Skill[];
+    workers: Worker[];
 };
 
 function formatTokens(tokens: number): string {
     return new Intl.NumberFormat().format(tokens);
 }
 
-export default function ProjectShow({ project }: { project: Project }) {
+type Tab = 'overview' | 'agents' | 'skills';
+
+export default function ProjectShow({
+    project,
+    harness_capabilities: harnessCapabilities,
+}: {
+    project: Project;
+    harness_capabilities: HarnessCapabilities;
+}) {
     usePoll(
         2_000,
         {
@@ -128,6 +148,7 @@ export default function ProjectShow({ project }: { project: Project }) {
         (task) => !['done', 'cancelled'].includes(task.status),
     );
     const latestRoadmap = project.roadmaps[0];
+    const [tab, setTab] = useState<Tab>('overview');
 
     return (
         <>
@@ -189,6 +210,51 @@ export default function ProjectShow({ project }: { project: Project }) {
                         </Badge>
                     </div>
                 </div>
+                <div
+                    role="tablist"
+                    className="flex gap-1 border-b"
+                    aria-label="Project sections"
+                >
+                    {(
+                        [
+                            ['overview', 'Overview'],
+                            ['agents', `Agents (${project.agents.length})`],
+                            ['skills', `Skills (${project.skills.length})`],
+                        ] as [Tab, string][]
+                    ).map(([value, label]) => (
+                        <button
+                            key={value}
+                            type="button"
+                            role="tab"
+                            aria-selected={tab === value}
+                            onClick={() => setTab(value)}
+                            className={`border-b-2 px-3 py-2 text-sm font-medium ${
+                                tab === value
+                                    ? 'border-primary text-foreground'
+                                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                            }`}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
+                {tab === 'agents' && (
+                    <AgentsPanel
+                        projectId={project.id}
+                        agents={project.agents}
+                        skills={project.skills}
+                        workers={project.workers}
+                        harnessCapabilities={harnessCapabilities}
+                    />
+                )}
+                {tab === 'skills' && (
+                    <SkillsPanel
+                        projectId={project.id}
+                        skills={project.skills}
+                    />
+                )}
+                {tab === 'overview' && (
+                    <>
                 <ClientAgentOffice
                     projectId={project.id}
                     workers={project.office_workers}
@@ -447,6 +513,8 @@ export default function ProjectShow({ project }: { project: Project }) {
                         ))}
                     </CardContent>
                 </Card>
+                    </>
+                )}
             </div>
         </>
     );

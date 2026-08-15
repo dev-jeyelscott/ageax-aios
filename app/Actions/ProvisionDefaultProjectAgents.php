@@ -8,6 +8,16 @@ use App\Models\Project;
 
 class ProvisionDefaultProjectAgents
 {
+    /** @return array<string, string> role value => default agent name */
+    public static function defaultNames(): array
+    {
+        return [
+            AgentRole::ProjectManager->value => 'Project Manager',
+            AgentRole::Coder->value => 'Coder',
+            AgentRole::Reviewer->value => 'Reviewer',
+        ];
+    }
+
     public function handle(Project $project): void
     {
         foreach ($this->defaults() as $definition) {
