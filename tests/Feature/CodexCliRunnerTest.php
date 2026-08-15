@@ -9,20 +9,30 @@ use Illuminate\Support\Facades\Process;
 use ReflectionProperty;
 
 test('runs Codex with an explicitly isolated environment', function () {
+    $originalDbPassword = getenv('DB_PASSWORD');
+    $originalApiToken = getenv('AIOS_TEST_API_TOKEN');
+    putenv('DB_PASSWORD=must-not-reach-codex');
+    putenv('AIOS_TEST_API_TOKEN=must-not-reach-codex');
     Process::fake(['*' => Process::result(output: 'completed')]);
 
-    app(CodexCliRunner::class)->runAtPath(base_path(), 'Implement the task.');
+    try {
+        app(CodexCliRunner::class)->runAtPath(base_path(), 'Implement the task.');
 
-    Process::assertRan(function (PendingProcess $process): bool {
-        $command = (new ReflectionProperty($process, 'command'))->getValue($process);
+        Process::assertRan(function (PendingProcess $process): bool {
+            $command = (new ReflectionProperty($process, 'command'))->getValue($process);
 
-        return $command[0] === '/usr/bin/env'
-            && $command[1] === '-i'
-            && in_array('HOME='.getenv('HOME'), $command, true)
-            && in_array('PATH='.getenv('PATH'), $command, true)
-            && ! collect($command)->contains(fn (string $argument): bool => str_starts_with($argument, 'DB_'))
-            && in_array(config('aios.codex_binary'), $command, true);
-    });
+            return $command[0] === '/usr/bin/env'
+                && $command[1] === '-i'
+                && in_array('HOME='.getenv('HOME'), $command, true)
+                && in_array('PATH='.getenv('PATH'), $command, true)
+                && ! collect($command)->contains(fn (string $argument): bool => str_starts_with($argument, 'DB_'))
+                && ! collect($command)->contains(fn (string $argument): bool => str_starts_with($argument, 'AIOS_TEST_API_TOKEN='))
+                && in_array(config('aios.codex_binary'), $command, true);
+        });
+    } finally {
+        $originalDbPassword === false ? putenv('DB_PASSWORD') : putenv('DB_PASSWORD='.$originalDbPassword);
+        $originalApiToken === false ? putenv('AIOS_TEST_API_TOKEN') : putenv('AIOS_TEST_API_TOKEN='.$originalApiToken);
+    }
 });
 
 test('refuses to run Codex for a persisted project path outside the workspace', function () {

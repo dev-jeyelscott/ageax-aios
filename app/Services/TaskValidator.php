@@ -79,7 +79,7 @@ class TaskValidator
 
             $result = Process::path($this->paths->assertProjectPath($task->project->path))
                 ->timeout((int) config('aios.execution_timeout'))
-                ->run(preg_split('/\\s+/', trim($command)) ?: []);
+                ->run(preg_split('/\s+/', trim($command)) ?: []);
 
             $commandEvidence = $this->processEvidence('task_verification_command', $result->successful(), $command, $result);
             $evidence[] = $commandEvidence;
@@ -154,8 +154,63 @@ class TaskValidator
             return false;
         }
 
-        $executable = preg_split('/\\s+/', trim($command))[0] ?? '';
+        $tokens = preg_split('/\s+/', trim($command)) ?: [];
+        $executable = $tokens[0] ?? '';
 
-        return in_array($executable, ['php', 'composer', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'git', 'vendor/bin/pest', './vendor/bin/pest', 'vendor/bin/phpstan', './vendor/bin/phpstan', 'vendor/bin/pint', './vendor/bin/pint'], true);
+        if ($executable === 'docker') {
+            return $this->isSafeDockerComposeVerificationCommand($tokens);
+        }
+
+        return in_array($executable, $this->verificationExecutables(), true);
+    }
+
+    /** @param list<string> $tokens */
+    private function isSafeDockerComposeVerificationCommand(array $tokens): bool
+    {
+        if (($tokens[1] ?? null) !== 'compose') {
+            return false;
+        }
+
+        $subcommand = $tokens[2] ?? null;
+        if ($subcommand === 'ps') {
+            return true;
+        }
+
+        if ($subcommand === 'config') {
+            $option = $tokens[3] ?? null;
+
+            return count($tokens) === 4 && $option !== null && in_array($option, ['--services', '--images', '--profiles', '--quiet'], true);
+        }
+
+        if ($subcommand !== 'exec') {
+            return false;
+        }
+
+        $index = 3;
+        while (in_array($tokens[$index] ?? null, ['-T', '--no-TTY'], true)) {
+            $index++;
+        }
+
+        $service = $tokens[$index] ?? null;
+        $innerExecutable = $tokens[$index + 1] ?? null;
+        if ($service === null || preg_match('/^[A-Za-z0-9_.-]+$/', $service) !== 1 || $innerExecutable === null) {
+            return false;
+        }
+
+        if ($innerExecutable === 'psql') {
+            return array_slice($tokens, $index + 2) === ['--version'];
+        }
+
+        if ($innerExecutable === 'pg_isready') {
+            return true;
+        }
+
+        return in_array($innerExecutable, $this->verificationExecutables(), true);
+    }
+
+    /** @return list<string> */
+    private function verificationExecutables(): array
+    {
+        return ['php', 'composer', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'git', 'vendor/bin/pest', './vendor/bin/pest', 'vendor/bin/phpstan', './vendor/bin/phpstan', 'vendor/bin/pint', './vendor/bin/pint'];
     }
 }

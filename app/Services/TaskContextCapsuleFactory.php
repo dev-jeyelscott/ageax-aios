@@ -8,11 +8,12 @@ use App\Models\TaskAttempt;
 
 class TaskContextCapsuleFactory
 {
-    public function __construct(private ObsidianProjectNotes $notes) {}
+    public function __construct(private ObsidianProjectNotes $notes, private ProjectRuntimeCapabilityDetector $runtime) {}
 
     /** @return array<string, mixed> */
     public function make(Task $task, AgentRole $recipientRole = AgentRole::Coder): array
     {
+        $task->loadMissing('project');
         $retrieval = $this->notes->taskRetrieval($task, $recipientRole);
         $previousAttempt = $task->attempts()
             ->latest('number')
@@ -29,6 +30,7 @@ class TaskContextCapsuleFactory
             'dependencies' => $task->dependencies()->pluck('key')->all(),
             'relevant_paths' => $task->relevant_paths,
             'verification_commands' => $task->verification_commands,
+            'project_runtime_capabilities' => $this->runtime->detect($task->project),
             'previous_attempt' => $this->previousAttemptContext($previousAttempt, $recipientRole),
             'obsidian_project_knowledge' => $retrieval['notes'],
             'retrieval_manifest' => $retrieval['manifest'],
