@@ -261,7 +261,7 @@ function RoadmapPanel({
 
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
                 <div
-                    className="h-full rounded-full bg-gradient-to-r from-primary via-primary/70 to-secondary-foreground transition-[width]"
+                    className="progress-flow h-full rounded-full transition-[width]"
                     style={{ width: `${progress}%` }}
                 />
             </div>

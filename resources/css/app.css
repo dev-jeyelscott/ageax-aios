@@ -27,6 +27,9 @@
 
     --duration-breathe: 2.4s;
     --duration-glow-pulse: 2.8s;
+    --duration-status-pulse: 2.2s;
+    --duration-orbit: 3.2s;
+    --duration-flow: 2.6s;
 
     --text-2xs: 0.6875rem;
     --text-2xs--line-height: 1rem;
@@ -189,10 +192,86 @@
             infinite;
     }
 
+    .status-glow-pulse {
+        animation: aios-status-pulse var(--duration-status-pulse) ease-in-out
+            infinite;
+    }
+
+    .agent-orbit {
+        position: relative;
+    }
+
+    .agent-orbit::before {
+        content: '';
+        position: absolute;
+        inset: -2px;
+        z-index: 20;
+        border-radius: inherit;
+        padding: 2px;
+        pointer-events: none;
+        background: conic-gradient(
+            from 0deg,
+            transparent 0%,
+            transparent 62%,
+            var(--primary) 82%,
+            var(--foreground) 88%,
+            var(--primary) 94%,
+            transparent 100%
+        );
+        -webkit-mask:
+            linear-gradient(#000 0 0) content-box,
+            linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        animation: aios-orbit-rotate var(--duration-orbit) linear infinite;
+    }
+
+    .progress-flow {
+        background-image: linear-gradient(
+            90deg,
+            var(--primary) 0%,
+            color-mix(in oklch, var(--primary) 65%, transparent) 25%,
+            var(--secondary-foreground) 50%,
+            color-mix(in oklch, var(--primary) 65%, transparent) 75%,
+            var(--primary) 100%
+        );
+        background-size: 220% 100%;
+        animation: aios-progress-flow var(--duration-flow) linear infinite;
+    }
+
+    .pipeline-flow {
+        background-image: linear-gradient(
+            90deg,
+            color-mix(in oklch, var(--primary) 45%, transparent) 0%,
+            var(--primary) 50%,
+            color-mix(in oklch, var(--primary) 45%, transparent) 100%
+        );
+        background-size: 220% 100%;
+        box-shadow: var(--shadow-glow-sm);
+        animation:
+            aios-progress-flow var(--duration-flow) linear infinite,
+            aios-glow-pulse var(--duration-glow-pulse) ease-in-out infinite;
+    }
+
     @media (prefers-reduced-motion: reduce) {
         .animate-breathe,
         .glow-border,
         .glow-edge {
+            animation: none;
+        }
+
+        .status-glow-pulse {
+            animation: none;
+            box-shadow: 0 0 6px 1px currentColor;
+        }
+
+        .agent-orbit::before {
+            animation: none;
+            opacity: 0.55;
+        }
+
+        .progress-flow,
+        .pipeline-flow {
             animation: none;
         }
     }
@@ -245,5 +324,29 @@
     }
     50% {
         box-shadow: var(--shadow-glow-md);
+    }
+}
+
+@keyframes aios-status-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 3px 0 currentColor;
+        opacity: 1;
+    }
+    50% {
+        box-shadow: 0 0 12px 3px currentColor;
+        opacity: 0.85;
+    }
+}
+
+@keyframes aios-orbit-rotate {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes aios-progress-flow {
+    to {
+        background-position: -220% 0;
     }
 }

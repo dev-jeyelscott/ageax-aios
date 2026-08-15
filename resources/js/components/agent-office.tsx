@@ -65,6 +65,7 @@ type OfficePresentation = {
     label: string;
     dotClass: string;
     textClass: string;
+    pulseClass: string;
 };
 
 type RoleVisual = {
@@ -119,30 +120,35 @@ export function officePresentation(status: string): OfficePresentation {
                 label: 'Working',
                 dotClass: 'bg-success',
                 textClass: 'text-success-foreground',
+                pulseClass: 'status-glow-pulse text-success',
             };
         case 'recovering':
             return {
                 label: 'Recovering',
                 dotClass: 'bg-warning',
                 textClass: 'text-warning-foreground',
+                pulseClass: 'status-glow-pulse text-warning',
             };
         case 'interrupted':
             return {
                 label: 'Needs attention',
                 dotClass: 'bg-destructive',
                 textClass: 'text-destructive-foreground',
+                pulseClass: 'status-glow-pulse text-destructive',
             };
         case 'idle':
             return {
                 label: 'Available',
                 dotClass: 'bg-muted-foreground',
                 textClass: 'text-muted-foreground',
+                pulseClass: '',
             };
         default:
             return {
                 label: 'Status unavailable',
                 dotClass: 'bg-muted-foreground/70',
                 textClass: 'text-muted-foreground',
+                pulseClass: '',
             };
     }
 }
@@ -252,9 +258,14 @@ function formatDate(value: string | null): string {
 function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
     const visual = agentVisualFor(worker.role, worker.status);
     const roleLabel = labelForRole(worker.role);
+    const isWorking = worker.status === 'working';
 
     return (
-        <div className="visual-stage relative h-full overflow-hidden rounded-lg border border-primary/10">
+        <div
+            className={`visual-stage relative h-full overflow-hidden rounded-lg border border-primary/10 ${
+                isWorking ? 'agent-orbit' : ''
+            }`}
+        >
             <div className="pointer-events-none absolute inset-x-8 bottom-0 h-8 rounded-full bg-primary/5 blur-xl" />
 
             {worker.role === 'project_manager' ? (
@@ -345,9 +356,7 @@ function AgentCard({
                 </div>
 
                 <span
-                    className={`mt-1 size-2 shrink-0 rounded-full ${presentation.dotClass} ${
-                        worker.status === 'working' ? 'animate-breathe' : ''
-                    }`}
+                    className={`mt-1 size-2 shrink-0 rounded-full ${presentation.dotClass} ${presentation.pulseClass}`}
                     title={presentation.label}
                 />
             </div>
@@ -486,6 +495,12 @@ function WorkflowPipeline({
         taskProgress.total > 0 && taskProgress.completed === taskProgress.total;
 
     const activeIndex = workflowStageIndex(currentTask?.status, isComplete);
+    const trackFillPercent =
+        activeIndex <= 0
+            ? 0
+            : (Math.min(activeIndex, workflowStages.length - 1) /
+                  (workflowStages.length - 1)) *
+              100;
 
     return (
         <div className="panel-recessed px-3 py-2.5">
@@ -506,7 +521,12 @@ function WorkflowPipeline({
             </div>
 
             <div className="relative mt-2.5">
-                <div className="absolute top-2.5 right-[9%] left-[9%] h-px bg-border" />
+                <div className="absolute top-2.5 right-[9%] left-[9%] h-px overflow-hidden rounded-full bg-border">
+                    <div
+                        className="pipeline-flow h-full rounded-full"
+                        style={{ width: `${trackFillPercent}%` }}
+                    />
+                </div>
 
                 <div className="relative grid grid-cols-5 gap-1">
                     {workflowStages.map((stage, index) => {
@@ -519,12 +539,12 @@ function WorkflowPipeline({
                                 className="flex min-w-0 flex-col items-center"
                             >
                                 <span
-                                    className={`z-10 size-5 rounded-full border ${
+                                    className={`z-10 rounded-full border transition-[width,height] ${
                                         active
-                                            ? 'glow-border border-primary bg-primary'
+                                            ? 'glow-border size-6 border-primary bg-primary shadow-glow-lg'
                                             : passed
-                                              ? 'border-success/70 bg-success/60'
-                                              : 'border-border bg-background'
+                                              ? 'size-5 border-success/70 bg-success/60'
+                                              : 'size-5 border-border bg-background'
                                     }`}
                                 />
 
