@@ -2,7 +2,10 @@
 
 namespace App\Providers;
 
+use App\Services\AgentHarnessResolver;
+use App\Services\CodexHarness;
 use Carbon\CarbonImmutable;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Foundation\DevCommands;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -16,7 +19,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->singleton(AgentHarnessResolver::class, fn (Application $app): AgentHarnessResolver => new AgentHarnessResolver([
+            $app->make(CodexHarness::class),
+        ]));
     }
 
     /**
