@@ -11,7 +11,7 @@ use App\ProjectStatus;
 use App\TaskStatus;
 use Inertia\Testing\AssertableInertia as Assert;
 
-test('the project office includes live worker context and workers without runs', function () {
+test('the project office includes persisted worker context and workers without runs', function () {
     $user = User::factory()->create();
     $project = Project::create([
         'name' => 'Office Example',
@@ -39,8 +39,13 @@ test('the project office includes live worker context and workers without runs',
     ]);
     AgentWorker::create([
         'project_id' => $project->id,
+        'role' => AgentRole::ProjectManager,
+        'status' => 'recovering',
+    ]);
+    AgentWorker::create([
+        'project_id' => $project->id,
         'role' => AgentRole::Reviewer,
-        'status' => 'idle',
+        'status' => 'interrupted',
     ]);
     AgentWorker::create([
         'project_id' => $project->id,
@@ -64,43 +69,22 @@ test('the project office includes live worker context and workers without runs',
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/show')
-            ->has('officeWorkers', 3)
-            ->where('officeWorkers.0.role', 'coder')
-            ->where('officeWorkers.0.status', 'working')
-            ->where('officeWorkers.0.lease_state', 'active')
-            ->where('officeWorkers.0.run.id', $run->id)
-            ->where('officeWorkers.0.task.key', 'TASK-001')
-            ->where('officeWorkers.1.role', 'knowledge_architect')
-            ->where('officeWorkers.1.lease_state', 'expired')
-            ->where('officeWorkers.1.run', null)
-            ->where('officeWorkers.2.role', 'reviewer')
-            ->where('officeWorkers.2.run', null)
-            ->where('officeWorkers.2.task', null)
-            ->missing('project.office_workers'));
-});
-
-test('the project office supports live worker partial reloads', function () {
-    $user = User::factory()->create();
-    $project = Project::create([
-        'name' => 'Office Polling',
-        'path' => '/tmp/office-polling-'.fake()->uuid(),
-        'status' => ProjectStatus::Running,
-        'git_status' => 'clean',
-    ]);
-    $worker = AgentWorker::create([
-        'project_id' => $project->id,
-        'role' => AgentRole::Coder,
-        'status' => 'idle',
-    ]);
-
-    $response = $this->actingAs($user)
-        ->get(route('projects.show', $project));
-
-    $worker->update(['status' => 'working']);
-
-    $response->assertInertia(fn (Assert $page) => $page
-        ->reloadOnly('officeWorkers', fn (Assert $reload) => $reload
-            ->has('officeWorkers', 1)
-            ->where('officeWorkers.0.status', 'working')
-            ->missing('project')));
+            ->has('project.office_workers', 4)
+            ->where('project.office_workers.0.role', 'coder')
+            ->where('project.office_workers.0.status', 'working')
+            ->where('project.office_workers.0.lease_state', 'active')
+            ->where('project.office_workers.0.run.id', $run->id)
+            ->where('project.office_workers.0.task.key', 'TASK-001')
+            ->where('project.office_workers.1.role', 'knowledge_architect')
+            ->where('project.office_workers.1.status', 'mystery')
+            ->where('project.office_workers.1.lease_state', 'expired')
+            ->where('project.office_workers.1.run', null)
+            ->where('project.office_workers.2.role', 'project_manager')
+            ->where('project.office_workers.2.status', 'recovering')
+            ->where('project.office_workers.2.run', null)
+            ->where('project.office_workers.2.task', null)
+            ->where('project.office_workers.3.role', 'reviewer')
+            ->where('project.office_workers.3.status', 'interrupted')
+            ->where('project.office_workers.3.run', null)
+            ->where('project.office_workers.3.task', null));
 });

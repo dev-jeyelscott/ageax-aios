@@ -1,20 +1,6 @@
 import { Link } from '@inertiajs/react';
-import {
-    Activity,
-    AlertTriangle,
-    Bot,
-    BrainCircuit,
-    CircleDot,
-    Code2,
-    Coffee,
-    Footprints,
-    Orbit,
-    Radio,
-    ScanEye,
-    ShieldCheck,
-    Sparkles as SparklesIcon,
-} from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Activity, Bot, CircleDot, Radio } from 'lucide-react';
+import { useMemo } from 'react';
 import {
     showAgentRun,
     showTask,
@@ -37,8 +23,6 @@ export type OfficeWorker = {
     task: { id: number; key: string; title: string; status: string } | null;
 };
 
-type AgentBehavior = 'walk' | 'think' | 'work' | 'rest' | 'brainstorm';
-
 type OfficePresentation = {
     label: string;
     dotClass: string;
@@ -46,24 +30,42 @@ type OfficePresentation = {
     color: string;
 };
 
-type FeaturedAgent = {
-    worker: OfficeWorker;
-    behavior: AgentBehavior;
-    room: string;
-    color: string;
+type RoleVisual = {
+    idle: string;
+    working: string;
+    workingDescription: string;
+};
+
+type AgentVisual = {
+    src: string;
+    alt: string;
 };
 
 const roleLabels: Record<string, string> = {
     project_manager: 'Project Manager',
-    coder: 'Developer',
+    coder: 'Coder',
     reviewer: 'Reviewer',
 };
 
-const roleColors: Record<string, string> = {
-    project_manager: '#a78bfa',
-    coder: '#38bdf8',
-    reviewer: '#34d399',
+const roleVisuals: Record<string, RoleVisual> = {
+    project_manager: {
+        idle: '/action-gif/pm-idle.gif',
+        working: '/action-gif/pm-thinking.gif',
+        workingDescription: 'thinking and planning',
+    },
+    coder: {
+        idle: '/action-gif/coder-idle.gif',
+        working: '/action-gif/coder-coding.gif',
+        workingDescription: 'coding',
+    },
+    reviewer: {
+        idle: '/action-gif/reviewer-idle.gif',
+        working: '/action-gif/reviewer-reviewing.gif',
+        workingDescription: 'reviewing',
+    },
 };
+
+const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'];
 
 export function officePresentation(status: string): OfficePresentation {
     switch (status) {
@@ -114,53 +116,46 @@ function labelForRole(role: string): string {
     );
 }
 
-function behaviorFor(worker: OfficeWorker): AgentBehavior {
-    if (worker.status === 'recovering') {
-        return 'rest';
+export function agentVisualFor(
+    role: string,
+    status: string,
+): AgentVisual | null {
+    const visual = roleVisuals[role];
+
+    if (!visual) {
+        return null;
     }
 
-    if (worker.status === 'interrupted') {
-        return 'think';
-    }
+    const isWorking = status === 'working';
+    const roleLabel = labelForRole(role);
 
-    if (worker.status === 'idle') {
-        return 'walk';
-    }
-
-    return worker.role === 'project_manager' ? 'brainstorm' : 'work';
-}
-
-function behaviorLabel(behavior: AgentBehavior): string {
     return {
-        walk: 'Walking the floor',
-        think: 'Thinking through a blocker',
-        work: 'Building now',
-        rest: 'Resting and recovering',
-        brainstorm: 'Brainstorming the next move',
-    }[behavior];
+        src: isWorking ? visual.working : visual.idle,
+        alt: isWorking
+            ? `${roleLabel} ${visual.workingDescription} while working.`
+            : `${roleLabel} idle visual for ${status} status.`,
+    };
 }
 
-function buildFeaturedAgents(workers: OfficeWorker[]): FeaturedAgent[] {
-    const roleOrder = ['project_manager', 'coder', 'reviewer'];
-    const rooms = ['Strategy Room', 'Development Room', 'QA Room'];
+function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
     const claimedIds = new Set<number>();
-    const selected = roleOrder.flatMap((role) => {
+    const selected = preferredRoleOrder.flatMap((role) => {
         const worker = workers.find(
             (candidate) =>
                 candidate.role === role && !claimedIds.has(candidate.id),
         );
 
-        if (worker) {
-            claimedIds.add(worker.id);
-
-            return [worker];
+        if (!worker) {
+            return [];
         }
 
-        return [];
+        claimedIds.add(worker.id);
+
+        return [worker];
     });
 
     for (const worker of workers) {
-        if (selected.length === 3) {
+        if (selected.length === preferredRoleOrder.length) {
             break;
         }
 
@@ -170,173 +165,153 @@ function buildFeaturedAgents(workers: OfficeWorker[]): FeaturedAgent[] {
         }
     }
 
-    return selected.slice(0, 3).map((worker, index) => ({
-        worker,
-        behavior: behaviorFor(worker),
-        room: rooms[index],
-        color: roleColors[worker.role] ?? '#94a3b8',
-    }));
+    return selected.slice(0, preferredRoleOrder.length);
 }
 
-function FallbackOffice({
-    agents,
-    selectedWorkerId,
-    onSelect,
-}: {
-    agents: FeaturedAgent[];
-    selectedWorkerId: number | null;
-    onSelect: (worker: OfficeWorker) => void;
-}) {
-    return (
-        <div className="grid min-h-132 gap-3 bg-[radial-gradient(circle_at_50%_52%,rgba(124,58,237,0.28),transparent_17%),linear-gradient(140deg,#111827,#030712)] p-4 sm:grid-cols-3">
-            {['Strategy Room', 'Development Room', 'QA Room'].map(
-                (room, index) => {
-                    const agent = agents[index];
+function formatDate(value: string | null): string {
+    return value ? new Date(value).toLocaleString() : 'Not recorded';
+}
 
-                    return (
-                        <div
-                            key={room}
-                            className="relative min-h-48 overflow-hidden rounded-xl border border-white/10 bg-slate-900/75 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
-                        >
-                            <div className="absolute inset-x-4 bottom-4 h-20 rounded-lg border border-sky-300/15 bg-[linear-gradient(135deg,rgba(14,165,233,0.12),transparent)]" />
-                            <p className="relative text-sm font-semibold text-white">
-                                {room}
+function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
+    const visual = agentVisualFor(worker.role, worker.status);
+    const roleLabel = labelForRole(worker.role);
+
+    return (
+        <div className="relative aspect-video overflow-hidden rounded-xl border border-white/10 bg-[radial-gradient(circle_at_50%_35%,rgba(34,211,238,0.18),transparent_42%),linear-gradient(145deg,#0f172a,#020617)]">
+            {visual ? (
+                <>
+                    <img
+                        src={visual.src}
+                        alt={visual.alt}
+                        className="h-full w-full object-contain p-2 motion-reduce:hidden sm:p-3"
+                    />
+                    <div
+                        role="img"
+                        aria-label={`${roleLabel} ${worker.status}. Animation disabled because reduced motion is requested.`}
+                        className="hidden h-full w-full place-items-center p-6 text-center motion-reduce:grid"
+                    >
+                        <div>
+                            <Bot
+                                aria-hidden="true"
+                                className="mx-auto size-14 text-cyan-300"
+                            />
+                            <p className="mt-3 text-sm font-medium text-white">
+                                {roleLabel}
                             </p>
-                            <p className="relative mt-1 text-xs text-slate-400">
-                                {agent
-                                    ? behaviorLabel(agent.behavior)
-                                    : 'Prepared for assignment'}
+                            <p className="mt-1 text-xs text-slate-400">
+                                Animation paused for reduced motion
                             </p>
-                            {agent && (
-                                <button
-                                    type="button"
-                                    aria-pressed={
-                                        agent.worker.id === selectedWorkerId
-                                    }
-                                    onClick={() => onSelect(agent.worker)}
-                                    className={`relative mt-9 flex w-full items-center gap-3 rounded-lg border p-3 text-left transition focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:outline-none ${agent.worker.id === selectedWorkerId ? 'border-violet-300 bg-violet-400/15' : 'border-white/10 bg-slate-950/65 hover:bg-white/8'}`}
-                                >
-                                    <span
-                                        className="grid size-12 place-items-center rounded-full border border-white/20 bg-slate-800 shadow-lg"
-                                        style={{
-                                            boxShadow: `0 0 22px ${agent.color}`,
-                                        }}
-                                    >
-                                        <Bot
-                                            className="size-6"
-                                            style={{ color: agent.color }}
-                                        />
-                                    </span>
-                                    <span>
-                                        <span className="block text-sm font-medium text-white">
-                                            {labelForRole(agent.worker.role)}
-                                        </span>
-                                        <span className="mt-0.5 block text-xs text-slate-400">
-                                            {behaviorLabel(agent.behavior)}
-                                        </span>
-                                    </span>
-                                </button>
-                            )}
                         </div>
-                    );
-                },
+                    </div>
+                </>
+            ) : (
+                <div
+                    role="img"
+                    aria-label={`${roleLabel} has no role-specific animation.`}
+                    className="grid h-full w-full place-items-center p-6 text-center"
+                >
+                    <div>
+                        <Bot
+                            aria-hidden="true"
+                            className="mx-auto size-14 text-slate-400"
+                        />
+                        <p className="mt-3 text-sm font-medium text-white">
+                            {roleLabel}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-400">
+                            Role-specific animation unavailable
+                        </p>
+                    </div>
+                </div>
             )}
-            <div className="col-span-full grid place-items-center rounded-xl border border-violet-300/25 bg-slate-950/70 py-5 text-center shadow-[0_0_34px_rgba(124,58,237,0.23)]">
-                <ShieldCheck className="size-7 text-violet-300" />
-                <p className="mt-2 text-sm font-semibold text-white">
-                    AI Operating System
-                </p>
-                <p className="mt-1 text-xs text-slate-400">
-                    Accessible office floor plan
-                </p>
-            </div>
         </div>
     );
 }
 
-function AgentInspector({
-    agent,
+function AgentCard({
     projectId,
+    worker,
 }: {
-    agent: FeaturedAgent;
     projectId: number;
+    worker: OfficeWorker;
 }) {
-    const presentation = officePresentation(agent.worker.status);
-    const Icon = {
-        walk: Footprints,
-        think: BrainCircuit,
-        work: Code2,
-        rest: Coffee,
-        brainstorm: SparklesIcon,
-    }[agent.behavior];
+    const presentation = officePresentation(worker.status);
 
     return (
-        <aside className="rounded-xl border border-white/10 bg-slate-950/85 p-4 shadow-2xl backdrop-blur-xl">
+        <article className="flex min-w-0 flex-col rounded-2xl border border-white/10 bg-slate-950/80 p-4 shadow-xl">
             <div className="flex items-start justify-between gap-3">
-                <div>
-                    <p className="text-xs font-medium tracking-[0.16em] text-violet-300 uppercase">
-                        Selected agent
+                <div className="min-w-0">
+                    <p className="text-xs font-medium tracking-[0.14em] text-cyan-300 uppercase">
+                        AI Agent
                     </p>
-                    <h3 className="mt-1 text-lg font-semibold text-white">
-                        {labelForRole(agent.worker.role)}
+                    <h3 className="mt-1 truncate text-lg font-semibold text-white">
+                        {labelForRole(worker.role)}
                     </h3>
                 </div>
                 <Badge
-                    className="border-white/10 bg-white/5 text-slate-200"
                     variant="outline"
+                    title={presentation.label}
+                    className="shrink-0 border-white/10 bg-white/5 text-slate-200"
                 >
                     <span
+                        aria-hidden="true"
                         className={`mr-1.5 size-1.5 rounded-full ${presentation.dotClass}`}
                     />
-                    {presentation.label}
+                    {worker.status}
                 </Badge>
             </div>
-            <div className="mt-4 rounded-lg border border-violet-300/20 bg-violet-400/10 p-3">
-                <div className="flex items-center gap-2 text-sm font-medium text-violet-100">
-                    <Icon className="size-4" />
-                    {behaviorLabel(agent.behavior)}
-                </div>
-                <p className="mt-1 text-xs text-violet-200/70">
-                    {agent.room} · derived from the live worker status
-                </p>
+
+            <div className="mt-4">
+                <AgentVisualPanel worker={worker} />
             </div>
+
             <dl className="mt-4 grid gap-3 text-sm">
-                <div className="flex items-center justify-between border-b border-white/8 pb-3">
+                <div className="flex items-center justify-between gap-3 border-b border-white/8 pb-3">
                     <dt className="flex items-center gap-2 text-slate-400">
-                        <Radio className="size-4" /> Lease
+                        <CircleDot
+                            aria-hidden="true"
+                            className={`size-4 ${presentation.textClass}`}
+                        />
+                        Status
                     </dt>
-                    <dd className="text-slate-200 capitalize">
-                        {agent.worker.lease_state}
+                    <dd className="text-right font-medium text-slate-200">
+                        {worker.status}
                     </dd>
                 </div>
                 <div className="flex items-center justify-between gap-3 border-b border-white/8 pb-3">
                     <dt className="flex items-center gap-2 text-slate-400">
-                        <Activity className="size-4" /> Heartbeat
+                        <Radio aria-hidden="true" className="size-4" /> Lease
                     </dt>
-                    <dd className="text-right text-xs text-slate-200">
-                        {agent.worker.last_heartbeat_at
-                            ? new Date(
-                                  agent.worker.last_heartbeat_at,
-                              ).toLocaleString()
-                            : 'Not recorded'}
+                    <dd className="text-right text-slate-200 capitalize">
+                        {worker.lease_state}
+                    </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3 border-b border-white/8 pb-3">
+                    <dt className="flex items-center gap-2 text-slate-400">
+                        <Activity aria-hidden="true" className="size-4" />
+                        Heartbeat
+                    </dt>
+                    <dd className="max-w-44 text-right text-xs text-slate-200">
+                        {formatDate(worker.last_heartbeat_at)}
                     </dd>
                 </div>
             </dl>
-            {agent.worker.task ? (
+
+            {worker.task ? (
                 <Link
                     href={
                         showTask({
                             project: projectId,
-                            task: agent.worker.task.id,
+                            task: worker.task.id,
                         }).url
                     }
                     className="mt-4 block rounded-lg border border-cyan-300/20 bg-cyan-400/10 p-3 transition hover:border-cyan-200/50 hover:bg-cyan-400/15 focus-visible:ring-2 focus-visible:ring-cyan-200 focus-visible:outline-none"
                 >
                     <span className="text-xs font-medium tracking-wide text-cyan-100 uppercase">
-                        Current task · {agent.worker.task.status}
+                        Current task · {worker.task.status}
                     </span>
                     <p className="mt-1 text-sm font-medium text-white">
-                        {agent.worker.task.key}: {agent.worker.task.title}
+                        {worker.task.key}: {worker.task.title}
                     </p>
                 </Link>
             ) : (
@@ -344,40 +319,44 @@ function AgentInspector({
                     No task is assigned to this agent.
                 </p>
             )}
-            {agent.worker.run && (
+
+            {worker.run ? (
                 <Link
                     href={
                         showAgentRun({
                             project: projectId,
-                            run: agent.worker.run.id,
+                            run: worker.run.id,
                         }).url
                     }
-                    className="mt-3 flex items-center justify-between rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:outline-none"
+                    className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-cyan-200 focus-visible:outline-none"
                 >
-                    <span>Run #{agent.worker.run.id}</span>
-                    <span className="text-xs text-slate-500">
-                        Attempt {agent.worker.run.attempt_number ?? '—'}
+                    <span>Run #{worker.run.id}</span>
+                    <span className="text-right text-xs text-slate-500">
+                        {worker.run.status} · Attempt{' '}
+                        {worker.run.attempt_number ?? '—'}
                     </span>
                 </Link>
+            ) : (
+                <p className="mt-3 rounded-lg border border-dashed border-white/10 px-3 py-2 text-sm text-slate-400">
+                    No run is recorded for this agent.
+                </p>
             )}
-        </aside>
+        </article>
     );
 }
 
 function Metric({
-    icon: Icon,
     label,
     value,
     tone,
 }: {
-    icon: typeof Activity;
     label: string;
     value: number;
     tone: string;
 }) {
     return (
-        <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 text-sm shadow-lg backdrop-blur">
-            <Icon className={`size-4 ${tone}`} />
+        <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 text-sm shadow-lg">
+            <span className={`size-2 rounded-full ${tone}`} />
             <span className="font-semibold text-white">{value}</span>
             <span className="text-slate-400">{label}</span>
         </div>
@@ -391,13 +370,10 @@ export function AgentOffice({
     projectId: number;
     workers: OfficeWorker[];
 }) {
-    const agents = useMemo(() => buildFeaturedAgents(workers), [workers]);
-    const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(
-        agents[0]?.worker.id ?? null,
+    const displayedWorkers = useMemo(
+        () => selectOfficeWorkers(workers),
+        [workers],
     );
-    const selectedAgent =
-        agents.find((agent) => agent.worker.id === selectedWorkerId) ??
-        agents[0];
     const workingWorkers = workers.filter(
         (worker) => worker.status === 'working',
     ).length;
@@ -415,13 +391,14 @@ export function AgentOffice({
     return (
         <section
             aria-labelledby="agent-office-title"
-            className="flex min-h-[calc(100svh-8.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-950 text-slate-100 shadow-2xl"
+            className="overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-950 text-slate-100 shadow-2xl"
         >
-            <div className="border-b border-white/8 bg-[linear-gradient(105deg,rgba(15,23,42,0.98),rgba(15,23,42,0.84),rgba(49,46,129,0.33))] px-5 py-5 md:px-6">
+            <div className="border-b border-white/8 bg-[linear-gradient(105deg,rgba(15,23,42,0.98),rgba(15,23,42,0.84),rgba(8,145,178,0.2))] px-5 py-5 md:px-6">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                     <div>
-                        <div className="flex items-center gap-2 text-sm font-medium text-violet-300">
-                            <Bot className="size-4" /> Live AI organization
+                        <div className="flex items-center gap-2 text-sm font-medium text-cyan-300">
+                            <Bot aria-hidden="true" className="size-4" /> Live
+                            AI organization
                         </div>
                         <h2
                             id="agent-office-title"
@@ -430,105 +407,37 @@ export function AgentOffice({
                             AI Engineering Office
                         </h2>
                         <p className="mt-1 text-sm text-slate-400">
-                            A cinematic command floor for the three agents
-                            currently moving this project forward.
+                            Persisted worker status drives each agent visual.
                         </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <Metric
-                            icon={Activity}
-                            label="agents online"
+                            label="working"
                             value={workingWorkers}
-                            tone="text-emerald-400"
+                            tone="bg-emerald-400"
                         />
                         <Metric
-                            icon={Orbit}
                             label="recovering"
                             value={recoveringWorkers}
-                            tone="text-amber-400"
+                            tone="bg-amber-400"
                         />
                         <Metric
-                            icon={AlertTriangle}
                             label="need attention"
                             value={attentionWorkers}
-                            tone="text-rose-400"
+                            tone="bg-rose-400"
                         />
                     </div>
                 </div>
             </div>
-            <div className="grid min-h-0 flex-1 gap-4 p-3 md:p-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
-                <div className="relative min-h-[calc(100svh-18rem)] overflow-hidden rounded-xl border border-white/10 bg-slate-950 shadow-[inset_0_0_60px_rgba(15,23,42,0.85)] xl:min-h-0">
-                    <FallbackOffice
-                        agents={agents}
-                        selectedWorkerId={selectedAgent?.worker.id ?? null}
-                        onSelect={(worker) => setSelectedWorkerId(worker.id)}
-                    />
-                    <div className="absolute right-3 bottom-3 flex items-center gap-2 rounded-lg border border-white/10 bg-slate-950/80 px-3 py-2 text-xs text-slate-300 shadow-lg backdrop-blur">
-                        <span className="mr-2 inline-block size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
-                        Live office view
-                    </div>
-                </div>
-                {selectedAgent && (
-                    <AgentInspector
-                        agent={selectedAgent}
-                        projectId={projectId}
-                    />
-                )}
-            </div>
-            <div className="border-t border-white/8 bg-slate-950/80 px-4 py-3 md:px-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-                        <ScanEye className="size-4 text-violet-300" /> Agent
-                        states
-                    </div>
-                    <span className="text-xs text-slate-500">
-                        Select an agent to inspect its real task, run,
-                        heartbeat, and lease.
-                    </span>
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                    {agents.map((agent) => {
-                        const Icon = {
-                            walk: Footprints,
-                            think: BrainCircuit,
-                            work: Code2,
-                            rest: Coffee,
-                            brainstorm: SparklesIcon,
-                        }[agent.behavior];
-                        const isSelected =
-                            agent.worker.id === selectedAgent?.worker.id;
 
-                        return (
-                            <button
-                                key={agent.worker.id}
-                                type="button"
-                                aria-pressed={isSelected}
-                                onClick={() =>
-                                    setSelectedWorkerId(agent.worker.id)
-                                }
-                                className={`flex items-center gap-3 rounded-lg border p-3 text-left transition focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:outline-none ${isSelected ? 'border-violet-300/70 bg-violet-400/12' : 'border-white/8 bg-white/3 hover:bg-white/8'}`}
-                            >
-                                <span
-                                    className="grid size-9 place-items-center rounded-lg border border-white/10 bg-slate-950"
-                                    style={{ color: agent.color }}
-                                >
-                                    <Icon className="size-4" />
-                                </span>
-                                <span>
-                                    <span className="block text-sm font-medium text-slate-100">
-                                        {labelForRole(agent.worker.role)}
-                                    </span>
-                                    <span className="mt-0.5 block text-xs text-slate-400">
-                                        {behaviorLabel(agent.behavior)}
-                                    </span>
-                                </span>
-                                <CircleDot
-                                    className={`ml-auto size-4 ${officePresentation(agent.worker.status).textClass}`}
-                                />
-                            </button>
-                        );
-                    })}
-                </div>
+            <div className="grid gap-4 p-4 md:grid-cols-2 md:p-6 xl:grid-cols-3">
+                {displayedWorkers.map((worker) => (
+                    <AgentCard
+                        key={worker.id}
+                        projectId={projectId}
+                        worker={worker}
+                    />
+                ))}
             </div>
         </section>
     );
