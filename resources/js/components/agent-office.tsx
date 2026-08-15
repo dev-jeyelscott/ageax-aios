@@ -250,6 +250,7 @@ function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
     return (
         <div className="relative h-28 overflow-hidden rounded-lg border border-cyan-300/10 bg-[radial-gradient(circle_at_50%_35%,rgba(34,211,238,0.14),transparent_48%),linear-gradient(145deg,#0b1424,#020617)]">
             <div className="pointer-events-none absolute inset-x-8 bottom-0 h-8 rounded-full bg-cyan-300/5 blur-xl" />
+
             {visual ? (
                 <>
                     <img
@@ -257,6 +258,7 @@ function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
                         alt={visual.alt}
                         className="h-full w-full object-contain p-1.5 motion-reduce:hidden"
                     />
+
                     <div
                         role="img"
                         aria-label={`${roleLabel} ${worker.status}. Animation disabled because reduced motion is requested.`}
@@ -304,6 +306,7 @@ function AgentCard({
                     <p className="font-mono text-[10px] tracking-[0.16em] text-cyan-300 uppercase">
                         {labelForRole(worker.role)}
                     </p>
+
                     <h3 className="mt-1 truncate text-sm font-semibold text-white">
                         {agent?.name ?? 'Unbound agent'}
                     </h3>
@@ -330,12 +333,14 @@ function AgentCard({
                         {agent ? labelForHarness(agent.harness) : '—'}
                     </p>
                 </div>
+
                 <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1.5">
                     <p className="text-slate-500">Model</p>
                     <p className="mt-0.5 truncate font-medium text-slate-200">
                         {agent?.model ?? 'Harness default'}
                     </p>
                 </div>
+
                 <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1.5">
                     <p className="text-slate-500">Worker</p>
                     <p
@@ -344,6 +349,7 @@ function AgentCard({
                         {worker.status}
                     </p>
                 </div>
+
                 <div className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1.5">
                     <p className="text-slate-500">Lease</p>
                     <p className="mt-0.5 font-medium text-slate-200 capitalize">
@@ -366,6 +372,7 @@ function AgentCard({
                         <p className="font-mono text-[10px] text-cyan-300 uppercase">
                             Current task · {worker.task.status}
                         </p>
+
                         <p className="mt-1 truncate text-xs font-medium text-slate-100">
                             {worker.task.key}: {worker.task.title}
                         </p>
@@ -420,10 +427,12 @@ function Metric({
     return (
         <div className="flex min-w-24 items-center gap-2 rounded-lg border border-white/8 bg-black/20 px-2.5 py-1.5">
             <span className={`size-1.5 rounded-full ${tone}`} />
+
             <div>
                 <p className="text-sm leading-none font-semibold text-white">
                     {value}
                 </p>
+
                 <p className="mt-1 font-mono text-[9px] tracking-wide text-slate-500 uppercase">
                     {label}
                 </p>
@@ -444,6 +453,7 @@ function WorkflowPipeline({
 }) {
     const isComplete =
         taskProgress.total > 0 && taskProgress.completed === taskProgress.total;
+
     const activeIndex = workflowStageIndex(currentTask?.status, isComplete);
 
     return (
@@ -453,6 +463,7 @@ function WorkflowPipeline({
                     <p className="font-mono text-[10px] tracking-[0.15em] text-violet-300 uppercase">
                         Workflow pipeline
                     </p>
+
                     <p className="mt-0.5 text-xs text-slate-500">
                         AIOS-controlled deterministic lifecycle
                     </p>
@@ -465,6 +476,7 @@ function WorkflowPipeline({
 
             <div className="relative mt-3">
                 <div className="absolute top-2.5 right-[9%] left-[9%] h-px bg-slate-800" />
+
                 <div className="relative grid grid-cols-5 gap-1">
                     {workflowStages.map((stage, index) => {
                         const active = index === activeIndex;
@@ -488,6 +500,7 @@ function WorkflowPipeline({
                                             : ''
                                     }`}
                                 />
+
                                 <span
                                     className={`mt-1.5 truncate font-mono text-[9px] uppercase ${
                                         active
@@ -506,24 +519,11 @@ function WorkflowPipeline({
             </div>
 
             <div className="mt-3 flex min-w-0 items-center justify-between gap-3 border-t border-white/5 pt-2.5">
-                {currentTask ? (
-                    <Link
-                        href={
-                            showTask({
-                                project: currentTask.id ? undefined : 0,
-                                task: currentTask.id,
-                            }).url
-                        }
-                        className="hidden"
-                        aria-hidden="true"
-                        tabIndex={-1}
-                    />
-                ) : null}
-
                 <div className="min-w-0">
                     <p className="text-[10px] text-slate-500 uppercase">
                         Active operation
                     </p>
+
                     <p className="truncate text-xs font-medium text-slate-200">
                         {currentTask
                             ? `${currentTask.key}: ${currentTask.title}`
@@ -598,9 +598,11 @@ export function AgentOffice({
     const workingWorkers = displayedWorkers.filter(
         (worker) => worker.status === 'working',
     ).length;
+
     const boundWorkers = displayedWorkers.filter((worker) =>
         agentByWorkerId.has(worker.id),
     ).length;
+
     const attentionWorkers = displayedWorkers.filter((worker) =>
         ['recovering', 'interrupted'].includes(worker.status),
     ).length;
@@ -611,6 +613,7 @@ export function AgentOffice({
             className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-cyan-300/15 bg-[#040a14]/95 text-slate-100 shadow-[0_24px_90px_rgba(2,6,23,0.7)]"
         >
             <div className="pointer-events-none absolute -top-24 -left-16 size-56 animate-pulse rounded-full bg-cyan-400/8 blur-3xl motion-reduce:animate-none" />
+
             <div className="pointer-events-none absolute -right-24 bottom-0 size-64 animate-pulse rounded-full bg-violet-500/8 blur-3xl motion-reduce:animate-none" />
 
             <header className="relative shrink-0 border-b border-cyan-300/10 bg-[linear-gradient(110deg,rgba(8,17,31,0.98),rgba(6,14,27,0.96),rgba(8,47,73,0.42))] px-4 py-3.5">
@@ -620,12 +623,14 @@ export function AgentOffice({
                             <Activity className="size-3.5" aria-hidden="true" />
                             Live operations
                         </div>
+
                         <h2
                             id="agent-office-title"
                             className="mt-1 truncate text-xl font-semibold tracking-tight text-white"
                         >
                             AI Engineering Office
                         </h2>
+
                         <p className="mt-0.5 truncate text-xs text-slate-500">
                             {projectName} · AIOS controlled execution
                         </p>
@@ -639,6 +644,7 @@ export function AgentOffice({
                             <CircleDot className="mr-1 size-3" />
                             {projectStatus}
                         </Badge>
+
                         <Badge
                             variant="outline"
                             className="border-violet-300/20 bg-violet-400/5 font-mono text-[9px] text-violet-200"
@@ -654,11 +660,13 @@ export function AgentOffice({
                         value={workingWorkers}
                         tone="bg-emerald-400"
                     />
+
                     <Metric
                         label="bound"
                         value={boundWorkers}
                         tone="bg-cyan-400"
                     />
+
                     <Metric
                         label="attention"
                         value={attentionWorkers}
@@ -683,6 +691,7 @@ export function AgentOffice({
                     <div className="grid min-h-52 place-items-center rounded-xl border border-dashed border-slate-700 bg-slate-950/40 text-center">
                         <div>
                             <Bot className="mx-auto size-10 text-slate-600" />
+
                             <p className="mt-2 text-sm text-slate-400">
                                 No workflow workers are provisioned.
                             </p>
@@ -700,10 +709,12 @@ export function AgentOffice({
                 <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
                         <Radio className="size-3.5 text-cyan-300" />
+
                         <div>
                             <p className="font-mono text-[9px] text-slate-500 uppercase">
                                 Worker lanes
                             </p>
+
                             <p className="text-xs text-slate-200">
                                 {displayedWorkers.length} visible
                             </p>
@@ -712,10 +723,12 @@ export function AgentOffice({
 
                     <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
                         <Bot className="size-3.5 text-violet-300" />
+
                         <div>
                             <p className="font-mono text-[9px] text-slate-500 uppercase">
                                 Agents
                             </p>
+
                             <p className="text-xs text-slate-200">
                                 {boundWorkers} bound
                             </p>
@@ -724,10 +737,12 @@ export function AgentOffice({
 
                     <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
                         <CircleDot className="size-3.5 text-emerald-300" />
+
                         <div>
                             <p className="font-mono text-[9px] text-slate-500 uppercase">
                                 Roadmap
                             </p>
+
                             <p className="text-xs text-slate-200">
                                 {taskProgress.completed}/{taskProgress.total}{' '}
                                 complete
