@@ -12,7 +12,24 @@ final readonly class ClaudeCodeHarness implements AgentHarness
 {
     private const int NormalizationFailureExitCode = 1;
 
-    public function __construct(private ClaudeCodeCliRunner $runner) {}
+    private const array Models = [
+        'claude-fable-5',
+        'claude-opus-5',
+        'claude-sonnet-5',
+        'claude-haiku-4-5-20251001',
+    ];
+
+    private const array ReasoningSettings = [
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+    ];
+
+    public function __construct(
+        private ClaudeCodeCliRunner $runner,
+    ) {}
 
     public function identifier(): AgentHarnessIdentifier
     {
@@ -22,9 +39,23 @@ final readonly class ClaudeCodeHarness implements AgentHarness
     public function capabilities(): HarnessCapabilities
     {
         return new HarnessCapabilities(
-            models: [],
-            reasoningSettings: [],
-            executionOptions: ['ephemeral', 'streaming', 'heartbeat'],
+            models: self::Models,
+            reasoningSettings: self::ReasoningSettings,
+            executionOptions: [
+                'ephemeral',
+                'streaming',
+                'heartbeat',
+            ],
+            configurationFields: [
+                'model',
+                'reasoning_setting',
+            ],
+            reasoningSettingsByModel: [
+                'claude-fable-5' => self::ReasoningSettings,
+                'claude-opus-5' => self::ReasoningSettings,
+                'claude-sonnet-5' => self::ReasoningSettings,
+                'claude-haiku-4-5-20251001' => [],
+            ],
         );
     }
 
@@ -35,6 +66,11 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
     ): NormalizedExecutionResult {
+        $this->capabilities()->assertSupports(
+            $agent,
+            $this->identifier(),
+        );
+
         $execution = $this->runner->run(
             $project,
             $agent,
@@ -43,7 +79,10 @@ final readonly class ClaudeCodeHarness implements AgentHarness
             $onHeartbeat,
         );
 
-        if ($execution['failure_type'] !== null && $execution['failure_type'] !== 'process_failure') {
+        if (
+            $execution['failure_type'] !== null
+            && $execution['failure_type'] !== 'process_failure'
+        ) {
             return $this->failure(
                 exitCode: $execution['exit_code'],
                 message: $execution['error_output'],
@@ -55,13 +94,18 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         $result = $stream['result'];
 
         if ($execution['exit_code'] !== 0) {
-            $failureType = $this->isAuthenticationFailure($stream['api_error_category'])
+            $failureType = $this->isAuthenticationFailure(
+                $stream['api_error_category'],
+            )
                 ? 'authentication_unavailable'
                 : 'process_failure';
 
-            $message = $failureType === 'authentication_unavailable'
+            $message =
+                $failureType === 'authentication_unavailable'
                 ? 'Claude Code authentication failed. Run "claude auth login" outside AIOS using the same OS user, then retry.'
-                : 'Claude Code process exited with code '.$execution['exit_code'].'.';
+                : 'Claude Code process exited with code '
+                    .$execution['exit_code']
+                    .'.';
 
             return $this->failure(
                 exitCode: $execution['exit_code'],
@@ -101,14 +145,22 @@ final readonly class ClaudeCodeHarness implements AgentHarness
             );
         }
 
-        if ($subtype !== 'success' || ($result['is_error'] ?? false) === true) {
-            $failureType = $this->isAuthenticationFailure($stream['api_error_category'])
+        if (
+            $subtype !== 'success'
+            || ($result['is_error'] ?? false) === true
+        ) {
+            $failureType = $this->isAuthenticationFailure(
+                $stream['api_error_category'],
+            )
                 ? 'authentication_unavailable'
                 : 'provider_failure';
 
-            $message = $failureType === 'authentication_unavailable'
+            $message =
+                $failureType === 'authentication_unavailable'
                 ? 'Claude Code authentication failed. Run "claude auth login" outside AIOS using the same OS user, then retry.'
-                : 'Claude Code ended with result subtype ['.$subtype.']; the AIOS workflow was not advanced.';
+                : 'Claude Code ended with result subtype ['
+                    .$subtype
+                    .']; the AIOS workflow was not advanced.';
 
             return $this->failure(
                 exitCode: self::NormalizationFailureExitCode,
@@ -141,7 +193,9 @@ final readonly class ClaudeCodeHarness implements AgentHarness
             usage: is_array($result['usage'] ?? null)
                 ? $result['usage']
                 : null,
-            providerMetadata: $this->providerMetadata($result),
+            providerMetadata: $this->providerMetadata(
+                $result,
+            ),
         );
     }
 
@@ -195,7 +249,9 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 && is_string($event['error'] ?? null)
             ) {
                 $apiErrorCategory = $event['error'];
-                $apiErrorStatus = is_int($event['error_status'] ?? null)
+                $apiErrorStatus = is_int(
+                    $event['error_status'] ?? null,
+                )
                     ? $event['error_status']
                     : null;
             }
@@ -232,7 +288,8 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 $resolvedExternalRunId === null
                 && is_string($result['session_id'] ?? null)
             ) {
-                $resolvedExternalRunId = $result['session_id'];
+                $resolvedExternalRunId =
+                    $result['session_id'];
             }
 
             if (is_array($result['usage'] ?? null)) {
@@ -253,10 +310,14 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 'failure_type' => $failureType,
                 ...($apiErrorCategory === null
                     ? []
-                    : ['api_error_category' => $apiErrorCategory]),
+                    : [
+                        'api_error_category' => $apiErrorCategory,
+                    ]),
                 ...($apiErrorStatus === null
                     ? []
-                    : ['api_error_status' => $apiErrorStatus]),
+                    : [
+                        'api_error_status' => $apiErrorStatus,
+                    ]),
             ],
         );
     }
@@ -298,11 +359,15 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         return $metadata;
     }
 
-    private function isAuthenticationFailure(?string $category): bool
-    {
+    private function isAuthenticationFailure(
+        ?string $category,
+    ): bool {
         return in_array(
             $category,
-            ['authentication_failed', 'oauth_org_not_allowed'],
+            [
+                'authentication_failed',
+                'oauth_org_not_allowed',
+            ],
             true,
         );
     }

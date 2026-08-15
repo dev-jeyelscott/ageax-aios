@@ -10,13 +10,18 @@ use App\Services\AgentHarnessResolver;
 use App\Services\ClaudeCodeHarness;
 use Illuminate\Process\PendingProcess;
 use Illuminate\Support\Facades\Process;
+use ReflectionProperty;
 
 function claudeCodeProject(): Project
 {
-    config()->set('aios.workspace_root', dirname(base_path()));
+    config()->set(
+        'aios.workspace_root',
+        dirname(base_path()),
+    );
 
     return Project::create([
-        'name' => 'Claude Code '.fake()->unique()->uuid(),
+        'name' => 'Claude Code '
+            .fake()->unique()->uuid(),
         'path' => base_path(),
         'status' => ProjectStatus::Running,
         'git_status' => 'clean',
@@ -29,15 +34,18 @@ function claudeCodeAgent(
     AgentRole $role = AgentRole::Coder,
     array $attributes = [],
 ): Agent {
-    return Agent::factory()->for($project)->create([
-        'role' => $role,
-        'harness' => AgentHarnessIdentifier::ClaudeCode,
-        ...$attributes,
-    ]);
+    return Agent::factory()
+        ->for($project)
+        ->create([
+            'role' => $role,
+            'harness' => AgentHarnessIdentifier::ClaudeCode,
+            ...$attributes,
+        ]);
 }
 
-function claudeCodeSuccessStream(string $result = 'completed'): string
-{
+function claudeCodeSuccessStream(
+    string $result = 'completed',
+): string {
     return implode("\n", [
         json_encode([
             'type' => 'system',
@@ -88,18 +96,81 @@ test('identifies and resolves the claude code harness', function () {
     $project = claudeCodeProject();
     $agent = claudeCodeAgent($project);
 
-    $harness = app(AgentHarnessResolver::class)->resolve($agent);
+    $harness = app(
+        AgentHarnessResolver::class,
+    )->resolve($agent);
 
     expect($harness)
         ->toBeInstanceOf(ClaudeCodeHarness::class)
         ->and($harness->identifier())
         ->toBe(AgentHarnessIdentifier::ClaudeCode)
         ->and($harness->capabilities()->models)
-        ->toBe([])
-        ->and($harness->capabilities()->reasoningSettings)
-        ->toBe([])
-        ->and($harness->capabilities()->executionOptions)
-        ->toBe(['ephemeral', 'streaming', 'heartbeat']);
+        ->toBe([
+            'claude-fable-5',
+            'claude-opus-5',
+            'claude-sonnet-5',
+            'claude-haiku-4-5-20251001',
+        ])
+        ->and(
+            $harness
+                ->capabilities()
+                ->reasoningSettings,
+        )
+        ->toBe([
+            'low',
+            'medium',
+            'high',
+            'xhigh',
+            'max',
+        ])
+        ->and(
+            $harness
+                ->capabilities()
+                ->configurationFields,
+        )
+        ->toBe([
+            'model',
+            'reasoning_setting',
+        ])
+        ->and(
+            $harness
+                ->capabilities()
+                ->reasoningSettingsByModel,
+        )
+        ->toBe([
+            'claude-fable-5' => [
+                'low',
+                'medium',
+                'high',
+                'xhigh',
+                'max',
+            ],
+            'claude-opus-5' => [
+                'low',
+                'medium',
+                'high',
+                'xhigh',
+                'max',
+            ],
+            'claude-sonnet-5' => [
+                'low',
+                'medium',
+                'high',
+                'xhigh',
+                'max',
+            ],
+            'claude-haiku-4-5-20251001' => [],
+        ])
+        ->and(
+            $harness
+                ->capabilities()
+                ->executionOptions,
+        )
+        ->toBe([
+            'ephemeral',
+            'streaming',
+            'heartbeat',
+        ]);
 });
 
 test('executes every core workflow role through claude code', function (AgentRole $role) {
@@ -108,9 +179,14 @@ test('executes every core workflow role through claude code', function (AgentRol
     );
 
     $project = claudeCodeProject();
-    $agent = claudeCodeAgent($project, $role);
+    $agent = claudeCodeAgent(
+        $project,
+        $role,
+    );
 
-    $result = app(AgentHarnessResolver::class)
+    $result = app(
+        AgentHarnessResolver::class,
+    )
         ->resolve($agent)
         ->execute(
             $project,
@@ -130,16 +206,32 @@ test('executes every core workflow role through claude code', function (AgentRol
 
 test('uses the official non interactive contract with isolated environment and stdin prompt input', function () {
     $originalDbPassword = getenv('DB_PASSWORD');
-    $originalApiToken = getenv('AIOS_TEST_API_TOKEN');
-    $originalAnthropicApiKey = getenv('ANTHROPIC_API_KEY');
-    $originalAnthropicAuthToken = getenv('ANTHROPIC_AUTH_TOKEN');
-    $originalClaudeOauthToken = getenv('CLAUDE_CODE_OAUTH_TOKEN');
+    $originalApiToken = getenv(
+        'AIOS_TEST_API_TOKEN',
+    );
+    $originalAnthropicApiKey = getenv(
+        'ANTHROPIC_API_KEY',
+    );
+    $originalAnthropicAuthToken = getenv(
+        'ANTHROPIC_AUTH_TOKEN',
+    );
+    $originalClaudeOauthToken = getenv(
+        'CLAUDE_CODE_OAUTH_TOKEN',
+    );
 
     putenv('DB_PASSWORD=must-not-reach-claude');
-    putenv('AIOS_TEST_API_TOKEN=must-not-reach-claude');
-    putenv('ANTHROPIC_API_KEY=must-not-reach-claude');
-    putenv('ANTHROPIC_AUTH_TOKEN=must-not-reach-claude');
-    putenv('CLAUDE_CODE_OAUTH_TOKEN=must-not-reach-claude');
+    putenv(
+        'AIOS_TEST_API_TOKEN=must-not-reach-claude',
+    );
+    putenv(
+        'ANTHROPIC_API_KEY=must-not-reach-claude',
+    );
+    putenv(
+        'ANTHROPIC_AUTH_TOKEN=must-not-reach-claude',
+    );
+    putenv(
+        'CLAUDE_CODE_OAUTH_TOKEN=must-not-reach-claude',
+    );
 
     fakeClaudeCodeExecution(
         claudeCodeSuccessStream(),
@@ -149,12 +241,13 @@ test('uses the official non interactive contract with isolated environment and s
     $agent = claudeCodeAgent(
         $project,
         attributes: [
-            'model' => 'sonnet',
-            'reasoning_setting' => 'high',
+            'model' => 'claude-sonnet-5',
+            'reasoning_setting' => 'xhigh',
         ],
     );
 
-    $prompt = 'Implement the task without exposing secrets.';
+    $prompt =
+        'Implement the task without exposing secrets.';
 
     try {
         app(ClaudeCodeHarness::class)->execute(
@@ -164,23 +257,33 @@ test('uses the official non interactive contract with isolated environment and s
         );
 
         Process::assertRan(
-            function (PendingProcess $process) use ($prompt): bool {
-                $command = (new ReflectionProperty(
-                    $process,
-                    'command',
-                ))->getValue($process);
+            function (
+                PendingProcess $process,
+            ) use ($prompt): bool {
+                $command = (
+                    new ReflectionProperty(
+                        $process,
+                        'command',
+                    )
+                )->getValue($process);
 
                 if (
                     ! is_array($command)
-                    || ! in_array('-p', $command, true)
+                    || ! in_array(
+                        '-p',
+                        $command,
+                        true,
+                    )
                 ) {
                     return false;
                 }
 
-                $input = (new ReflectionProperty(
-                    $process,
-                    'input',
-                ))->getValue($process);
+                $input = (
+                    new ReflectionProperty(
+                        $process,
+                        'input',
+                    )
+                )->getValue($process);
 
                 return $command[0] === '/usr/bin/env'
                     && $command[1] === '-i'
@@ -195,76 +298,160 @@ test('uses the official non interactive contract with isolated environment and s
                         true,
                     )
                     && in_array(
-                        config('aios.claude_code_binary'),
+                        config(
+                            'aios.claude_code_binary',
+                        ),
                         $command,
                         true,
                     )
-                    && in_array('--safe-mode', $command, true)
-                    && in_array('--no-session-persistence', $command, true)
-                    && in_array('--no-chrome', $command, true)
-                    && in_array('--strict-mcp-config', $command, true)
-                    && in_array('stream-json', $command, true)
-                    && in_array('--include-partial-messages', $command, true)
-                    && in_array('dontAsk', $command, true)
-                    && in_array('--model', $command, true)
-                    && in_array('sonnet', $command, true)
-                    && in_array('--effort', $command, true)
-                    && in_array('high', $command, true)
-                    && ! in_array('--bare', $command, true)
-                    && ! in_array($prompt, $command, true)
+                    && in_array(
+                        '--safe-mode',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        '--no-session-persistence',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        '--no-chrome',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        '--strict-mcp-config',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        'stream-json',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        '--include-partial-messages',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        'dontAsk',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        '--model',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        'claude-sonnet-5',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        '--effort',
+                        $command,
+                        true,
+                    )
+                    && in_array(
+                        'xhigh',
+                        $command,
+                        true,
+                    )
+                    && ! in_array(
+                        '--bare',
+                        $command,
+                        true,
+                    )
+                    && ! in_array(
+                        $prompt,
+                        $command,
+                        true,
+                    )
                     && $input === $prompt
-                    && ! collect($command)->contains(
-                        fn (string $argument): bool => str_starts_with(
-                            $argument,
-                            'DB_',
-                        ),
-                    )
-                    && ! collect($command)->contains(
-                        fn (string $argument): bool => str_starts_with(
-                            $argument,
-                            'AIOS_TEST_API_TOKEN=',
-                        ),
-                    )
-                    && ! collect($command)->contains(
-                        fn (string $argument): bool => str_starts_with(
-                            $argument,
-                            'ANTHROPIC_API_KEY=',
-                        ),
-                    )
-                    && ! collect($command)->contains(
-                        fn (string $argument): bool => str_starts_with(
-                            $argument,
-                            'ANTHROPIC_AUTH_TOKEN=',
-                        ),
-                    )
-                    && ! collect($command)->contains(
-                        fn (string $argument): bool => str_starts_with(
-                            $argument,
-                            'CLAUDE_CODE_OAUTH_TOKEN=',
-                        ),
-                    );
+                    && ! collect($command)
+                        ->contains(
+                            fn (
+                                string $argument,
+                            ): bool => str_starts_with(
+                                $argument,
+                                'DB_',
+                            ),
+                        )
+                    && ! collect($command)
+                        ->contains(
+                            fn (
+                                string $argument,
+                            ): bool => str_starts_with(
+                                $argument,
+                                'AIOS_TEST_API_TOKEN=',
+                            ),
+                        )
+                    && ! collect($command)
+                        ->contains(
+                            fn (
+                                string $argument,
+                            ): bool => str_starts_with(
+                                $argument,
+                                'ANTHROPIC_API_KEY=',
+                            ),
+                        )
+                    && ! collect($command)
+                        ->contains(
+                            fn (
+                                string $argument,
+                            ): bool => str_starts_with(
+                                $argument,
+                                'ANTHROPIC_AUTH_TOKEN=',
+                            ),
+                        )
+                    && ! collect($command)
+                        ->contains(
+                            fn (
+                                string $argument,
+                            ): bool => str_starts_with(
+                                $argument,
+                                'CLAUDE_CODE_OAUTH_TOKEN=',
+                            ),
+                        );
             },
         );
     } finally {
         $originalDbPassword === false
             ? putenv('DB_PASSWORD')
-            : putenv('DB_PASSWORD='.$originalDbPassword);
+            : putenv(
+                'DB_PASSWORD='
+                .$originalDbPassword,
+            );
 
         $originalApiToken === false
             ? putenv('AIOS_TEST_API_TOKEN')
-            : putenv('AIOS_TEST_API_TOKEN='.$originalApiToken);
+            : putenv(
+                'AIOS_TEST_API_TOKEN='
+                .$originalApiToken,
+            );
 
         $originalAnthropicApiKey === false
             ? putenv('ANTHROPIC_API_KEY')
-            : putenv('ANTHROPIC_API_KEY='.$originalAnthropicApiKey);
+            : putenv(
+                'ANTHROPIC_API_KEY='
+                .$originalAnthropicApiKey,
+            );
 
         $originalAnthropicAuthToken === false
             ? putenv('ANTHROPIC_AUTH_TOKEN')
-            : putenv('ANTHROPIC_AUTH_TOKEN='.$originalAnthropicAuthToken);
+            : putenv(
+                'ANTHROPIC_AUTH_TOKEN='
+                .$originalAnthropicAuthToken,
+            );
 
         $originalClaudeOauthToken === false
             ? putenv('CLAUDE_CODE_OAUTH_TOKEN')
-            : putenv('CLAUDE_CODE_OAUTH_TOKEN='.$originalClaudeOauthToken);
+            : putenv(
+                'CLAUDE_CODE_OAUTH_TOKEN='
+                .$originalClaudeOauthToken,
+            );
     }
 });
 
@@ -274,7 +461,10 @@ test('limits non coder agents to inspection oriented tools', function (AgentRole
     );
 
     $project = claudeCodeProject();
-    $agent = claudeCodeAgent($project, $role);
+    $agent = claudeCodeAgent(
+        $project,
+        $role,
+    );
 
     app(ClaudeCodeHarness::class)->execute(
         $project,
@@ -282,33 +472,49 @@ test('limits non coder agents to inspection oriented tools', function (AgentRole
         'Inspect the project.',
     );
 
-    Process::assertRan(function (PendingProcess $process): bool {
-        $command = (new ReflectionProperty(
-            $process,
-            'command',
-        ))->getValue($process);
+    Process::assertRan(
+        function (PendingProcess $process): bool {
+            $command = (
+                new ReflectionProperty(
+                    $process,
+                    'command',
+                )
+            )->getValue($process);
 
-        if (
-            ! is_array($command)
-            || ! in_array('-p', $command, true)
-        ) {
-            return false;
-        }
+            if (
+                ! is_array($command)
+                || ! in_array(
+                    '-p',
+                    $command,
+                    true,
+                )
+            ) {
+                return false;
+            }
 
-        $toolsIndex = array_search('--tools', $command, true);
-        $allowedIndex = array_search(
-            '--allowedTools',
-            $command,
-            true,
-        );
+            $toolsIndex = array_search(
+                '--tools',
+                $command,
+                true,
+            );
+            $allowedIndex = array_search(
+                '--allowedTools',
+                $command,
+                true,
+            );
 
-        return is_int($toolsIndex)
-            && is_int($allowedIndex)
-            && ($command[$toolsIndex + 1] ?? null)
-                === 'Bash,Read,Glob,Grep'
-            && ($command[$allowedIndex + 1] ?? null)
-                === 'Read,Glob,Grep';
-    });
+            return is_int($toolsIndex)
+                && is_int($allowedIndex)
+                && (
+                    $command[$toolsIndex + 1]
+                    ?? null
+                ) === 'Bash,Read,Glob,Grep'
+                && (
+                    $command[$allowedIndex + 1]
+                    ?? null
+                ) === 'Read,Glob,Grep';
+        },
+    );
 })->with([
     'project manager' => AgentRole::ProjectManager,
     'reviewer' => AgentRole::Reviewer,
@@ -331,58 +537,81 @@ test('allows coder implementation tools while denying direct git lifecycle mutat
         'Implement the task.',
     );
 
-    Process::assertRan(function (PendingProcess $process): bool {
-        $command = (new ReflectionProperty(
-            $process,
-            'command',
-        ))->getValue($process);
+    Process::assertRan(
+        function (PendingProcess $process): bool {
+            $command = (
+                new ReflectionProperty(
+                    $process,
+                    'command',
+                )
+            )->getValue($process);
 
-        if (
-            ! is_array($command)
-            || ! in_array('-p', $command, true)
-        ) {
-            return false;
-        }
+            if (
+                ! is_array($command)
+                || ! in_array(
+                    '-p',
+                    $command,
+                    true,
+                )
+            ) {
+                return false;
+            }
 
-        $toolsIndex = array_search('--tools', $command, true);
-        $allowedIndex = array_search(
-            '--allowedTools',
-            $command,
-            true,
-        );
-        $deniedIndex = array_search(
-            '--disallowedTools',
-            $command,
-            true,
-        );
-
-        $denied = is_int($deniedIndex)
-            ? (string) ($command[$deniedIndex + 1] ?? '')
-            : '';
-
-        return is_int($toolsIndex)
-            && is_int($allowedIndex)
-            && ($command[$toolsIndex + 1] ?? null)
-                === 'Bash,Edit,Write,Read,Glob,Grep'
-            && ($command[$allowedIndex + 1] ?? null)
-                === 'Bash,Edit,Write,Read,Glob,Grep'
-            && str_contains(
-                $denied,
-                'Bash(git commit *)',
-            )
-            && str_contains(
-                $denied,
-                'Bash(git push *)',
-            )
-            && str_contains(
-                $denied,
-                'Bash(git reset *)',
-            )
-            && str_contains(
-                $denied,
-                'Bash(git stash *)',
+            $toolsIndex = array_search(
+                '--tools',
+                $command,
+                true,
             );
-    });
+            $allowedIndex = array_search(
+                '--allowedTools',
+                $command,
+                true,
+            );
+            $deniedIndex = array_search(
+                '--disallowedTools',
+                $command,
+                true,
+            );
+
+            $denied = is_int($deniedIndex)
+                ? (string) (
+                    $command[$deniedIndex + 1]
+                    ?? ''
+                )
+                : '';
+
+            return is_int($toolsIndex)
+                && is_int($allowedIndex)
+                && (
+                    $command[$toolsIndex + 1]
+                    ?? null
+                )
+                    ===
+                    'Bash,Edit,Write,Read,Glob,Grep'
+                && (
+                    $command[$allowedIndex + 1]
+                    ?? null
+                )
+                    ===
+                    'Bash,Edit,Write,Read,Glob,Grep'
+                && str_contains(
+                    $denied,
+                    'Bash(git commit *)',
+                )
+                && str_contains(
+                    $denied,
+                    'Bash(git push *)',
+                )
+                && str_contains(
+                    $denied,
+                    'Bash(git reset *)',
+                )
+                && str_contains(
+                    $denied,
+                    'Bash(git stash *)',
+                );
+        },
+    );
 });
 
 test('streams claude output and renews heartbeats', function () {
@@ -398,7 +627,9 @@ test('streams claude output and renews heartbeats', function () {
                 exitCode: 0,
             ),
             Process::describe()
-                ->output(claudeCodeSuccessStream())
+                ->output(
+                    claudeCodeSuccessStream(),
+                )
                 ->exitCode(0)
                 ->iterations(5),
         ]),
@@ -409,7 +640,9 @@ test('streams claude output and renews heartbeats', function () {
     $streamed = [];
     $heartbeats = 0;
 
-    $result = app(ClaudeCodeHarness::class)->execute(
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
         $project,
         $agent,
         'Implement the task.',
@@ -442,7 +675,9 @@ test('normalizes claude result metadata without retaining raw provider payloads'
     $project = claudeCodeProject();
     $agent = claudeCodeAgent($project);
 
-    $result = app(ClaudeCodeHarness::class)->execute(
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
         $project,
         $agent,
         'Review the task.',
@@ -484,7 +719,9 @@ test('fails safely when claude code binary is missing', function () {
     $project = claudeCodeProject();
     $agent = claudeCodeAgent($project);
 
-    $result = app(ClaudeCodeHarness::class)->execute(
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
         $project,
         $agent,
         'Implement the task.',
@@ -493,9 +730,13 @@ test('fails safely when claude code binary is missing', function () {
     expect($result->exitCode)
         ->toBe(127)
         ->and($result->errorOutput)
-        ->toContain('Claude Code is not installed')
+        ->toContain(
+            'Claude Code is not installed',
+        )
         ->and($result->errorOutput)
-        ->not->toContain('sensitive shell detail')
+        ->not->toContain(
+            'sensitive shell detail',
+        )
         ->and($result->providerMetadata)
         ->toBe([
             'provider' => 'claude_code',
@@ -515,7 +756,9 @@ test('fails safely when claude code authentication is unavailable', function () 
     $project = claudeCodeProject();
     $agent = claudeCodeAgent($project);
 
-    $result = app(ClaudeCodeHarness::class)->execute(
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
         $project,
         $agent,
         'Implement the task.',
@@ -526,9 +769,18 @@ test('fails safely when claude code authentication is unavailable', function () 
         ->and($result->errorOutput)
         ->toContain('claude auth login')
         ->and($result->errorOutput)
-        ->not->toContain('sensitive auth detail')
-        ->and($result->providerMetadata['failure_type'])
-        ->toBe('authentication_unavailable');
+        ->not->toContain(
+            'sensitive auth detail',
+        )
+        ->and(
+            $result
+                ->providerMetadata[
+                    'failure_type'
+                ],
+        )
+        ->toBe(
+            'authentication_unavailable',
+        );
 });
 
 test('normalizes non zero process failures without leaking stderr', function () {
@@ -541,7 +793,9 @@ test('normalizes non zero process failures without leaking stderr', function () 
     $project = claudeCodeProject();
     $agent = claudeCodeAgent($project);
 
-    $result = app(ClaudeCodeHarness::class)->execute(
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
         $project,
         $agent,
         'Implement the task.',
@@ -552,10 +806,19 @@ test('normalizes non zero process failures without leaking stderr', function () 
         ->and($result->output)
         ->toBe('')
         ->and($result->errorOutput)
-        ->toBe('Claude Code process exited with code 2.')
+        ->toBe(
+            'Claude Code process exited with code 2.',
+        )
         ->and($result->errorOutput)
-        ->not->toContain('provider secret detail')
-        ->and($result->providerMetadata['failure_type'])
+        ->not->toContain(
+            'provider secret detail',
+        )
+        ->and(
+            $result
+                ->providerMetadata[
+                    'failure_type'
+                ],
+        )
         ->toBe('process_failure');
 });
 
@@ -593,7 +856,9 @@ test('normalizes provider result failures and safe api error metadata', function
     $project = claudeCodeProject();
     $agent = claudeCodeAgent($project);
 
-    $result = app(ClaudeCodeHarness::class)->execute(
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
         $project,
         $agent,
         'Implement the task.',
@@ -604,17 +869,38 @@ test('normalizes provider result failures and safe api error metadata', function
         ->and($result->externalRunId)
         ->toBe('claude-session-error')
         ->and($result->errorOutput)
-        ->toContain('error_during_execution')
-        ->and(json_encode(
-            $result->providerMetadata,
-            JSON_THROW_ON_ERROR,
-        ))
-        ->not->toContain('secret provider diagnostic')
-        ->and($result->providerMetadata['failure_type'])
+        ->toContain(
+            'error_during_execution',
+        )
+        ->and(
+            json_encode(
+                $result->providerMetadata,
+                JSON_THROW_ON_ERROR,
+            ),
+        )
+        ->not->toContain(
+            'secret provider diagnostic',
+        )
+        ->and(
+            $result
+                ->providerMetadata[
+                    'failure_type'
+                ],
+        )
         ->toBe('provider_failure')
-        ->and($result->providerMetadata['api_error_category'])
+        ->and(
+            $result
+                ->providerMetadata[
+                    'api_error_category'
+                ],
+        )
         ->toBe('rate_limit')
-        ->and($result->providerMetadata['api_error_status'])
+        ->and(
+            $result
+                ->providerMetadata[
+                    'api_error_status'
+                ],
+        )
         ->toBe(429);
 });
 
@@ -652,7 +938,9 @@ test('returns actionable authentication evidence when runtime oauth fails', func
     $project = claudeCodeProject();
     $agent = claudeCodeAgent($project);
 
-    $result = app(ClaudeCodeHarness::class)->execute(
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
         $project,
         $agent,
         'Implement the task.',
@@ -660,26 +948,51 @@ test('returns actionable authentication evidence when runtime oauth fails', func
 
     expect($result->errorOutput)
         ->toContain('claude auth login')
-        ->and($result->providerMetadata['failure_type'])
-        ->toBe('authentication_unavailable')
-        ->and($result->providerMetadata['api_error_category'])
+        ->and(
+            $result
+                ->providerMetadata[
+                    'failure_type'
+                ],
+        )
+        ->toBe(
+            'authentication_unavailable',
+        )
+        ->and(
+            $result
+                ->providerMetadata[
+                    'api_error_category'
+                ],
+        )
         ->toBe('authentication_failed')
-        ->and($result->providerMetadata['api_error_status'])
+        ->and(
+            $result
+                ->providerMetadata[
+                    'api_error_status'
+                ],
+        )
         ->toBe(401)
-        ->and(json_encode(
-            $result->providerMetadata,
-            JSON_THROW_ON_ERROR,
-        ))
-        ->not->toContain('expired secret credential detail');
+        ->and(
+            json_encode(
+                $result->providerMetadata,
+                JSON_THROW_ON_ERROR,
+            ),
+        )
+        ->not->toContain(
+            'expired secret credential detail',
+        );
 });
 
 test('rejects malformed successful stream output', function () {
-    fakeClaudeCodeExecution("{not-json}\n");
+    fakeClaudeCodeExecution(
+        "{not-json}\n",
+    );
 
     $project = claudeCodeProject();
     $agent = claudeCodeAgent($project);
 
-    $result = app(ClaudeCodeHarness::class)->execute(
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
         $project,
         $agent,
         'Implement the task.',
@@ -690,8 +1003,15 @@ test('rejects malformed successful stream output', function () {
         ->and($result->output)
         ->toBe('')
         ->and($result->errorOutput)
-        ->toBe('Claude Code returned malformed stream output.')
-        ->and($result->providerMetadata['failure_type'])
+        ->toBe(
+            'Claude Code returned malformed stream output.',
+        )
+        ->and(
+            $result
+                ->providerMetadata[
+                    'failure_type'
+                ],
+        )
         ->toBe('malformed_output');
 });
 
@@ -703,14 +1023,17 @@ test('converts execution timeout into normalized audit evidence without network 
 
     expect($binary)->not->toBeFalse();
 
-    file_put_contents($binary, <<<'SH'
+    file_put_contents(
+        $binary,
+        <<<'SH'
 #!/bin/sh
 if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
     printf '%s\n' '{"loggedIn":true}'
     exit 0
 fi
 sleep 2
-SH);
+SH,
+    );
 
     chmod($binary, 0700);
 
@@ -727,7 +1050,9 @@ SH);
         $project = claudeCodeProject();
         $agent = claudeCodeAgent($project);
 
-        $result = app(ClaudeCodeHarness::class)->execute(
+        $result = app(
+            ClaudeCodeHarness::class,
+        )->execute(
             $project,
             $agent,
             'Implement the task.',
@@ -737,7 +1062,12 @@ SH);
             ->toBe(124)
             ->and($result->errorOutput)
             ->toContain('execution timeout')
-            ->and($result->providerMetadata['failure_type'])
+            ->and(
+                $result
+                    ->providerMetadata[
+                        'failure_type'
+                    ],
+            )
             ->toBe('timeout');
     } finally {
         @unlink($binary);
@@ -745,7 +1075,8 @@ SH);
 });
 
 test('refuses to execute for a persisted project path outside the workspace', function () {
-    $workspace = sys_get_temp_dir()
+    $workspace =
+        sys_get_temp_dir()
         .'/aios-claude-safe-'
         .fake()->uuid();
 
@@ -773,14 +1104,18 @@ test('refuses to execute for a persisted project path outside the workspace', fu
 
     try {
         expect(
-            fn () => app(ClaudeCodeHarness::class)->execute(
+            fn () => app(
+                ClaudeCodeHarness::class,
+            )->execute(
                 $project,
                 $agent,
                 'Implement the task.',
             ),
         )->toThrow(UnsafeProjectPath::class);
 
-        Process::assertNotRan(fn (): bool => true);
+        Process::assertNotRan(
+            fn (): bool => true,
+        );
     } finally {
         @rmdir($workspace);
     }
