@@ -34,6 +34,15 @@ test('project agents persist independently from agent worker runtime state', fun
         ->and(Schema::hasColumn('agents', 'token'))->toBeFalse();
 });
 
+test('agent rows cannot exist without an owning project', function () {
+    expect(fn () => Agent::query()->create([
+        'name' => 'Global Coder',
+        'role' => AgentRole::Coder,
+        'harness' => AgentHarness::Codex,
+        'enabled' => true,
+    ]))->toThrow(QueryException::class);
+});
+
 test('agent names are unique only within their owning project', function () {
     $firstProject = createAgentPersistenceProject('First agent project');
     $secondProject = createAgentPersistenceProject('Second agent project');
