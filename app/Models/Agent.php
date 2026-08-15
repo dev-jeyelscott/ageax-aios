@@ -53,7 +53,7 @@ class Agent extends Model
                 throw new LogicException('Agent project ownership cannot be changed.');
             }
 
-            $currentVersion = (int) $agent->getOriginal('configuration_version');
+            $currentVersion = max(1, (int) $agent->getOriginal('configuration_version'));
             $agent->configuration_version = $agent->isDirty(self::VERSIONED_ATTRIBUTES)
                 ? $currentVersion + 1
                 : $currentVersion;
