@@ -8,8 +8,6 @@ use App\Models\Project;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
-use LogicException;
-use ValueError;
 
 function createAgentPersistenceProject(string $name): Project
 {
