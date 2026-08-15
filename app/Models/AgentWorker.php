@@ -11,9 +11,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['project_id', 'role', 'status', 'worker_instance_id', 'lease_id', 'last_heartbeat_at', 'lease_expires_at', 'process_id', 'started_at', 'stopped_at'])]
+#[Fillable(['project_id', 'role', 'agent_id', 'status', 'worker_instance_id', 'lease_id', 'last_heartbeat_at', 'lease_expires_at', 'process_id', 'started_at', 'stopped_at'])]
 /**
  * @property AgentRole $role
+ * @property ?int $agent_id
  * @property ?CarbonImmutable $last_heartbeat_at
  * @property ?CarbonImmutable $lease_expires_at
  * @property ?CarbonImmutable $started_at
@@ -33,6 +34,12 @@ class AgentWorker extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /** @return BelongsTo<Agent, $this> */
+    public function agent(): BelongsTo
+    {
+        return $this->belongsTo(Agent::class);
     }
 
     /** @return HasMany<AgentRun, $this> */

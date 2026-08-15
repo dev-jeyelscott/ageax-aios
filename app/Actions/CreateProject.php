@@ -60,7 +60,9 @@ class CreateProject
             $this->agentProvisioner->handle($project);
 
             foreach ([AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer] as $role) {
-                AgentWorker::create(['project_id' => $project->id, 'role' => $role, 'status' => 'idle']);
+                $agent = $project->agents()->where('role', $role)->where('enabled', true)->orderBy('id')->firstOrFail();
+
+                AgentWorker::create(['project_id' => $project->id, 'role' => $role, 'agent_id' => $agent->id, 'status' => 'idle']);
             }
 
             $this->audit->record($existing ? 'project.registered' : 'project.created', ['path' => $projectPath], $project);
