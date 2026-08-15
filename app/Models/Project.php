@@ -49,6 +49,12 @@ class Project extends Model
         return $this->hasMany(Agent::class);
     }
 
+    /** @return HasMany<Skill, $this> */
+    public function skills(): HasMany
+    {
+        return $this->hasMany(Skill::class);
+    }
+
     /** @return HasMany<AgentWorker, $this> */
     public function workers(): HasMany
     {

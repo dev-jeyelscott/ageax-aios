@@ -4,11 +4,14 @@ namespace App\Models;
 
 use App\AgentHarness;
 use App\AgentRole;
+use App\Concerns\RejectsSecretMaterial;
 use Database\Factories\AgentFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Support\Collection;
 use LogicException;
 
 #[Fillable(['project_id', 'name', 'role', 'harness', 'model', 'reasoning_setting', 'default_context', 'enabled'])]
@@ -22,6 +25,8 @@ class Agent extends Model
 {
     /** @use HasFactory<AgentFactory> */
     use HasFactory;
+
+    use RejectsSecretMaterial;
 
     private const array VERSIONED_ATTRIBUTES = [
         'name',
@@ -76,6 +81,22 @@ class Agent extends Model
         return $this->belongsTo(Project::class);
     }
 
+    /** @return BelongsToMany<Skill, $this, AgentSkill> */
+    public function skills(): BelongsToMany
+    {
+        return $this->belongsToMany(Skill::class)
+            ->using(AgentSkill::class)
+            ->withPivot('position')
+            ->withTimestamps()
+            ->orderByPivot('position');
+    }
+
+    /** @return Collection<int, Skill> */
+    public function effectiveSkills(): Collection
+    {
+        return $this->skills()->where('skills.enabled', true)->get();
+    }
+
     private function assertConfigurationIsValid(): void
     {
         $role = $this->getAttribute('role');
@@ -93,13 +114,5 @@ class Agent extends Model
                 throw new LogicException('Agent configuration cannot contain secret material.');
             }
         }
-    }
-
-    private function containsSecretMaterial(string $value): bool
-    {
-        return preg_match('/-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/s', $value) === 1
-            || preg_match('/(?i)authorization\s*:\s*bearer\s+[^\s"\']+/', $value) === 1
-            || preg_match('/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/', $value) === 1
-            || preg_match('/(?im)^\s*((?=[a-z0-9_]*(?:token|secret|password|api_key|app_key|private_key|credential))[a-z][a-z0-9_]*)\s*=\s*\S.*$/', $value) === 1;
     }
 }
