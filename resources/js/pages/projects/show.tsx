@@ -208,8 +208,8 @@ function OpsPanel({
     children: React.ReactNode;
 }) {
     return (
-        <section className="relative overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/75 p-3 shadow-[0_16px_50px_rgba(2,6,23,0.5)]">
-            <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-violet-300/40 to-transparent" />
+        <section className="relative overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/75 p-3 shadow-panel">
+            <div className="glow-edge pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-violet-300/40 to-transparent" />
             <p className="font-mono text-[9px] tracking-[0.16em] text-violet-300 uppercase">
                 {eyebrow}
             </p>
@@ -916,7 +916,7 @@ export default function ProjectShow({
                                 onClick={() => setTab(value)}
                                 className={`shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-medium transition ${
                                     tab === value
-                                        ? 'border border-cyan-300/20 bg-cyan-400/10 text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.08)]'
+                                        ? 'glow-border border border-cyan-300/20 bg-cyan-400/10 text-cyan-100'
                                         : 'border border-transparent text-slate-500 hover:bg-white/[0.03] hover:text-slate-300'
                                 }`}
                             >
@@ -972,7 +972,3 @@ export default function ProjectShow({
         </>
     );
 }
-
-ProjectShow.layout = {
-    breadcrumbs: [{ title: 'Projects', href: index().url }],
-};

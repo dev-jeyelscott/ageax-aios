@@ -2,7 +2,6 @@ import { Form, Head, Link, usePoll } from '@inertiajs/react';
 import { ArrowLeft, Send } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
-    index,
     show as showProject,
     storeOperatorMessage,
 } from '@/actions/App/Http/Controllers/ProjectController';
@@ -746,5 +745,3 @@ export default function TaskShow({
         </>
     );
 }
-
-TaskShow.layout = { breadcrumbs: [{ title: 'Projects', href: index().url }] };

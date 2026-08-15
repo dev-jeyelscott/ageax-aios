@@ -1,6 +1,5 @@
 import { Head, Link } from '@inertiajs/react';
 import { Button } from '@/components/ui/button';
-import { dashboard } from '@/routes';
 import { index as projectsIndex } from '@/routes/projects';
 
 export default function Dashboard() {
@@ -22,5 +21,3 @@ export default function Dashboard() {
         </>
     );
 }
-
-Dashboard.layout = { breadcrumbs: [{ title: 'Dashboard', href: dashboard() }] };

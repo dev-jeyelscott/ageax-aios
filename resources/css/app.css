@@ -5,17 +5,26 @@
 @source '../views';
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 
-@custom-variant dark (&:is(.dark *));
-
 @theme {
     --font-sans:
-        'Instrument Sans', ui-sans-serif, system-ui, sans-serif,
+        'Geist Sans', ui-sans-serif, system-ui, sans-serif,
         'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
         'Noto Color Emoji';
+    --font-mono:
+        'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas,
+        monospace;
 
     --radius-lg: var(--radius);
     --radius-md: calc(var(--radius) - 2px);
     --radius-sm: calc(var(--radius) - 4px);
+
+    --shadow-panel: 0 16px 50px rgba(2, 6, 23, 0.5);
+    --shadow-glow-sm: 0 0 12px var(--glow-color);
+    --shadow-glow-md: 0 0 24px var(--glow-color);
+    --shadow-glow-lg: 0 0 48px var(--glow-color);
+
+    --duration-breathe: 2.4s;
+    --duration-glow-pulse: 2.8s;
 
     --color-background: var(--background);
     --color-foreground: var(--foreground);
@@ -62,42 +71,6 @@
 }
 
 :root {
-    --background: oklch(0.99 0.003 240);
-    --foreground: oklch(0.208 0.042 265.755);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.208 0.042 265.755);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.208 0.042 265.755);
-    --primary: oklch(0.609 0.126 221.723);
-    --primary-foreground: oklch(0.99 0.005 240);
-    --secondary: oklch(0.943 0.029 294.588);
-    --secondary-foreground: oklch(0.208 0.042 265.755);
-    --muted: oklch(0.968 0.007 247.896);
-    --muted-foreground: oklch(0.554 0.046 257.417);
-    --accent: oklch(0.956 0.045 203.388);
-    --accent-foreground: oklch(0.208 0.042 265.755);
-    --destructive: oklch(0.577 0.245 27.325);
-    --destructive-foreground: oklch(0.99 0.005 240);
-    --border: oklch(0.929 0.013 255.508);
-    --input: oklch(0.929 0.013 255.508);
-    --ring: oklch(0.715 0.143 215.221);
-    --chart-1: oklch(0.646 0.222 41.116);
-    --chart-2: oklch(0.6 0.118 184.704);
-    --chart-3: oklch(0.398 0.07 227.392);
-    --chart-4: oklch(0.828 0.189 84.429);
-    --chart-5: oklch(0.769 0.188 70.08);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.99 0.003 240);
-    --sidebar-foreground: oklch(0.208 0.042 265.755);
-    --sidebar-primary: oklch(0.609 0.126 221.723);
-    --sidebar-primary-foreground: oklch(0.99 0.005 240);
-    --sidebar-accent: oklch(0.956 0.045 203.388);
-    --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
-    --sidebar-border: oklch(0.929 0.013 255.508);
-    --sidebar-ring: oklch(0.715 0.143 215.221);
-}
-
-.dark {
     --background: oklch(0.129 0.042 264.695);
     --foreground: oklch(0.968 0.007 247.896);
     --card: oklch(0.176 0.042 265.2);
@@ -122,6 +95,7 @@
     --chart-3: oklch(0.769 0.188 70.08);
     --chart-4: oklch(0.627 0.265 303.9);
     --chart-5: oklch(0.645 0.246 16.439);
+    --radius: 0.625rem;
     --sidebar: oklch(0.106 0.038 264.5);
     --sidebar-foreground: oklch(0.968 0.007 247.896);
     --sidebar-primary: oklch(0.789 0.154 211.53);
@@ -130,6 +104,12 @@
     --sidebar-accent-foreground: oklch(0.94 0.03 210);
     --sidebar-border: oklch(0.239 0.041 260.031);
     --sidebar-ring: oklch(0.789 0.154 211.53);
+
+    --glow-color: oklch(0.789 0.154 211.53 / 45%);
+
+    --scrollbar-track: oklch(0.176 0.042 265.2 / 60%);
+    --scrollbar-thumb: oklch(0.279 0.041 260.031);
+    --scrollbar-thumb-hover: oklch(0.789 0.154 211.53 / 55%);
 }
 
 @layer base {
@@ -139,5 +119,73 @@
 
     body {
         @apply bg-background text-foreground;
+    }
+
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    }
+
+    *::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+    }
+
+    *::-webkit-scrollbar-track {
+        background: var(--scrollbar-track);
+    }
+
+    *::-webkit-scrollbar-thumb {
+        background-color: var(--scrollbar-thumb);
+        border-radius: 999px;
+        border: 2px solid transparent;
+        background-clip: padding-box;
+    }
+
+    *::-webkit-scrollbar-thumb:hover {
+        background-color: var(--scrollbar-thumb-hover);
+    }
+}
+
+@layer utilities {
+    .animate-breathe {
+        animation: aios-breathe var(--duration-breathe) ease-in-out infinite;
+    }
+
+    .glow-border {
+        animation: aios-glow-pulse var(--duration-glow-pulse) ease-in-out infinite;
+    }
+
+    .glow-edge {
+        box-shadow: var(--shadow-glow-sm);
+        animation: aios-glow-pulse var(--duration-glow-pulse) ease-in-out infinite;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .animate-breathe,
+        .glow-border,
+        .glow-edge {
+            animation: none;
+        }
+    }
+}
+
+@keyframes aios-breathe {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.55;
+    }
+}
+
+@keyframes aios-glow-pulse {
+    0%,
+    100% {
+        box-shadow: var(--shadow-glow-sm);
+    }
+    50% {
+        box-shadow: var(--shadow-glow-md);
     }
 }

@@ -1,7 +1,6 @@
 import { Form, Head, Link } from '@inertiajs/react';
 import { FolderGit2, Plus } from 'lucide-react';
 import {
-    index,
     show,
     store,
 } from '@/actions/App/Http/Controllers/ProjectController';
@@ -140,7 +139,3 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
         </>
     );
 }
-
-ProjectsIndex.layout = {
-    breadcrumbs: [{ title: 'Projects', href: index().url }],
-};

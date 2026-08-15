@@ -14,13 +14,13 @@ export default function AuthSimpleLayout({
             <AppBackground />
 
             <div className="relative w-full max-w-sm">
-                <div className="flex flex-col gap-8 rounded-2xl border border-transparent p-0 dark:border-cyan-300/15 dark:bg-slate-950/70 dark:p-8 dark:shadow-[0_24px_90px_rgba(2,6,23,0.6)] dark:backdrop-blur">
+                <div className="flex flex-col gap-8 rounded-2xl border border-cyan-300/15 bg-slate-950/70 p-8 shadow-[0_24px_90px_rgba(2,6,23,0.6)] backdrop-blur">
                     <div className="flex flex-col items-center gap-4">
                         <Link
                             href={home()}
                             className="flex flex-col items-center gap-2 font-medium"
                         >
-                            <div className="mb-1 flex h-9 w-9 items-center justify-center rounded-md dark:shadow-[0_0_20px_rgba(34,211,238,0.35)]">
+                            <div className="mb-1 flex h-9 w-9 items-center justify-center rounded-md shadow-[0_0_20px_rgba(34,211,238,0.35)]">
                                 <AppLogoIcon className="size-9 fill-current text-foreground" />
                             </div>
                             <span className="sr-only">{title}</span>

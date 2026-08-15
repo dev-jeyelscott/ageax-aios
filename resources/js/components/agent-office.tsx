@@ -298,8 +298,8 @@ function AgentCard({
     const presentation = officePresentation(worker.status);
 
     return (
-        <article className="relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/70 p-3 shadow-[0_12px_40px_rgba(2,6,23,0.55)]">
-            <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/50 to-transparent" />
+        <article className="relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/70 p-3 shadow-panel">
+            <div className="glow-edge pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/50 to-transparent" />
 
             <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -315,7 +315,7 @@ function AgentCard({
                 <span
                     className={`mt-1 size-2 shrink-0 rounded-full ${presentation.dotClass} ${
                         worker.status === 'working'
-                            ? 'animate-pulse motion-reduce:animate-none'
+                            ? 'animate-breathe'
                             : ''
                     }`}
                     title={presentation.label}
@@ -374,7 +374,7 @@ function AgentCard({
                         </p>
 
                         <p className="mt-1 truncate text-xs font-medium text-slate-100">
-                            {worker.task.key}: {worker.task.title}
+                            <span className="font-mono">{worker.task.key}</span>: {worker.task.title}
                         </p>
                     </Link>
                 ) : (
@@ -490,14 +490,10 @@ function WorkflowPipeline({
                                 <span
                                     className={`z-10 size-5 rounded-full border ${
                                         active
-                                            ? 'border-cyan-200 bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.65)]'
+                                            ? 'glow-border border-cyan-200 bg-cyan-300'
                                             : passed
                                               ? 'border-emerald-300/70 bg-emerald-400/60'
                                               : 'border-slate-700 bg-slate-950'
-                                    } ${
-                                        active
-                                            ? 'animate-pulse motion-reduce:animate-none'
-                                            : ''
                                     }`}
                                 />
 
@@ -610,7 +606,7 @@ export function AgentOffice({
     return (
         <section
             aria-labelledby="agent-office-title"
-            className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-cyan-300/15 bg-[#040a14]/95 text-slate-100 shadow-[0_24px_90px_rgba(2,6,23,0.7)]"
+            className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-cyan-300/15 bg-[#040a14]/95 text-slate-100 shadow-panel"
         >
             <div className="pointer-events-none absolute -top-24 -left-16 size-56 animate-pulse rounded-full bg-cyan-400/8 blur-3xl motion-reduce:animate-none" />
 
