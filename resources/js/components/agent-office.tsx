@@ -266,14 +266,9 @@ function formatDate(value: string | null): string {
 function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
     const visual = agentVisualFor(worker.role, worker.status);
     const roleLabel = labelForRole(worker.role);
-    const isWorking = worker.status === 'working';
 
     return (
-        <div
-            className={`visual-stage relative h-full overflow-hidden rounded-lg border border-primary/10 ${
-                isWorking ? 'agent-orbit' : ''
-            }`}
-        >
+        <div className="visual-stage relative h-full overflow-hidden rounded-lg border border-primary/10">
             <div className="pointer-events-none absolute inset-x-8 bottom-0 h-8 rounded-full bg-primary/5 blur-xl" />
 
             {worker.role === 'project_manager' ? (
@@ -351,7 +346,11 @@ function AgentCard({
         worker.activity_mode === 'current' ? 'Current task' : 'Recent task';
 
     return (
-        <article className="panel-elevated relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-2.5">
+        <article
+            className={`panel-elevated relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-2.5 ${
+                worker.status === 'working' ? 'agent-card-active' : ''
+            }`}
+        >
             <div className="glow-edge glow-line-accent" />
 
             <div className="flex items-start justify-between gap-2">

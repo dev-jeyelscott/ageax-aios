@@ -28,7 +28,7 @@
     --duration-breathe: 2.4s;
     --duration-glow-pulse: 2.8s;
     --duration-status-pulse: 2.2s;
-    --duration-orbit: 3.2s;
+    --duration-agent-card-flow: 3.2s;
     --duration-flow: 2.6s;
 
     --text-2xs: 0.6875rem;
@@ -141,6 +141,12 @@
     --scrollbar-thumb-hover: oklch(0.789 0.154 211.53 / 55%);
 }
 
+@property --agent-card-flow-angle {
+    syntax: '<angle>';
+    inherits: true;
+    initial-value: 0deg;
+}
+
 @layer base {
     * {
         @apply border-border;
@@ -197,33 +203,48 @@
             infinite;
     }
 
-    .agent-orbit {
-        position: relative;
+    .agent-card-active {
+        isolation: isolate;
+        animation: aios-agent-card-flow var(--duration-agent-card-flow) linear
+            infinite;
     }
 
-    .agent-orbit::before {
+    .agent-card-active::before,
+    .agent-card-active::after {
         content: '';
         position: absolute;
-        inset: -2px;
-        z-index: 20;
+        inset: 0;
         border-radius: inherit;
-        padding: 2px;
         pointer-events: none;
         background: conic-gradient(
-            from 0deg,
-            transparent 0%,
-            transparent 62%,
-            var(--primary) 82%,
-            var(--foreground) 88%,
-            var(--primary) 94%,
-            transparent 100%
+            from var(--agent-card-flow-angle),
+            transparent 0deg,
+            transparent 278deg,
+            color-mix(in oklch, var(--primary) 18%, transparent) 290deg,
+            color-mix(in oklch, var(--primary) 62%, transparent) 314deg,
+            var(--primary) 328deg,
+            var(--foreground) 337deg,
+            var(--primary) 346deg,
+            color-mix(in oklch, var(--primary) 50%, transparent) 354deg,
+            transparent 360deg
         );
         -webkit-mask:
             linear-gradient(#000 0 0) content-box,
             linear-gradient(#000 0 0);
         -webkit-mask-composite: xor;
         mask-composite: exclude;
-        animation: aios-orbit-rotate var(--duration-orbit) linear infinite;
+    }
+
+    .agent-card-active::before {
+        z-index: 30;
+        padding: 1px;
+    }
+
+    .agent-card-active::after {
+        z-index: 29;
+        padding: 3px;
+        opacity: 0.48;
+        filter: blur(5px);
     }
 
     .progress-flow {
@@ -265,9 +286,22 @@
             box-shadow: 0 0 6px 1px currentColor;
         }
 
-        .agent-orbit::before {
+        .agent-card-active {
             animation: none;
-            opacity: 0.55;
+        }
+
+        .agent-card-active::before,
+        .agent-card-active::after {
+            background: var(--primary);
+        }
+
+        .agent-card-active::before {
+            opacity: 0.6;
+        }
+
+        .agent-card-active::after {
+            opacity: 0.2;
+            filter: blur(4px);
         }
 
         .progress-flow,
@@ -339,9 +373,9 @@
     }
 }
 
-@keyframes aios-orbit-rotate {
+@keyframes aios-agent-card-flow {
     to {
-        transform: rotate(360deg);
+        --agent-card-flow-angle: 360deg;
     }
 }
 
