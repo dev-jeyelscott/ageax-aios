@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['project_id', 'task_id', 'agent_worker_id', 'agent_id', 'worker_instance_id', 'worker_lease_id', 'role', 'harness', 'status', 'attempt_number', 'codex_run_id', 'external_run_id', 'prompt_hash', 'result', 'configuration_snapshot', 'context_schema_version', 'commands', 'file_modifications', 'token_usage', 'log_path', 'live_output', 'exit_code', 'started_at', 'finished_at'])]
+#[Fillable(['project_id', 'task_id', 'agent_worker_id', 'recovery_incident_id', 'agent_id', 'worker_instance_id', 'worker_lease_id', 'role', 'harness', 'status', 'attempt_number', 'codex_run_id', 'external_run_id', 'prompt_hash', 'result', 'configuration_snapshot', 'context_schema_version', 'commands', 'file_modifications', 'token_usage', 'log_path', 'live_output', 'exit_code', 'started_at', 'finished_at'])]
 /**
  * @property AgentRole $role
  * @property AgentRunStatus $status
@@ -48,6 +48,12 @@ class AgentRun extends Model
     public function worker(): BelongsTo
     {
         return $this->belongsTo(AgentWorker::class, 'agent_worker_id');
+    }
+
+    /** @return BelongsTo<RecoveryIncident, $this> */
+    public function recoveryIncident(): BelongsTo
+    {
+        return $this->belongsTo(RecoveryIncident::class);
     }
 
     /** @return BelongsTo<Agent, $this> */

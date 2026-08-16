@@ -1,0 +1,348 @@
+<?php
+
+namespace App\Services;
+
+use App\AgentRole;
+use App\Models\AgentRun;
+use App\Models\Project;
+use App\Models\RecoveryIncident;
+use App\Models\Task;
+use App\RecoveryIncidentStatus;
+use App\TaskStatus;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+
+/**
+ * Repair half of the Workflow Recovery Engineer. Claims one open RecoveryIncident at a time
+ * (an atomic conditional update guards against a second scan or process claiming the same
+ * incident), classifies its root cause, and either applies a bounded, AIOS-committed fix or
+ * escalates. AIOS alone performs every durable state transition; the Recovery Engineer's LLM
+ * execution only diagnoses and, when invoked, edits files inside a disposable working tree that
+ * AIOS independently validates before ever committing or touching task state.
+ */
+class WorkflowRecoveryEngine
+{
+    private const array KnownDeterministicBlocks = [
+        'task.blocked_dirty_repository' => 'unsafe_git_state',
+        'task.blocked_agent_misconfigured' => 'configuration_environment',
+        'task.blocked_unsafe_path' => 'configuration_environment',
+    ];
+
+    public function __construct(
+        private AuditLogger $audit,
+        private TaskWorkflow $workflow,
+        private RecoveryEngineerRunner $engineer,
+        private AgentRunRecorder $runs,
+        private RecoveryRepositoryLifecycle $lifecycle,
+    ) {}
+
+    /** Process every open, unclaimed incident for a project, one at a time (strict serial recovery). */
+    public function processOpenIncidents(Project $project): void
+    {
+        RecoveryIncident::query()
+            ->whereBelongsTo($project)
+            ->where('status', RecoveryIncidentStatus::Detected)
+            ->orderBy('detected_at')
+            ->get()
+            ->each(fn (RecoveryIncident $incident): RecoveryIncident => $this->process($incident));
+    }
+
+    public function process(RecoveryIncident $incident): RecoveryIncident
+    {
+        if (! $this->claim($incident)) {
+            return $incident->fresh();
+        }
+
+        $incident = $incident->fresh();
+        $task = $incident->task_id === null ? null : Task::query()->find($incident->task_id);
+
+        if ($task !== null && ! $this->stillEligible($task)) {
+            return $this->resolveAlreadyHandled($incident, $task);
+        }
+
+        $classification = $this->classifyDeterministically($task) ?? $this->diagnoseWithRecoveryEngineer($incident, $task);
+        $maxAttempts = max(1, (int) config('aios.recovery_max_attempts'));
+
+        DB::transaction(function () use ($incident, $classification): void {
+            RecoveryIncident::query()->whereKey($incident->id)->update([
+                'root_cause' => $classification['summary'],
+                'root_cause_category' => $classification['category'],
+                'recoverable' => $classification['recoverable'],
+                'attempt_count' => $incident->attempt_count + 1,
+            ]);
+        }, attempts: 3);
+        $incident = $incident->fresh();
+
+        if ($classification['category'] === 'transient_harness_failure' && $incident->attempt_count < $maxAttempts) {
+            $incident->update(['status' => RecoveryIncidentStatus::Detected]);
+            $this->audit->record('recovery.retry_scheduled', ['recovery_incident_id' => $incident->id, 'attempt_count' => $incident->attempt_count, 'retry_limit' => $maxAttempts], $incident->project, $task);
+
+            return $incident->fresh();
+        }
+
+        if (! $classification['recoverable'] || $incident->attempt_count >= $maxAttempts) {
+            return $this->escalate($incident, $classification, $task, $incident->attempt_count >= $maxAttempts ? 'Bounded recovery attempt limit reached.' : null);
+        }
+
+        if ($classification['fix_applied'] && $classification['changed_files'] !== []) {
+            return $this->applyRepair($incident, $classification, $task);
+        }
+
+        return $this->recover($incident, $task, $classification['summary']);
+    }
+
+    private function claim(RecoveryIncident $incident): bool
+    {
+        $updated = RecoveryIncident::query()
+            ->whereKey($incident->id)
+            ->where('status', RecoveryIncidentStatus::Detected->value)
+            ->update([
+                'status' => RecoveryIncidentStatus::Diagnosing->value,
+                'claim_token' => (string) Str::uuid(),
+                'claimed_at' => now(),
+            ]);
+
+        return $updated === 1;
+    }
+
+    private function stillEligible(Task $task): bool
+    {
+        return in_array(TaskStatus::from($task->getRawOriginal('status')), [TaskStatus::Blocked, TaskStatus::Interrupted, TaskStatus::Failed], true);
+    }
+
+    private function resolveAlreadyHandled(RecoveryIncident $incident, Task $task): RecoveryIncident
+    {
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Recovered,
+            'root_cause' => 'The task left its stuck state before the Workflow Recovery Engineer diagnosed it.',
+            'root_cause_category' => null,
+            'recoverable' => true,
+            'resulting_task_transition' => TaskStatus::from($task->getRawOriginal('status'))->value,
+            'resolved_at' => now(),
+        ]);
+        $this->audit->record('recovery.superseded', ['recovery_incident_id' => $incident->id, 'task_status' => $task->getRawOriginal('status')], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    /** @return ?array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string} */
+    private function classifyDeterministically(?Task $task): ?array
+    {
+        if ($task === null) {
+            return null;
+        }
+
+        $blockingEvent = $task->auditEvents()->whereIn('event_type', array_keys(self::KnownDeterministicBlocks))->latest('occurred_at')->first();
+        if ($blockingEvent === null) {
+            return null;
+        }
+
+        $category = self::KnownDeterministicBlocks[$blockingEvent->event_type];
+
+        return [
+            'category' => $category,
+            'summary' => "Task is blocked by a previously recorded [{$blockingEvent->event_type}] condition, which requires operator judgment.",
+            'recoverable' => false,
+            'fix_applied' => false,
+            'changed_files' => [],
+            'fix_summary' => null,
+            'escalation_reason' => "Automatic recovery is unsafe for category [{$category}]; the condition needs operator review and manual resolution before this task can be requeued.",
+        ];
+    }
+
+    /** @return array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string} */
+    private function diagnoseWithRecoveryEngineer(RecoveryIncident $incident, ?Task $task): array
+    {
+        $repositoryPath = (string) config('aios.recovery_repository_path');
+        $preflight = $this->lifecycle->preflight($repositoryPath);
+
+        if (! $preflight['clean'] || $preflight['head_sha'] === null) {
+            return [
+                'category' => 'unsafe_git_state',
+                'summary' => 'The AIOS recovery repository is not in a clean, inspectable state, so no bounded fix can safely be attempted.',
+                'recoverable' => false,
+                'fix_applied' => false,
+                'changed_files' => [],
+                'fix_summary' => null,
+                'escalation_reason' => 'AIOS recovery repository preflight failed: '.implode(' ', $preflight['errors'] ?: ['unknown error']),
+            ];
+        }
+
+        $prompt = $this->buildPrompt($incident, $task, $preflight['head_sha']);
+        $project = $task?->project;
+        $run = $this->runs->start($project ?? $incident->project, AgentRole::RecoveryEngineer, $prompt, $task);
+        $run->update(['recovery_incident_id' => $incident->id]);
+        $result = $this->engineer->run($prompt);
+        $this->runs->complete($run, $result['execution']);
+
+        if ($result['execution']['exit_code'] !== 0 || $result['decision'] === null) {
+            return [
+                'category' => 'transient_harness_failure',
+                'summary' => 'The Workflow Recovery Engineer execution failed or returned no structured decision.',
+                'recoverable' => true,
+                'fix_applied' => false,
+                'changed_files' => [],
+                'fix_summary' => null,
+                'escalation_reason' => 'Repeated Workflow Recovery Engineer executions failed or returned no structured decision.',
+            ];
+        }
+
+        try {
+            $validated = validator($result['decision'], [
+                'root_cause_category' => ['required', 'in:application_defect,orchestration_defect,configuration_environment,transient_harness_failure,stale_lease,validation_failure,unsafe_git_state,managed_project_defect'],
+                'root_cause_summary' => ['required', 'string'],
+                'recoverable' => ['required', 'boolean'],
+                'fix_applied' => ['required', 'boolean'],
+                'changed_files' => ['nullable', 'array'],
+                'changed_files.*' => ['string'],
+                'fix_summary' => ['nullable', 'string'],
+                'escalation_reason' => ['exclude_unless:recoverable,false', 'required', 'string'],
+            ])->validate();
+        } catch (ValidationException) {
+            return [
+                'category' => 'orchestration_defect',
+                'summary' => 'The Workflow Recovery Engineer returned an invalid structured decision.',
+                'recoverable' => false,
+                'fix_applied' => false,
+                'changed_files' => [],
+                'fix_summary' => null,
+                'escalation_reason' => 'The recovery decision failed structural validation and could not be trusted.',
+            ];
+        }
+
+        return [
+            'category' => $validated['root_cause_category'],
+            'summary' => $validated['root_cause_summary'],
+            'recoverable' => $validated['recoverable'],
+            'fix_applied' => $validated['fix_applied'],
+            'changed_files' => $validated['changed_files'] ?? [],
+            'fix_summary' => $validated['fix_summary'] ?? null,
+            'escalation_reason' => $validated['escalation_reason'] ?? null,
+            'base_sha' => $preflight['head_sha'],
+        ];
+    }
+
+    /** @param array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string, base_sha?: string} $classification */
+    private function applyRepair(RecoveryIncident $incident, array $classification, ?Task $task): RecoveryIncident
+    {
+        $repositoryPath = (string) config('aios.recovery_repository_path');
+        $baseSha = $classification['base_sha'] ?? null;
+        $validation = $baseSha === null ? ['passed' => false, 'checks' => ['base_sha' => false], 'evidence' => []] : $this->lifecycle->validate($repositoryPath, $classification['changed_files']);
+
+        if (! $validation['passed']) {
+            $incident->update(['status' => RecoveryIncidentStatus::Validating]);
+
+            return $this->escalate($incident, $classification, $task, 'The proposed fix failed AIOS-independent validation.', $validation);
+        }
+
+        $incident->update(['status' => RecoveryIncidentStatus::Repairing]);
+        $commitSha = $this->lifecycle->commit($repositoryPath, $classification['changed_files'], (string) $baseSha, "recovery: incident #{$incident->id} ({$incident->failure_type})");
+
+        if ($commitSha === null) {
+            return $this->escalate($incident, $classification, $task, 'The validated fix could not be committed to the AIOS recovery repository.', $validation);
+        }
+
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Validating,
+            'base_sha' => $baseSha,
+            'head_sha' => $commitSha,
+            'commit_sha' => $commitSha,
+            'changed_files' => $classification['changed_files'],
+            'validation_evidence' => $validation,
+            'fix_summary' => $classification['fix_summary'],
+        ]);
+        $this->audit->record('recovery.fix_committed', [
+            'recovery_incident_id' => $incident->id,
+            'base_sha' => $baseSha,
+            'commit_sha' => $commitSha,
+            'changed_files' => $classification['changed_files'],
+        ], $incident->project, $task);
+
+        return $this->recover($incident, $task, $classification['fix_summary'] ?? $classification['summary']);
+    }
+
+    private function recover(RecoveryIncident $incident, ?Task $task, ?string $fixSummary): RecoveryIncident
+    {
+        $incident->update(['status' => RecoveryIncidentStatus::Validating]);
+        $resultingTransition = $task === null ? null : $this->requeueTask($task);
+
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Recovered,
+            'fix_summary' => $fixSummary,
+            'resulting_task_transition' => $resultingTransition,
+            'resolved_at' => now(),
+        ]);
+        $this->audit->record('recovery.recovered', [
+            'recovery_incident_id' => $incident->id,
+            'resulting_task_transition' => $resultingTransition,
+        ], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    /** A fresh normal Coder/Reviewer attempt is claimed independently by the durable workflow loop. */
+    private function requeueTask(Task $task): string
+    {
+        $status = TaskStatus::from($task->getRawOriginal('status'));
+
+        return match ($status) {
+            TaskStatus::Blocked => $this->transitionAndReturn($task, TaskStatus::Queued),
+            TaskStatus::Interrupted => $this->transitionAndReturn($task, TaskStatus::Failed),
+            // A Failed task is already selected by the normal Coder claim query; no transition is needed.
+            default => $status->value,
+        };
+    }
+
+    private function transitionAndReturn(Task $task, TaskStatus $to): string
+    {
+        $this->workflow->transition($task, $to);
+
+        return $to->value;
+    }
+
+    /**
+     * @param  array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string}  $classification
+     * @param  ?array<string, mixed>  $validationEvidence
+     */
+    private function escalate(RecoveryIncident $incident, array $classification, ?Task $task, ?string $reasonOverride = null, ?array $validationEvidence = null): RecoveryIncident
+    {
+        file_put_contents('/tmp/debug.log', json_encode(['classification' => $classification, 'reasonOverride' => $reasonOverride]).PHP_EOL, FILE_APPEND);
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Escalated,
+            'recoverable' => false,
+            'escalation_reason' => $reasonOverride ?? $classification['escalation_reason'] ?? 'Automatic recovery could not safely resolve this incident.',
+            'validation_evidence' => $validationEvidence,
+            'resolved_at' => now(),
+        ]);
+        $this->audit->record('recovery.escalated', [
+            'recovery_incident_id' => $incident->id,
+            'root_cause_category' => $classification['category'],
+            'escalation_reason' => $incident->fresh()->escalation_reason,
+        ], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    private function buildPrompt(RecoveryIncident $incident, ?Task $task, string $baseSha): string
+    {
+        $previousAttempts = $incident->recoveryRuns()->latest('started_at')->limit(5)->get()
+            ->map(fn (AgentRun $run): array => ['status' => $run->getRawOriginal('status'), 'exit_code' => $run->exit_code, 'decision' => $run->result])
+            ->all();
+
+        $context = [
+            'objective' => 'Diagnose the root cause of an AIOS workflow failure and, only if it is a bounded AIOS/system defect you can safely fix, apply the smallest production-safe fix inside this repository (AIOS itself, not the managed project).',
+            'repository_base_sha' => $baseSha,
+            'incident' => $incident->only(['id', 'failure_type', 'status', 'attempt_count', 'evidence']),
+            'task' => $task?->only(['key', 'title', 'objective', 'acceptance_criteria', 'status']),
+            'previous_recovery_attempts' => $previousAttempts,
+            'root_cause_categories' => ['application_defect', 'orchestration_defect', 'configuration_environment', 'transient_harness_failure', 'stale_lease', 'validation_failure', 'unsafe_git_state', 'managed_project_defect'],
+            'response_contract' => 'Return exactly one JSON object with: root_cause_category (one of root_cause_categories), root_cause_summary (string), recoverable (bool), fix_applied (bool, true only if you edited files in this repository), changed_files (array of relative paths you edited, required when fix_applied is true), fix_summary (string, required when fix_applied is true), escalation_reason (string, required when recoverable is false).',
+            'constraints' => 'Only edit files in this repository (AIOS itself) if the root cause is an AIOS orchestration/application defect you are confident about and can fix with a minimal, safe change. Never edit the managed project. Never run git add/commit/reset/stash/checkout yourself; AIOS validates and commits independently. If the root cause is the managed project\'s own implementation, an environment/credential problem, or ambiguous, set recoverable/fix_applied accordingly instead of guessing.',
+        ];
+
+        $prompt = "You are the AIOS Workflow Recovery Engineer, a system-level reliability role distinct from Project Manager/Coder/Reviewer. Read AGENTS.md and MASTER-PROMPT.md in this repository first.\n\n".json_encode($context, JSON_THROW_ON_ERROR);
+
+        return $prompt;
+    }
+}

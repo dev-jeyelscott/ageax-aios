@@ -51,7 +51,7 @@ class StaleWorkerRecovery
         $statuses = match ($role) {
             AgentRole::Coder => [TaskStatus::Coding, TaskStatus::Validating],
             AgentRole::Reviewer => [TaskStatus::Reviewing],
-            AgentRole::KnowledgeArchitect, AgentRole::ProjectManager => [],
+            AgentRole::KnowledgeArchitect, AgentRole::ProjectManager, AgentRole::RecoveryEngineer => [],
         };
 
         if ($statuses === []) {

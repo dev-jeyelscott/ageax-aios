@@ -11,7 +11,6 @@ use App\AgentRole;
 use App\Models\Project;
 use App\Models\Roadmap;
 use App\ProjectStatus;
-use App\Services\StaleWorkerRecovery;
 use App\Services\WorkerHeartbeat;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
@@ -25,7 +24,7 @@ class RunAiosWorkers extends Command
     /**
      * Execute the console command.
      */
-    public function handle(ClaimTask $claimTask, RunCoderTask $runCoderTask, RunProjectManager $runProjectManager, RunReviewerTask $runReviewerTask, SetProjectStatus $setProjectStatus, StaleWorkerRecovery $staleWorkerRecovery, WorkerHeartbeat $heartbeat): int
+    public function handle(ClaimTask $claimTask, RunCoderTask $runCoderTask, RunProjectManager $runProjectManager, RunReviewerTask $runReviewerTask, SetProjectStatus $setProjectStatus, WorkerHeartbeat $heartbeat): int
     {
         $workerInstanceId = (string) Str::uuid();
 
@@ -35,7 +34,9 @@ class RunAiosWorkers extends Command
                     continue;
                 }
 
-                $staleWorkerRecovery->recover($project);
+                // Stale worker/lease and workflow-failure recovery is owned by the Workflow
+                // Recovery Engineer's five-minute scheduled scan (aios:recover-workflows), not
+                // this loop; see App\Services\WorkflowRecoveryScanner/WorkflowRecoveryEngine.
                 $roadmap = Roadmap::query()->whereBelongsTo($project)->whereIn('status', ['uploaded', 'failed'])->oldest()->first();
                 if ($roadmap !== null) {
                     $lease = $heartbeat->acquire($project, AgentRole::ProjectManager, $workerInstanceId);

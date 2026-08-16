@@ -163,10 +163,13 @@ class ClaudeCodeCliRunner
     private function command(Agent $agent): array
     {
         $role = AgentRole::from((string) $agent->getRawOriginal('role'));
-        $isCoder = $role === AgentRole::Coder;
+        // The Workflow Recovery Engineer (P-recovery) also needs Edit/Write to apply a bounded
+        // fix; it remains barred, like the Coder, from git mutations (see DeniedGitMutations)
+        // since AIOS alone commits after independently validating the result.
+        $canEdit = in_array($role, [AgentRole::Coder, AgentRole::RecoveryEngineer], true);
 
-        $tools = $isCoder ? self::CoderTools : self::InspectionTools;
-        $allowedTools = $isCoder ? self::CoderTools : self::InspectionAllowedTools;
+        $tools = $canEdit ? self::CoderTools : self::InspectionTools;
+        $allowedTools = $canEdit ? self::CoderTools : self::InspectionAllowedTools;
 
         $command = [
             (string) config('aios.claude_code_binary'),

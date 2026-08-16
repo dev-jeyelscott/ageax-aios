@@ -377,15 +377,12 @@ test('the worker applies a reviewer decision during a polling cycle', function (
         ->and($task->auditEvents()->where('event_type', 'task.approved')->exists())->toBeTrue();
 });
 
-test('the worker recovers stale runs before polling for new work', function () {
+test('the worker loop no longer performs stale recovery itself; that is owned by the scheduled recovery scan', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     foreach (AgentRole::cases() as $role) {
         AgentWorker::create(['project_id' => $project->id, 'role' => $role, 'status' => 'idle']);
     }
-    mock(StaleWorkerRecovery::class)
-        ->shouldReceive('recover')
-        ->once()
-        ->withArgs(fn (Project $recoveryProject): bool => $recoveryProject->is($project));
+    mock(StaleWorkerRecovery::class)->shouldNotReceive('recover');
 
     $this->artisan('aios:work --once')->assertExitCode(0);
 });

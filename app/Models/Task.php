@@ -74,6 +74,12 @@ class Task extends Model
         return $this->hasMany(TaskOperatorMessage::class);
     }
 
+    /** @return HasMany<RecoveryIncident, $this> */
+    public function recoveryIncidents(): HasMany
+    {
+        return $this->hasMany(RecoveryIncident::class);
+    }
+
     /** @return BelongsToMany<Task, $this> */
     public function dependencies(): BelongsToMany
     {
