@@ -1,17 +1,13 @@
 import { Link } from '@inertiajs/react';
 import { Activity, Bot, CircleDot, Radio } from 'lucide-react';
-import { lazy, Suspense, useMemo } from 'react';
+import { useMemo } from 'react';
 import {
     showAgentRun,
     showTask,
 } from '@/actions/App/Http/Controllers/ProjectController';
+import { AgeaxRobotVisual } from '@/components/ageax-robot';
+import type { RobotAnimationState } from '@/components/ageax-robot';
 import { Badge } from '@/components/ui/badge';
-
-const ProjectManagerBotVisual = lazy(() =>
-    import('@/components/project-manager-bot').then((module) => ({
-        default: module.ProjectManagerBotVisual,
-    })),
-);
 
 export type OfficeWorker = {
     id: number;
@@ -77,39 +73,10 @@ type OfficePresentation = {
     pulseClass: string;
 };
 
-type RoleVisual = {
-    idle: string;
-    working: string;
-    workingDescription: string;
-};
-
-type AgentVisual = {
-    src: string;
-    alt: string;
-};
-
 const roleLabels: Record<string, string> = {
     project_manager: 'Project Manager',
     coder: 'Coder',
     reviewer: 'Reviewer',
-};
-
-const roleVisuals: Record<string, RoleVisual> = {
-    project_manager: {
-        idle: '/action-gif/pm-idle.gif',
-        working: '/action-gif/pm-thinking.gif',
-        workingDescription: 'thinking and planning',
-    },
-    coder: {
-        idle: '/action-gif/coder-idle.gif',
-        working: '/action-gif/coder-coding.gif',
-        workingDescription: 'coding',
-    },
-    reviewer: {
-        idle: '/action-gif/reviewer-idle.gif',
-        working: '/action-gif/reviewer-reviewing.gif',
-        workingDescription: 'reviewing',
-    },
 };
 
 const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'];
@@ -207,25 +174,51 @@ function workflowStageIndex(status: string | undefined): number {
     }
 }
 
-export function agentVisualFor(
-    role: string,
-    status: string,
-): AgentVisual | null {
-    const visual = roleVisuals[role];
+export function robotAnimationStateFor(
+    worker: OfficeWorker,
+): RobotAnimationState {
+    switch (worker.status) {
+        case 'working':
+            if (worker.role === 'project_manager') {
+                return 'thinking';
+            }
 
-    if (!visual) {
-        return null;
+            if (worker.role === 'reviewer') {
+                return 'reviewing';
+            }
+
+            return 'working';
+        case 'thinking':
+        case 'recovering':
+            return 'thinking';
+        case 'reviewing':
+            return 'reviewing';
+        case 'success':
+        case 'completed':
+            return 'success';
+        case 'failed':
+            return 'failed';
+        case 'interrupted':
+        case 'blocked':
+            return 'interrupted';
     }
 
-    const isWorking = status === 'working';
-    const roleLabel = labelForRole(role);
+    if (worker.run?.status === 'failed') {
+        return 'failed';
+    }
 
-    return {
-        src: isWorking ? visual.working : visual.idle,
-        alt: isWorking
-            ? `${roleLabel} ${visual.workingDescription} while working.`
-            : `${roleLabel} idle visual for ${status} status.`,
-    };
+    if (worker.run?.status === 'interrupted') {
+        return 'interrupted';
+    }
+
+    if (
+        worker.activity_mode === 'recent' &&
+        worker.run?.status === 'completed'
+    ) {
+        return 'success';
+    }
+
+    return 'idle';
 }
 
 function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
@@ -264,70 +257,18 @@ function formatDate(value: string | null): string {
 }
 
 function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
-    const visual = agentVisualFor(worker.role, worker.status);
     const roleLabel = labelForRole(worker.role);
+    const animationState = robotAnimationStateFor(worker);
 
     return (
         <div className="visual-stage relative h-full overflow-hidden rounded-lg border border-primary/10">
             <div className="pointer-events-none absolute inset-x-8 bottom-0 h-8 rounded-full bg-primary/5 blur-xl" />
 
-            {worker.role === 'project_manager' ? (
-                <>
-                    <div className="h-full w-full motion-reduce:hidden">
-                        <Suspense fallback={null}>
-                            <ProjectManagerBotVisual
-                                working={worker.status === 'working'}
-                                label={
-                                    worker.status === 'working'
-                                        ? `${roleLabel} reading a futuristic book while planning.`
-                                        : `${roleLabel} idle, holding a futuristic book.`
-                                }
-                            />
-                        </Suspense>
-                    </div>
-
-                    <div
-                        role="img"
-                        aria-label={`${roleLabel} ${worker.status}. Animation disabled because reduced motion is requested.`}
-                        className="hidden h-full w-full place-items-center text-center motion-reduce:grid"
-                    >
-                        <Bot
-                            aria-hidden="true"
-                            className="size-10 text-primary"
-                        />
-                    </div>
-                </>
-            ) : visual ? (
-                <>
-                    <img
-                        src={visual.src}
-                        alt={visual.alt}
-                        className="h-full w-full object-contain p-1.5 motion-reduce:hidden"
-                    />
-
-                    <div
-                        role="img"
-                        aria-label={`${roleLabel} ${worker.status}. Animation disabled because reduced motion is requested.`}
-                        className="hidden h-full w-full place-items-center text-center motion-reduce:grid"
-                    >
-                        <Bot
-                            aria-hidden="true"
-                            className="size-10 text-primary"
-                        />
-                    </div>
-                </>
-            ) : (
-                <div
-                    role="img"
-                    aria-label={`${roleLabel} has no role-specific animation.`}
-                    className="grid h-full place-items-center text-center"
-                >
-                    <Bot
-                        aria-hidden="true"
-                        className="size-10 text-muted-foreground"
-                    />
-                </div>
-            )}
+            <AgeaxRobotVisual
+                role={worker.role}
+                state={animationState}
+                label={`${roleLabel} AGEAX robot in ${animationState} presentation state from worker status ${worker.status}.`}
+            />
         </div>
     );
 }
