@@ -248,8 +248,12 @@ function RobotHead({
         headRef.current.rotation.set(pose[0], pose[1] + scan, pose[2]);
 
         if (scanRef.current) {
-            const scanning = ['working', 'thinking', 'reviewing'].includes(state);
-            scanRef.current.position.x = scanning ? Math.sin(t * 2.7) * 0.24 : 0;
+            const scanning = ['working', 'thinking', 'reviewing'].includes(
+                state,
+            );
+            scanRef.current.position.x = scanning
+                ? Math.sin(t * 2.7) * 0.24
+                : 0;
         }
     });
 
@@ -341,11 +345,13 @@ function RobotArm({
         wristRef.current?.rotation.set(...pose.wrist);
 
         if (state === 'working' && wristRef.current) {
-            wristRef.current.rotation.z += Math.sin(frame.clock.elapsedTime * 9) * 0.08 * sign;
+            wristRef.current.rotation.z +=
+                Math.sin(frame.clock.elapsedTime * 9) * 0.08 * sign;
         }
 
         if (state === 'thinking' && side === 'right' && wristRef.current) {
-            wristRef.current.rotation.y += Math.sin(frame.clock.elapsedTime * 1.8) * 0.08;
+            wristRef.current.rotation.y +=
+                Math.sin(frame.clock.elapsedTime * 1.8) * 0.08;
         }
     });
 
@@ -355,7 +361,10 @@ function RobotArm({
             position={[sign * 0.87, 0.29, 0]}
             rotation={pose.shoulder}
         >
-            <SpherePart material={mechanicalMaterial} scale={[0.38, 0.38, 0.38]} />
+            <SpherePart
+                material={mechanicalMaterial}
+                scale={[0.38, 0.38, 0.38]}
+            />
             <TorusPart material={energyMaterial} scale={[0.48, 0.48, 0.48]} />
             <BoxPart
                 material={armorMaterial}
@@ -373,8 +382,14 @@ function RobotArm({
                 position={[0, -0.74, 0]}
                 rotation={pose.elbow}
             >
-                <SpherePart material={mechanicalMaterial} scale={[0.29, 0.29, 0.29]} />
-                <TorusPart material={energyMaterial} scale={[0.35, 0.35, 0.35]} />
+                <SpherePart
+                    material={mechanicalMaterial}
+                    scale={[0.29, 0.29, 0.29]}
+                />
+                <TorusPart
+                    material={energyMaterial}
+                    scale={[0.35, 0.35, 0.35]}
+                />
                 <BoxPart
                     material={armorMaterial}
                     position={[0, -0.34, 0]}
@@ -391,7 +406,10 @@ function RobotArm({
                     position={[0, -0.67, 0]}
                     rotation={pose.wrist}
                 >
-                    <CylinderPart material={mechanicalMaterial} scale={[0.22, 0.18, 0.22]} />
+                    <CylinderPart
+                        material={mechanicalMaterial}
+                        scale={[0.22, 0.18, 0.22]}
+                    />
                     <TorusPart
                         material={energyMaterial}
                         rotation={[Math.PI / 2, 0, 0]}
@@ -439,7 +457,10 @@ function RobotLeg({
             position={[sign * 0.36, -0.28, 0]}
             rotation={pose.hip}
         >
-            <SpherePart material={mechanicalMaterial} scale={[0.33, 0.33, 0.33]} />
+            <SpherePart
+                material={mechanicalMaterial}
+                scale={[0.33, 0.33, 0.33]}
+            />
             <TorusPart material={energyMaterial} scale={[0.4, 0.4, 0.4]} />
             <BoxPart
                 material={armorMaterial}
@@ -453,8 +474,14 @@ function RobotLeg({
             />
 
             <group ref={kneeRef} position={[0, -0.94, 0]} rotation={pose.knee}>
-                <SpherePart material={mechanicalMaterial} scale={[0.3, 0.3, 0.3]} />
-                <TorusPart material={statusMaterial} scale={[0.36, 0.36, 0.36]} />
+                <SpherePart
+                    material={mechanicalMaterial}
+                    scale={[0.3, 0.3, 0.3]}
+                />
+                <TorusPart
+                    material={statusMaterial}
+                    scale={[0.36, 0.36, 0.36]}
+                />
                 <BoxPart
                     material={armorMaterial}
                     position={[0, -0.49, 0]}
@@ -471,7 +498,10 @@ function RobotLeg({
                     position={[0, -0.93, 0]}
                     rotation={pose.ankle}
                 >
-                    <CylinderPart material={mechanicalMaterial} scale={[0.22, 0.2, 0.22]} />
+                    <CylinderPart
+                        material={mechanicalMaterial}
+                        scale={[0.22, 0.2, 0.22]}
+                    />
                     <BoxPart
                         material={armorMaterial}
                         position={[0, -0.19, 0.12]}
@@ -745,10 +775,7 @@ export function AgeaxRobotVisual({
                 }}
             >
                 <ambientLight intensity={0.9} />
-                <directionalLight
-                    position={[2.4, 3.5, 4.5]}
-                    intensity={1.7}
-                />
+                <directionalLight position={[2.4, 3.5, 4.5]} intensity={1.7} />
                 <pointLight
                     position={[-2.2, 0.8, 3.5]}
                     color="#22d3ee"

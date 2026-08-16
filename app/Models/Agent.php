@@ -98,13 +98,16 @@ class Agent extends Model
         return $this->skills()->where('skills.enabled', true)->get();
     }
 
+    /**
+     * @return int<1, max>
+     */
     private function latestPersistedConfigurationVersion(): int
     {
-        $version = static::query()
+        $version = (int) static::query()
             ->whereKey($this->getKey())
             ->value('configuration_version');
 
-        return max(1, (int) $version);
+        return $version < 1 ? 1 : $version;
     }
 
     private function assertConfigurationIsValid(): void
