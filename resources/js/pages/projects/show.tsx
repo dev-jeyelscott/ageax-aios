@@ -840,19 +840,6 @@ export default function ProjectShow({
             </div>
 
             <div className="flex items-center gap-1.5">
-                <Badge
-                    variant="outline"
-                    className="border-success/20 bg-success/5 font-mono text-2xs text-success-foreground"
-                >
-                    {project.status}
-                </Badge>
-                <Badge
-                    variant="outline"
-                    className="hidden border-secondary/20 bg-secondary/5 font-mono text-2xs text-secondary-foreground sm:inline-flex"
-                >
-                    Git · {project.git_status}
-                </Badge>
-
                 <Form {...updateStatus.form(project.id)}>
                     {({ processing }) => (
                         <>
