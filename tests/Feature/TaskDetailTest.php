@@ -191,6 +191,24 @@ test('a completed agent run retains its execution transcript for the task consol
     expect($run->refresh()->live_output)->toContain('Implemented the focused fix.');
 });
 
+test('a running Claude Code agent surfaces stream-json assistant text in the task console', function () {
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
+    $task = taskForDetail($project);
+    $run = AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'role' => AgentRole::Coder, 'status' => AgentRunStatus::Running, 'prompt_hash' => hash('sha256', 'test'), 'started_at' => now()]);
+    $line = json_encode([
+        'type' => 'assistant',
+        'message' => ['role' => 'assistant', 'content' => [
+            ['type' => 'text', 'text' => 'Reading the failing test to understand the assertion.'],
+            ['type' => 'tool_use', 'id' => 'toolu_1', 'name' => 'Read', 'input' => ['file_path' => 'tests/Foo.php']],
+        ]],
+    ], JSON_THROW_ON_ERROR);
+
+    app(AgentRunRecorder::class)->appendLiveOutput($run, 'stdout', $line."\n");
+
+    expect(app(AgentRunRecorder::class)->agentMessages($run->refresh()))
+        ->toBe(['Reading the failing test to understand the assertion.']);
+});
+
 test('a failed agent run exposes the harness error as a human-readable failure reason', function () {
     Storage::fake('local');
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);

@@ -210,16 +210,45 @@ class AgentRunRecorder
 
         foreach (preg_split('/\R/', $output) ?: [] as $line) {
             $event = json_decode($line, true);
-            $item = is_array($event) ? $event['item'] ?? null : null;
 
-            if (! is_array($item) || ($item['type'] ?? null) !== 'agent_message' || ! is_string($item['text'] ?? null)) {
+            if (! is_array($event)) {
                 continue;
             }
 
-            $messages[] = $item['text'];
+            array_push($messages, ...$this->extractAgentMessageTexts($event));
         }
 
         return array_values(array_unique($messages));
+    }
+
+    /**
+     * Recognizes the "agent message" shape from both supported harnesses: Codex CLI's
+     * `item.completed` items and Claude Code CLI's `stream-json` assistant text blocks.
+     *
+     * @param  array<string, mixed>  $event
+     * @return list<string>
+     */
+    private function extractAgentMessageTexts(array $event): array
+    {
+        $texts = [];
+
+        $item = $event['item'] ?? null;
+
+        if (is_array($item) && ($item['type'] ?? null) === 'agent_message' && is_string($item['text'] ?? null)) {
+            $texts[] = $item['text'];
+        }
+
+        $content = ($event['type'] ?? null) === 'assistant' ? $event['message']['content'] ?? null : null;
+
+        if (is_array($content)) {
+            foreach ($content as $block) {
+                if (is_array($block) && ($block['type'] ?? null) === 'text' && is_string($block['text'] ?? null)) {
+                    $texts[] = $block['text'];
+                }
+            }
+        }
+
+        return $texts;
     }
 
     public function redact(string $output): string
@@ -384,14 +413,14 @@ class AgentRunRecorder
                 $usage = $event['usage'];
             }
 
+            foreach ($this->extractAgentMessageTexts($event) as $text) {
+                $agentMessages[] = Str::limit($text, 4000, '…');
+            }
+
             $item = $event['item'] ?? null;
 
             if (! is_array($item) || ($event['type'] ?? null) !== 'item.completed') {
                 continue;
-            }
-
-            if (($item['type'] ?? null) === 'agent_message' && is_string($item['text'] ?? null)) {
-                $agentMessages[] = Str::limit($item['text'], 4000, '…');
             }
 
             if (($item['type'] ?? null) === 'command_execution' && is_string($item['command'] ?? null)) {
