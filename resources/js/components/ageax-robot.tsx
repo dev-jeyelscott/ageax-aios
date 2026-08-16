@@ -499,6 +499,7 @@ function RobotModel({
 }) {
     const rootRef = useRef<THREE.Group>(null);
     const torsoRef = useRef<THREE.Group>(null);
+    const statusPulseRef = useRef<THREE.Mesh>(null);
     const roleMaterial = useMemo(() => {
         const color = roleAccentColors[role] ?? '#67e8f9';
 
@@ -550,8 +551,12 @@ function RobotModel({
                   ? 7
                   : 2.2;
 
-        statusMaterial.emissiveIntensity =
-            1.55 + ((Math.sin(t * pace) + 1) / 2) * 1.25;
+        if (statusPulseRef.current) {
+            const material = statusPulseRef.current
+                .material as THREE.MeshStandardMaterial;
+            material.emissiveIntensity =
+                1.55 + ((Math.sin(t * pace) + 1) / 2) * 1.25;
+        }
     });
 
     return (
@@ -568,7 +573,9 @@ function RobotModel({
                     position={[0, -0.18, 0.338]}
                     scale={[0.5, 0.24, 0.035]}
                 />
-                <BoxPart
+                <mesh
+                    ref={statusPulseRef}
+                    geometry={boxGeometry}
                     material={statusMaterial}
                     position={[0, 0.11, 0.342]}
                     scale={[0.42, 0.075, 0.04]}
