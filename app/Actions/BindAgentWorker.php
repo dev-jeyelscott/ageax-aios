@@ -52,8 +52,8 @@ class BindAgentWorker
                 'previous_agent_id' => $previousAgentId,
                 'agent_id' => $lockedAgent->id,
                 'agent_configuration_version' => $lockedAgent->configuration_version,
-                'role' => $lockedAgent->role->value,
-                'harness' => $lockedAgent->harness->value,
+                'role' => (string) $lockedAgent->getRawOriginal('role'),
+                'harness' => (string) $lockedAgent->getRawOriginal('harness'),
             ], $project);
 
             return $lockedWorker->refresh();

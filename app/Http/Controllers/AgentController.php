@@ -34,8 +34,8 @@ class AgentController extends Controller
                 'project_id' => $project->id,
                 'agent_id' => $agent->id,
                 'configuration_version' => $agent->configuration_version,
-                'role' => $agent->role->value,
-                'harness' => $agent->harness->value,
+                'role' => (string) $agent->getRawOriginal('role'),
+                'harness' => (string) $agent->getRawOriginal('harness'),
             ], $project);
         }, attempts: 3);
 
@@ -65,8 +65,8 @@ class AgentController extends Controller
                 'agent_id' => $agent->id,
                 'previous_configuration_version' => $previousVersion,
                 'configuration_version' => $agent->configuration_version,
-                'role' => $agent->role->value,
-                'harness' => $agent->harness->value,
+                'role' => (string) $agent->getRawOriginal('role'),
+                'harness' => (string) $agent->getRawOriginal('harness'),
             ];
 
             $this->audit->record('agent.updated', $payload, $project);
