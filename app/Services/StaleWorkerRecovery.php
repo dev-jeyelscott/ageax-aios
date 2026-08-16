@@ -5,6 +5,7 @@ namespace App\Services;
 use App\AgentRole;
 use App\AgentRunStatus;
 use App\Models\AgentRun;
+use App\Models\AgentWorker;
 use App\Models\Project;
 use App\Models\Roadmap;
 use App\Models\RoadmapAttempt;
@@ -42,7 +43,78 @@ class StaleWorkerRecovery
             }
         }
 
-        return $recovered + $this->recoverStaleRoadmaps($project, $staleAfterSeconds, $recoveryInstanceId);
+        return $recovered + $this->recoverOrphanedRuns($project, $staleAfterSeconds) + $this->recoverStaleRoadmaps($project, $staleAfterSeconds, $recoveryInstanceId);
+    }
+
+    /**
+     * Catches executions abandoned by a crashed worker process without going through
+     * takeoverExpired(): once a lease expires, the durable aios:work loop's own acquire()
+     * (every few seconds) can silently reclaim-and-release that worker slot on its next idle
+     * cycle, long before this five-minute scan runs, resetting last_heartbeat_at and clearing
+     * lease_id. That leaves the AgentWorker row looking healthy while the specific AgentRun (and
+     * its Task) the crashed process was executing stays stuck at status Running/Coding forever.
+     * This scan is keyed on the run's own age and its lease no longer matching the worker's
+     * current lease, so it is immune to that race.
+     */
+    private function recoverOrphanedRuns(Project $project, int $staleAfterSeconds): int
+    {
+        $recovered = 0;
+
+        AgentRun::query()
+            ->whereBelongsTo($project)
+            ->whereIn('role', [AgentRole::Coder, AgentRole::Reviewer])
+            ->where('status', AgentRunStatus::Running)
+            ->where('started_at', '<=', now()->subSeconds($staleAfterSeconds))
+            ->get()
+            ->each(function (AgentRun $run) use (&$recovered): void {
+                if ($this->recoverOrphanedRun($run)) {
+                    $recovered++;
+                }
+            });
+
+        return $recovered;
+    }
+
+    private function recoverOrphanedRun(AgentRun $run): bool
+    {
+        return DB::transaction(function () use ($run): bool {
+            $lockedRun = AgentRun::query()->lockForUpdate()->find($run->id);
+            if ($lockedRun === null || AgentRunStatus::from($lockedRun->getRawOriginal('status')) !== AgentRunStatus::Running) {
+                return false;
+            }
+
+            $worker = AgentWorker::query()->whereBelongsTo($lockedRun->project)->where('role', $lockedRun->role)->first();
+            if ($worker !== null && $worker->lease_id !== null && $worker->lease_id === $lockedRun->worker_lease_id) {
+                // The lease that started this run is still held; it is genuinely still executing.
+                return false;
+            }
+
+            $task = $lockedRun->task_id === null ? null : Task::query()->lockForUpdate()->find($lockedRun->task_id);
+            $expectedStatuses = match ($lockedRun->role) {
+                AgentRole::Coder => [TaskStatus::Coding, TaskStatus::Validating],
+                AgentRole::Reviewer => [TaskStatus::Reviewing],
+                AgentRole::KnowledgeArchitect, AgentRole::ProjectManager, AgentRole::RecoveryEngineer => [],
+            };
+
+            if ($task === null || $expectedStatuses === [] || ! in_array(TaskStatus::from($task->getRawOriginal('status')), $expectedStatuses, true)) {
+                return false;
+            }
+
+            $lockedRun->update(['status' => AgentRunStatus::Interrupted, 'finished_at' => now()]);
+            $evidence = $this->recoveryEvidence($task);
+            $this->storeRecoveryEvidence($task, $evidence);
+
+            if ($lockedRun->role === AgentRole::Coder) {
+                $task->attempts()->where('status', 'running')->update(['status' => 'interrupted', 'finished_at' => now()]);
+                $this->workflow->transition($task, TaskStatus::Failed);
+            } else {
+                $this->workflow->recordReviewerOperationalFailure($task, $task->attempts()->latest('number')->first(), ['reason' => 'orphaned_agent_run', 'evidence' => $evidence]);
+            }
+
+            $this->audit->record('task.recovered', ['role' => $lockedRun->role->value, 'reason' => 'orphaned_agent_run', 'agent_run_id' => $lockedRun->id, 'evidence' => $evidence], $lockedRun->project, $task);
+
+            return true;
+        }, attempts: 3);
     }
 
     private function recoverWorker(Project $project, AgentRole $role, WorkerLease $lease): void

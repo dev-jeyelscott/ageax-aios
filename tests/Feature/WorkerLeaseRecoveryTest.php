@@ -84,6 +84,27 @@ test('an expired genuinely dead worker is taken over and its same task becomes r
         ->and($project->auditEvents()->where('event_type', 'worker.recovered')->exists())->toBeTrue();
 });
 
+test('a task orphaned by a crashed execution is recovered even once the worker looks idle again', function () {
+    $project = Project::create(['name' => 'Orphaned', 'path' => '/tmp/orphaned-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $worker = leasedWorker($project);
+    $deadLeaseId = fake()->uuid();
+    $task = leasedTask($project, status: TaskStatus::Coding);
+    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'running', 'started_at' => now()->subMinutes(5)]);
+    $run = AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'agent_worker_id' => $worker->id, 'worker_lease_id' => $deadLeaseId, 'role' => AgentRole::Coder, 'status' => AgentRunStatus::Running, 'prompt_hash' => hash('sha256', 'orphaned'), 'started_at' => now()->subMinutes(5)]);
+
+    // Once the dead lease expired, a fresh worker process reclaimed-and-released the same role's
+    // slot on an ordinary idle cycle, leaving the AgentWorker row healthy (fresh heartbeat, no
+    // lease) even though the run above never finished.
+    $worker->update(['status' => 'idle', 'worker_instance_id' => fake()->uuid(), 'lease_id' => null, 'lease_expires_at' => null, 'last_heartbeat_at' => now()]);
+
+    expect(app(StaleWorkerRecovery::class)->recover($project, 60))->toBe(1)
+        ->and($task->refresh()->status)->toBe(TaskStatus::Failed)
+        ->and($attempt->refresh()->status)->toBe('interrupted')
+        ->and($run->refresh()->status)->toBe(AgentRunStatus::Interrupted)
+        ->and($worker->refresh()->status)->toBe('idle')
+        ->and($project->auditEvents()->where('event_type', 'task.recovered')->where('payload->reason', 'orphaned_agent_run')->exists())->toBeTrue();
+});
+
 test('two worker processes cannot acquire the same role lease or task execution', function () {
     $project = Project::create(['name' => 'Concurrent', 'path' => '/tmp/concurrent-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     leasedWorker($project);

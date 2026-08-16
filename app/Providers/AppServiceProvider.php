@@ -36,6 +36,7 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->configureDefaults();
         DevCommands::artisan('aios:work', 'aios-workers');
+        DevCommands::artisan('schedule:work', 'scheduler');
     }
 
     /**
