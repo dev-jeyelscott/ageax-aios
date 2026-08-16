@@ -89,6 +89,14 @@ test('agent configuration changes increment version and callers cannot override 
 
     expect($agent->refresh()->configuration_version)->toBe(2);
 
+    $agent->save();
+
+    expect($agent->refresh()->configuration_version)->toBe(2);
+
+    $agent->touch();
+
+    expect($agent->refresh()->configuration_version)->toBe(2);
+
     $agent->configuration_version = 500;
     $agent->update([
         'harness' => AgentHarness::ClaudeCode,
@@ -98,6 +106,33 @@ test('agent configuration changes increment version and callers cannot override 
     expect($agent->refresh()->configuration_version)->toBe(3)
         ->and($agent->harness)->toBe(AgentHarness::ClaudeCode)
         ->and($agent->reasoning_setting)->toBe('high');
+});
+
+test('stale agent instances advance from the latest persisted configuration version', function () {
+    $project = createAgentPersistenceProject('Stale versioned agent configuration');
+    $agent = Agent::factory()->for($project)->create();
+
+    $firstInstance = Agent::query()->findOrFail($agent->id);
+    $secondInstance = Agent::query()->findOrFail($agent->id);
+
+    expect($firstInstance->configuration_version)->toBe(1)
+        ->and($secondInstance->configuration_version)->toBe(1);
+
+    $firstInstance->update([
+        'default_context' => 'First independently loaded Agent edit.',
+    ]);
+
+    expect($firstInstance->refresh()->configuration_version)->toBe(2);
+
+    $secondInstance->update([
+        'reasoning_setting' => 'high',
+    ]);
+
+    $persistedAgent = Agent::query()->findOrFail($agent->id);
+
+    expect($persistedAgent->configuration_version)->toBe(3)
+        ->and($persistedAgent->default_context)->toBe('First independently loaded Agent edit.')
+        ->and($persistedAgent->reasoning_setting)->toBe('high');
 });
 
 test('agent project ownership cannot be moved after persistence', function () {

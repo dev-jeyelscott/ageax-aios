@@ -50,30 +50,36 @@ class AgentController extends Controller
         abort_unless($agent->project_id === $project->id, 404);
 
         DB::transaction(function () use ($request, $project, $agent): void {
-            $previousVersion = $agent->configuration_version;
-            $wasEnabled = $agent->enabled;
+            $lockedAgent = Agent::query()
+                ->whereKey($agent->getKey())
+                ->where('project_id', $project->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-            $agent->update($request->validated());
-            $agent->refresh();
+            $previousVersion = $lockedAgent->configuration_version;
+            $wasEnabled = $lockedAgent->enabled;
 
-            if ($agent->configuration_version === $previousVersion) {
+            $lockedAgent->update($request->validated());
+            $lockedAgent->refresh();
+
+            if ($lockedAgent->configuration_version === $previousVersion) {
                 return;
             }
 
             $payload = [
                 'project_id' => $project->id,
-                'agent_id' => $agent->id,
+                'agent_id' => $lockedAgent->id,
                 'previous_configuration_version' => $previousVersion,
-                'configuration_version' => $agent->configuration_version,
-                'role' => (string) $agent->getRawOriginal('role'),
-                'harness' => (string) $agent->getRawOriginal('harness'),
+                'configuration_version' => $lockedAgent->configuration_version,
+                'role' => (string) $lockedAgent->getRawOriginal('role'),
+                'harness' => (string) $lockedAgent->getRawOriginal('harness'),
             ];
 
             $this->audit->record('agent.updated', $payload, $project);
 
-            if ($wasEnabled !== $agent->enabled) {
+            if ($wasEnabled !== $lockedAgent->enabled) {
                 $this->audit->record(
-                    $agent->enabled ? 'agent.enabled' : 'agent.disabled',
+                    $lockedAgent->enabled ? 'agent.enabled' : 'agent.disabled',
                     $payload,
                     $project,
                 );

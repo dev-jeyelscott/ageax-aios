@@ -58,7 +58,8 @@ class Agent extends Model
                 throw new LogicException('Agent project ownership cannot be changed.');
             }
 
-            $currentVersion = max(1, (int) $agent->getOriginal('configuration_version'));
+            $currentVersion = $agent->latestPersistedConfigurationVersion();
+
             $agent->configuration_version = $agent->isDirty(self::VERSIONED_ATTRIBUTES)
                 ? $currentVersion + 1
                 : $currentVersion;
@@ -97,9 +98,19 @@ class Agent extends Model
         return $this->skills()->where('skills.enabled', true)->get();
     }
 
+    private function latestPersistedConfigurationVersion(): int
+    {
+        $version = static::query()
+            ->whereKey($this->getKey())
+            ->value('configuration_version');
+
+        return max(1, (int) $version);
+    }
+
     private function assertConfigurationIsValid(): void
     {
         $role = $this->getAttribute('role');
+
         if (! $role instanceof AgentRole || ! in_array($role, [AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer], true)) {
             throw new LogicException('Agent role must be a supported AIOS workflow role.');
         }
@@ -110,6 +121,7 @@ class Agent extends Model
 
         foreach (['name', 'model', 'reasoning_setting', 'default_context'] as $attribute) {
             $value = $this->getAttribute($attribute);
+
             if (is_string($value) && $this->containsSecretMaterial($value)) {
                 throw new LogicException('Agent configuration cannot contain secret material.');
             }
