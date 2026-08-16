@@ -58,6 +58,10 @@ class Agent extends Model
                 throw new LogicException('Agent project ownership cannot be changed.');
             }
 
+            if ($agent->getAttribute('project_id') === null && $agent->isDirty('role')) {
+                throw new LogicException('A global Agent\'s system role cannot be changed.');
+            }
+
             $currentVersion = $agent->latestPersistedConfigurationVersion();
 
             $agent->configuration_version = $agent->isDirty(self::VERSIONED_ATTRIBUTES)
@@ -110,12 +114,21 @@ class Agent extends Model
         return $version < 1 ? 1 : $version;
     }
 
+    /** Global Agents (project_id null) configure AIOS system/reliability roles; project Agents configure core workflow roles. Never both. */
+    private const array GlobalRoles = [AgentRole::RecoveryEngineer];
+
+    private const array ProjectRoles = [AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer];
+
     private function assertConfigurationIsValid(): void
     {
         $role = $this->getAttribute('role');
+        $isGlobal = $this->getAttribute('project_id') === null;
+        $allowedRoles = $isGlobal ? self::GlobalRoles : self::ProjectRoles;
 
-        if (! $role instanceof AgentRole || ! in_array($role, [AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer], true)) {
-            throw new LogicException('Agent role must be a supported AIOS workflow role.');
+        if (! $role instanceof AgentRole || ! in_array($role, $allowedRoles, true)) {
+            throw new LogicException($isGlobal
+                ? 'A global Agent role must be a supported AIOS system role.'
+                : 'Agent role must be a supported AIOS workflow role.');
         }
 
         if (! ($this->getAttribute('harness') instanceof AgentHarness)) {

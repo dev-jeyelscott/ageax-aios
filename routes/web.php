@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AgentController;
+use App\Http\Controllers\GlobalAgentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\SkillController;
 use Illuminate\Support\Facades\Route;
@@ -10,6 +11,11 @@ Route::inertia('/', 'welcome')->name('home');
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::inertia('dashboard', 'dashboard')->name('dashboard');
     Route::resource('projects', ProjectController::class)->only(['index', 'store', 'show']);
+
+    Route::get('agents', [GlobalAgentController::class, 'index'])->name('agents.index');
+    Route::get('agents/{agent}', [GlobalAgentController::class, 'show'])->name('agents.show');
+    Route::patch('agents/{agent}', [GlobalAgentController::class, 'update'])->name('agents.update');
+    Route::get('agents/{agent}/runs/{run}', [GlobalAgentController::class, 'showRun'])->scopeBindings()->name('agents.runs.show');
     Route::patch('projects/{project}/status', [ProjectController::class, 'updateStatus'])->name('projects.status.update');
     Route::get('projects/{project}/tasks/{task}', [ProjectController::class, 'showTask'])->scopeBindings()->name('projects.tasks.show');
     Route::get('projects/{project}/agent-runs/{run}', [ProjectController::class, 'showAgentRun'])->scopeBindings()->name('projects.agent-runs.show');

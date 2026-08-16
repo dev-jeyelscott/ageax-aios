@@ -3,16 +3,15 @@
 namespace App\Services;
 
 use App\AgentHarness as AgentHarnessIdentifier;
-use App\AgentRole;
 use App\Models\Agent;
 
 /**
  * Dispatches the Workflow Recovery Engineer's fresh, disposable diagnosis/repair execution.
  *
- * The Recovery Engineer is an AIOS system role, not a project Agent (Agent::role rejects
- * AgentRole::RecoveryEngineer), so it is never persisted: the Agent instance built here exists
- * only to reuse the existing harness dispatch contract (model/reasoning configuration, tool
- * gating) and is discarded once the run completes.
+ * The Recovery Engineer is an AIOS system role, configured as a global Agent (project_id null)
+ * rather than a project Agent. The caller resolves and validates that persisted Agent (via
+ * GlobalAgentResolver / AgentHarnessResolver) and supplies it here; this class only dispatches
+ * the fresh, disposable execution against the AIOS repository itself, never a managed project.
  */
 class RecoveryEngineerRunner
 {
@@ -23,9 +22,8 @@ class RecoveryEngineerRunner
     ) {}
 
     /** @return array{execution: array{exit_code: int, output: string, error_output: string}, decision: ?array<string, mixed>} */
-    public function run(string $prompt): array
+    public function run(Agent $agent, string $prompt): array
     {
-        $agent = $this->transientAgent();
         $path = (string) config('aios.recovery_repository_path');
 
         $execution = $agent->getRawOriginal('harness') === AgentHarnessIdentifier::Codex->value
@@ -49,20 +47,5 @@ class RecoveryEngineerRunner
             'output' => $execution['output'],
             'error_output' => $execution['error_output'],
         ];
-    }
-
-    private function transientAgent(): Agent
-    {
-        $agent = new Agent;
-        $agent->forceFill([
-            'name' => 'AIOS Workflow Recovery Engineer',
-            'role' => AgentRole::RecoveryEngineer,
-            'harness' => AgentHarnessIdentifier::from((string) config('aios.recovery_engineer_harness')),
-            'model' => config('aios.recovery_engineer_model'),
-            'reasoning_setting' => config('aios.recovery_engineer_reasoning_setting'),
-            'enabled' => true,
-        ]);
-
-        return $agent;
     }
 }

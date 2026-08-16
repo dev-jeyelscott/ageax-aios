@@ -13,6 +13,7 @@ use App\TaskStatus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use LogicException;
 
 /**
  * Repair half of the Workflow Recovery Engineer. Claims one open RecoveryIncident at a time
@@ -38,6 +39,8 @@ class WorkflowRecoveryEngine
         private RecoveryRepositoryLifecycle $lifecycle,
         private ProjectGitState $git,
         private DirtyRepositoryAttributor $attributor,
+        private GlobalAgentResolver $globalAgents,
+        private AgentHarnessResolver $harnesses,
     ) {}
 
     /**
@@ -258,6 +261,26 @@ class WorkflowRecoveryEngine
     /** @return array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string} */
     private function diagnoseWithRecoveryEngineer(RecoveryIncident $incident, ?Task $task): array
     {
+        try {
+            $agent = $this->globalAgents->forRole(AgentRole::RecoveryEngineer);
+            $this->harnesses->resolve($agent);
+        } catch (LogicException $exception) {
+            $this->audit->record('recovery.blocked_agent_misconfigured', [
+                'recovery_incident_id' => $incident->id,
+                'reason' => $exception->getMessage(),
+            ], $incident->project, $task);
+
+            return [
+                'category' => 'configuration_environment',
+                'summary' => 'The global Recovery Engineer Agent is disabled or misconfigured, so no diagnosis was attempted.',
+                'recoverable' => false,
+                'fix_applied' => false,
+                'changed_files' => [],
+                'fix_summary' => null,
+                'escalation_reason' => $exception->getMessage(),
+            ];
+        }
+
         $repositoryPath = (string) config('aios.recovery_repository_path');
         $preflight = $this->lifecycle->preflight($repositoryPath);
 
@@ -275,9 +298,9 @@ class WorkflowRecoveryEngine
 
         $prompt = $this->buildPrompt($incident, $task, $preflight['head_sha']);
         $project = $task?->project;
-        $run = $this->runs->start($project ?? $incident->project, AgentRole::RecoveryEngineer, $prompt, $task);
+        $run = $this->runs->start($project ?? $incident->project, AgentRole::RecoveryEngineer, $prompt, $task, agent: $agent);
         $run->update(['recovery_incident_id' => $incident->id]);
-        $result = $this->engineer->run($prompt);
+        $result = $this->engineer->run($agent, $prompt);
         $this->runs->complete($run, $result['execution']);
 
         if ($result['execution']['exit_code'] !== 0 || $result['decision'] === null) {

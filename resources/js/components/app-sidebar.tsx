@@ -1,5 +1,6 @@
 import { Link } from '@inertiajs/react';
-import { FolderKanban, LayoutGrid } from 'lucide-react';
+import { Bot, FolderKanban, LayoutGrid } from 'lucide-react';
+import { index as agentsIndex } from '@/actions/App/Http/Controllers/GlobalAgentController';
 import { index as projectsIndex } from '@/actions/App/Http/Controllers/ProjectController';
 import AppLogo from '@/components/app-logo';
 import { NavMain } from '@/components/nav-main';
@@ -26,6 +27,11 @@ const mainNavItems: NavItem[] = [
         title: 'Projects',
         href: projectsIndex(),
         icon: FolderKanban,
+    },
+    {
+        title: 'Agents',
+        href: agentsIndex(),
+        icon: Bot,
     },
 ];
 
