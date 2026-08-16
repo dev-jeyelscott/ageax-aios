@@ -608,63 +608,69 @@ function TasksPanel({ project }: { project: Project }) {
             </CardHeader>
 
             <CardContent className="grid gap-2.5">
-                {project.tasks.map((task) => (
-                    <div
-                        key={task.id}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/45 p-3"
-                    >
-                        <div className="min-w-0">
-                            <Link
-                                href={
-                                    showTask({
-                                        project: project.id,
-                                        task: task.id,
-                                    }).url
-                                }
-                                className="font-medium text-foreground hover:text-primary"
-                            >
-                                {task.key}: {task.title}
-                            </Link>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                                Attempt {task.attempts[0]?.number ?? '—'} ·
-                                Review {task.reviews[0]?.status ?? '—'}
-                            </p>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <Badge
-                                variant={
-                                    task.status === 'done'
-                                        ? 'default'
-                                        : 'secondary'
-                                }
-                            >
-                                {task.status}
-                            </Badge>
-
-                            {task.status === 'blocked' && (
-                                <Form
-                                    {...requeueTask.form({
-                                        project: project.id,
-                                        task: task.id,
-                                    })}
+                {[...project.tasks]
+                    .sort(
+                        (a, b) =>
+                            Number(a.status === 'done') -
+                            Number(b.status === 'done'),
+                    )
+                    .map((task) => (
+                        <div
+                            key={task.id}
+                            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/45 p-3"
+                        >
+                            <div className="min-w-0">
+                                <Link
+                                    href={
+                                        showTask({
+                                            project: project.id,
+                                            task: task.id,
+                                        }).url
+                                    }
+                                    className="font-medium text-foreground hover:text-primary"
                                 >
-                                    {({ processing }) => (
-                                        <Button
-                                            size="sm"
-                                            type="submit"
-                                            variant="outline"
-                                            disabled={processing}
-                                        >
-                                            <RotateCcw />
-                                            Retry
-                                        </Button>
-                                    )}
-                                </Form>
-                            )}
+                                    {task.key}: {task.title}
+                                </Link>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                    Attempt {task.attempts[0]?.number ?? '—'} ·
+                                    Review {task.reviews[0]?.status ?? '—'}
+                                </p>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <Badge
+                                    variant={
+                                        task.status === 'done'
+                                            ? 'default'
+                                            : 'secondary'
+                                    }
+                                >
+                                    {task.status}
+                                </Badge>
+
+                                {task.status === 'blocked' && (
+                                    <Form
+                                        {...requeueTask.form({
+                                            project: project.id,
+                                            task: task.id,
+                                        })}
+                                    >
+                                        {({ processing }) => (
+                                            <Button
+                                                size="sm"
+                                                type="submit"
+                                                variant="outline"
+                                                disabled={processing}
+                                            >
+                                                <RotateCcw />
+                                                Retry
+                                            </Button>
+                                        )}
+                                    </Form>
+                                )}
+                            </div>
                         </div>
-                    </div>
-                ))}
+                    ))}
 
                 {project.tasks.length === 0 && (
                     <p className="py-8 text-center text-sm text-muted-foreground">
