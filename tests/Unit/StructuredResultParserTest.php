@@ -17,3 +17,45 @@ JSONL;
         ]],
     ]);
 });
+
+test('it extracts a review decision from a pretty-printed fenced JSON block', function () {
+    $output = <<<'TEXT'
+    ```json
+    {
+      "outcome": "approved",
+      "summary": "Phase reviewed at HEAD against base. Everything checks out."
+    }
+    ```
+    TEXT;
+
+    expect(app(StructuredResultParser::class)->parseAgentMessage($output))->toBe([
+        'outcome' => 'approved',
+        'summary' => 'Phase reviewed at HEAD against base. Everything checks out.',
+    ]);
+});
+
+test('it extracts a review decision from pretty-printed JSON with no fence', function () {
+    $output = <<<'TEXT'
+    {
+      "outcome": "changes_required",
+      "summary": null,
+      "findings": [
+        {
+          "severity": "high",
+          "location": "app/Models/Foo.php",
+          "current_implementation": "does X",
+          "expected_implementation": "should do Y",
+          "why_incorrect": "breaks Z",
+          "required_fix": "change X to Y",
+          "verification_requirement": "add a test",
+          "implementation_fix_context": "see spec"
+        }
+      ]
+    }
+    TEXT;
+
+    $result = app(StructuredResultParser::class)->parseAgentMessage($output);
+
+    expect($result['outcome'])->toBe('changes_required')
+        ->and($result['findings'])->toHaveCount(1);
+});

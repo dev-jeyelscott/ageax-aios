@@ -17,26 +17,55 @@ class StructuredResultParser
     /** @return array<string, mixed>|null */
     public function parseAgentMessage(string $output): ?array
     {
-        foreach (array_reverse(preg_split('/\R/', trim($output)) ?: []) as $line) {
-            try {
-                $decoded = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
-                if (is_array($decoded) && ! isset($decoded['type'])) {
-                    return $decoded;
-                }
+        $trimmed = trim($output);
 
-                $message = $decoded['item']['text'] ?? null;
-                if (! is_string($message)) {
-                    continue;
-                }
+        foreach (array_reverse(preg_split('/\R/', $trimmed) ?: []) as $line) {
+            $decoded = $this->decodeJsonObject($line);
+            if ($decoded !== null && ! isset($decoded['type'])) {
+                return $decoded;
+            }
 
-                $payload = json_decode($message, true, 512, JSON_THROW_ON_ERROR);
-                if (is_array($payload)) {
-                    return $payload;
-                }
-            } catch (JsonException) {
+            $message = $decoded['item']['text'] ?? null;
+            if (is_string($message) && ($payload = $this->decodeJsonObject($message)) !== null) {
+                return $payload;
             }
         }
 
-        return null;
+        // Harnesses such as Claude Code may return a single pretty-printed JSON
+        // object (often inside a ```json fence) instead of the codex-style NDJSON
+        // envelope handled above. Fall back to extracting that object directly.
+        return $this->decodeFencedOrEmbeddedJsonObject($trimmed);
+    }
+
+    /** @return array<string, mixed>|null */
+    private function decodeFencedOrEmbeddedJsonObject(string $output): ?array
+    {
+        if (preg_match_all('/```(?:json)?\s*(.*?)\s*```/s', $output, $matches) && $matches[1] !== []) {
+            foreach (array_reverse($matches[1]) as $candidate) {
+                if (($decoded = $this->decodeJsonObject($candidate)) !== null) {
+                    return $decoded;
+                }
+            }
+        }
+
+        $start = strpos($output, '{');
+        $end = strrpos($output, '}');
+        if ($start === false || $end === false || $end <= $start) {
+            return null;
+        }
+
+        return $this->decodeJsonObject(substr($output, $start, $end - $start + 1));
+    }
+
+    /** @return array<string, mixed>|null */
+    private function decodeJsonObject(string $value): ?array
+    {
+        try {
+            $decoded = json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+
+            return is_array($decoded) ? $decoded : null;
+        } catch (JsonException) {
+            return null;
+        }
     }
 }
