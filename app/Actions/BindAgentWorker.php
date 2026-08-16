@@ -5,11 +5,14 @@ namespace App\Actions;
 use App\AgentRunStatus;
 use App\Models\Agent;
 use App\Models\AgentWorker;
+use App\Services\AuditLogger;
 use Illuminate\Support\Facades\DB;
 use LogicException;
 
 class BindAgentWorker
 {
+    public function __construct(private AuditLogger $audit) {}
+
     public function handle(AgentWorker $worker, Agent $agent): AgentWorker
     {
         return DB::transaction(function () use ($worker, $agent): AgentWorker {
@@ -36,8 +39,22 @@ class BindAgentWorker
                 throw new LogicException('A workflow worker with an active lease or run cannot be rebound.');
             }
 
+            $previousAgentId = $lockedWorker->agent_id;
+
             $lockedWorker->agent()->associate($lockedAgent);
             $lockedWorker->save();
+
+            $project = $lockedWorker->project()->firstOrFail();
+
+            $this->audit->record('agent.bound', [
+                'project_id' => $project->id,
+                'agent_worker_id' => $lockedWorker->id,
+                'previous_agent_id' => $previousAgentId,
+                'agent_id' => $lockedAgent->id,
+                'agent_configuration_version' => $lockedAgent->configuration_version,
+                'role' => $lockedAgent->role->value,
+                'harness' => $lockedAgent->harness->value,
+            ], $project);
 
             return $lockedWorker->refresh();
         }, attempts: 3);

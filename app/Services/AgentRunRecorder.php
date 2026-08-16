@@ -50,6 +50,43 @@ class AgentRunRecorder
             'started_at' => now(),
         ]);
 
+        if ($agent !== null) {
+            $selectionPayload = [
+                'project_id' => $project->id,
+                'agent_run_id' => $run->id,
+                'agent_id' => $agent->id,
+                'agent_configuration_version' => $agent->configuration_version,
+                'role' => $role->value,
+                'harness' => $run->harness,
+            ];
+
+            $this->audit->record(
+                'agent_run.harness_selected',
+                $selectionPayload,
+                $project,
+                $task,
+            );
+
+            if ($context !== null) {
+                $skills = [];
+
+                foreach ($context->skillsSnapshot as $skill) {
+                    $skills[] = [
+                        'skill_id' => $skill['id'] ?? null,
+                        'skill_version' => $skill['version'] ?? null,
+                        'position' => $skill['position'] ?? null,
+                    ];
+                }
+
+                $this->audit->record('agent_run.configuration_snapshotted', [
+                    ...$selectionPayload,
+                    'context_schema_version' => $context->contextSchemaVersion,
+                    'context_hash' => $context->hash,
+                    'skills' => $skills,
+                ], $project, $task);
+            }
+        }
+
         $this->audit->record('agent.execution_started', [
             'agent_run_id' => $run->id,
             'role' => $role->value,
@@ -76,12 +113,14 @@ class AgentRunRecorder
         Storage::disk('local')->put($logPath, $output."\n".$errorOutput);
         $metadata = $this->metadata($output);
         $liveOutput = $run->fresh()->live_output;
+
         if (blank($liveOutput)) {
             $liveOutput = $this->boundedOutput($output."\n".$errorOutput);
         }
 
         $existingResult = $this->result($run->fresh());
         $externalRunId = is_string($execution['external_run_id'] ?? null) ? $execution['external_run_id'] : $metadata['codex_run_id'];
+
         $run->update([
             'status' => $execution['exit_code'] === 0 ? AgentRunStatus::Completed : AgentRunStatus::Failed,
             'exit_code' => $execution['exit_code'],
@@ -99,6 +138,7 @@ class AgentRunRecorder
         $completedRun = $run->refresh();
         $completedRun->loadMissing('project', 'task');
         $observability = $this->tokens->forProject($completedRun->project);
+
         $this->audit->record('agent.execution_completed', [
             'agent_run_id' => $completedRun->id,
             'role' => AgentRole::from($completedRun->getRawOriginal('role'))->value,
@@ -117,6 +157,7 @@ class AgentRunRecorder
 
         $role = AgentRole::from($completedRun->getRawOriginal('role'));
         $threshold = $observability[$role->value]['warning_threshold'] ?? null;
+
         if ($threshold !== null && $completedRun->token_usage !== null && $completedRun->token_usage >= $threshold) {
             $this->audit->record('agent.token_warning', [
                 'agent_run_id' => $completedRun->id,
@@ -160,14 +201,17 @@ class AgentRunRecorder
     public function agentMessages(AgentRun $run): array
     {
         $output = $this->transcript($run);
+
         if ($output === null) {
             return [];
         }
 
         $messages = [];
+
         foreach (preg_split('/\R/', $output) ?: [] as $line) {
             $event = json_decode($line, true);
             $item = is_array($event) ? $event['item'] ?? null : null;
+
             if (! is_array($item) || ($item['type'] ?? null) !== 'agent_message' || ! is_string($item['text'] ?? null)) {
                 continue;
             }
@@ -186,13 +230,16 @@ class AgentRunRecorder
     public function failureReason(AgentRun $run): ?string
     {
         $output = $this->transcript($run);
+
         if ($output === null) {
             return null;
         }
 
         $reason = null;
+
         foreach (preg_split('/\R/', $output) ?: [] as $line) {
             $event = json_decode($line, true);
+
             if (! is_array($event)) {
                 continue;
             }
@@ -234,12 +281,16 @@ class AgentRunRecorder
 
     private function redactSensitiveOutput(string $output): string
     {
-        return implode("\n", array_map(fn (string $line): string => $this->redactOutputLine($line), explode("\n", $output)));
+        return implode("\n", array_map(
+            fn (string $line): string => $this->redactOutputLine($line),
+            explode("\n", $output),
+        ));
     }
 
     private function redactOutputLine(string $line): string
     {
         $event = json_decode($line, true);
+
         if (is_array($event)) {
             try {
                 return json_encode($this->redactValue($event), JSON_THROW_ON_ERROR);
@@ -258,8 +309,18 @@ class AgentRunRecorder
             '[REDACTED PRIVATE KEY]',
             $text,
         ) ?? $text;
-        $redacted = preg_replace('/(?i)(authorization\s*:\s*bearer\s+)[^\s"\']+/', '$1[REDACTED]', $redacted) ?? $redacted;
-        $redacted = preg_replace('/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/', '[REDACTED]', $redacted) ?? $redacted;
+
+        $redacted = preg_replace(
+            '/(?i)(authorization\s*:\s*bearer\s+)[^\s"\']+/',
+            '$1[REDACTED]',
+            $redacted,
+        ) ?? $redacted;
+
+        $redacted = preg_replace(
+            '/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/',
+            '[REDACTED]',
+            $redacted,
+        ) ?? $redacted;
 
         return preg_replace(
             '/(?i)\b((?=[a-z0-9_]*(?:token|secret|password|api_key|app_key|private_key|credential))[a-z][a-z0-9_]*)\s*=\s*[^\r\n]*/',
@@ -287,10 +348,19 @@ class AgentRunRecorder
 
     private function isSensitiveField(?string $field): bool
     {
-        return $field !== null && preg_match('/(?:token|secret|password|api_key|app_key|private_key|credential)/i', $field) === 1;
+        return $field !== null
+            && preg_match('/(?:token|secret|password|api_key|app_key|private_key|credential)/i', $field) === 1;
     }
 
-    /** @return array{codex_run_id: ?string, result: array<string, mixed>, commands: array<int, array{command: string, exit_code: int|null}>, file_modifications: array<int, array{path: string, kind: string}>, token_usage: int|null} */
+    /**
+     * @return array{
+     *     codex_run_id: ?string,
+     *     result: array<string, mixed>,
+     *     commands: array<int, array{command: string, exit_code: int|null}>,
+     *     file_modifications: array<int, array{path: string, kind: string}>,
+     *     token_usage: int|null
+     * }
+     */
     private function metadata(string $output): array
     {
         $codexRunId = null;
@@ -301,6 +371,7 @@ class AgentRunRecorder
 
         foreach (preg_split('/\R/', $output) ?: [] as $line) {
             $event = json_decode($line, true);
+
             if (! is_array($event)) {
                 continue;
             }
@@ -314,6 +385,7 @@ class AgentRunRecorder
             }
 
             $item = $event['item'] ?? null;
+
             if (! is_array($item) || ($event['type'] ?? null) !== 'item.completed') {
                 continue;
             }
@@ -335,20 +407,33 @@ class AgentRunRecorder
                         continue;
                     }
 
-                    $fileModifications[] = ['path' => $change['path'], 'kind' => $change['kind']];
+                    $fileModifications[] = [
+                        'path' => $change['path'],
+                        'kind' => $change['kind'],
+                    ];
                 }
             }
         }
 
-        $inputTokens = is_array($usage) && is_int($usage['input_tokens'] ?? null) ? $usage['input_tokens'] : 0;
-        $outputTokens = is_array($usage) && is_int($usage['output_tokens'] ?? null) ? $usage['output_tokens'] : 0;
+        $inputTokens = is_array($usage) && is_int($usage['input_tokens'] ?? null)
+            ? $usage['input_tokens']
+            : 0;
+
+        $outputTokens = is_array($usage) && is_int($usage['output_tokens'] ?? null)
+            ? $usage['output_tokens']
+            : 0;
 
         return [
             'codex_run_id' => $codexRunId,
-            'result' => array_filter(['agent_messages' => array_slice($agentMessages, -self::MetadataItemLimit), 'usage' => $usage]),
+            'result' => array_filter([
+                'agent_messages' => array_slice($agentMessages, -self::MetadataItemLimit),
+                'usage' => $usage,
+            ]),
             'commands' => array_slice($commands, -self::MetadataItemLimit),
             'file_modifications' => array_slice($fileModifications, -self::MetadataItemLimit),
-            'token_usage' => $inputTokens + $outputTokens > 0 ? $inputTokens + $outputTokens : null,
+            'token_usage' => $inputTokens + $outputTokens > 0
+                ? $inputTokens + $outputTokens
+                : null,
         ];
     }
 }

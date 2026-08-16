@@ -5,9 +5,12 @@ namespace App\Actions;
 use App\AgentHarness;
 use App\AgentRole;
 use App\Models\Project;
+use App\Services\AuditLogger;
 
 class ProvisionDefaultProjectAgents
 {
+    public function __construct(private AuditLogger $audit) {}
+
     /** @return array<string, string> role value => default agent name */
     public static function defaultNames(): array
     {
@@ -21,7 +24,7 @@ class ProvisionDefaultProjectAgents
     public function handle(Project $project): void
     {
         foreach ($this->defaults() as $definition) {
-            $project->agents()->firstOrCreate(
+            $agent = $project->agents()->firstOrCreate(
                 ['name' => $definition['name']],
                 [
                     'role' => $definition['role'],
@@ -29,6 +32,18 @@ class ProvisionDefaultProjectAgents
                     'enabled' => true,
                 ],
             );
+
+            if (! $agent->wasRecentlyCreated) {
+                continue;
+            }
+
+            $this->audit->record('agent.created', [
+                'project_id' => $project->id,
+                'agent_id' => $agent->id,
+                'configuration_version' => $agent->configuration_version,
+                'role' => $agent->role->value,
+                'harness' => $agent->harness->value,
+            ], $project);
         }
     }
 
