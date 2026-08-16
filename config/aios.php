@@ -21,6 +21,7 @@ return [
 
     // Workflow Recovery Engineer (AIOS system/reliability agent, not a project workflow role).
     'recovery_stale_status_after_seconds' => (int) env('AIOS_RECOVERY_STALE_STATUS_AFTER_SECONDS', 90),
+    'recovery_claim_stale_after_seconds' => (int) env('AIOS_RECOVERY_CLAIM_STALE_AFTER_SECONDS', 900),
     'recovery_max_attempts' => (int) env('AIOS_RECOVERY_MAX_ATTEMPTS', 3),
     'recovery_engineer_harness' => env('AIOS_RECOVERY_ENGINEER_HARNESS', 'claude_code'),
     'recovery_engineer_model' => env('AIOS_RECOVERY_ENGINEER_MODEL'),

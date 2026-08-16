@@ -20,6 +20,7 @@ class RecoverWorkflows extends Command
     public function handle(WorkflowRecoveryScanner $scanner, WorkflowRecoveryEngine $engine): int
     {
         foreach (Project::query()->whereIn('status', [ProjectStatus::Running, ProjectStatus::Stopping])->get() as $project) {
+            $engine->reclaimStaleClaims($project);
             $scanner->scan($project);
             $engine->processOpenIncidents($project);
         }

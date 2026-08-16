@@ -15,7 +15,12 @@ class RequeueBlockedTask
     {
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Blocked, 409, 'Only blocked tasks may be requeued.');
 
-        $status = $task->auditEvents()->whereIn('event_type', ['review.retry_exhausted', 'task.coder_retry_exhausted'])->exists()
+        $latestExhaustion = $task->auditEvents()
+            ->whereIn('event_type', ['review.retry_exhausted', 'task.coder_retry_exhausted'])
+            ->orderByDesc('occurred_at')
+            ->orderByDesc('id')
+            ->first();
+        $status = $latestExhaustion?->event_type === 'review.retry_exhausted'
             ? TaskStatus::ReadyForReview
             : TaskStatus::ChangesRequired;
         $task = $this->workflow->transition($task, $status);

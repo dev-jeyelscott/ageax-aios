@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\AgentRole;
+use App\AgentRunStatus;
 use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\RecoveryIncident;
@@ -35,7 +36,34 @@ class WorkflowRecoveryEngine
         private RecoveryEngineerRunner $engineer,
         private AgentRunRecorder $runs,
         private RecoveryRepositoryLifecycle $lifecycle,
+        private ProjectGitState $git,
+        private DirtyRepositoryAttributor $attributor,
     ) {}
+
+    /**
+     * Reclaim incidents whose Diagnosing/Repairing/Validating claim was abandoned by a Recovery
+     * Engineer execution that itself died mid-run (e.g. the harness process was killed or ran out
+     * of resources), so they are not silently orphaned forever: processOpenIncidents() only ever
+     * re-scans incidents still in Detected.
+     */
+    public function reclaimStaleClaims(Project $project): void
+    {
+        $staleAfterSeconds = max(1, (int) config('aios.recovery_claim_stale_after_seconds'));
+
+        RecoveryIncident::query()
+            ->whereBelongsTo($project)
+            ->whereIn('status', [RecoveryIncidentStatus::Diagnosing, RecoveryIncidentStatus::Repairing, RecoveryIncidentStatus::Validating])
+            ->where('claimed_at', '<=', now()->subSeconds($staleAfterSeconds))
+            ->get()
+            ->each(function (RecoveryIncident $incident) use ($project): void {
+                AgentRun::query()
+                    ->where('recovery_incident_id', $incident->id)
+                    ->where('status', AgentRunStatus::Running)
+                    ->update(['status' => AgentRunStatus::Interrupted, 'finished_at' => now()]);
+                $incident->update(['status' => RecoveryIncidentStatus::Detected, 'claim_token' => null, 'claimed_at' => null]);
+                $this->audit->record('recovery.claim_reclaimed', ['recovery_incident_id' => $incident->id], $project, $incident->task_id === null ? null : Task::query()->find($incident->task_id));
+            });
+    }
 
     /** Process every open, unclaimed incident for a project, one at a time (strict serial recovery). */
     public function processOpenIncidents(Project $project): void
@@ -85,6 +113,13 @@ class WorkflowRecoveryEngine
             return $this->escalate($incident, $classification, $task, $incident->attempt_count >= $maxAttempts ? 'Bounded recovery attempt limit reached.' : null);
         }
 
+        if ($task !== null && isset($classification['origin_task_id']) && $classification['origin_task_id'] !== $task->id) {
+            $originTask = Task::query()->find($classification['origin_task_id']);
+            if ($originTask !== null) {
+                return $this->recoverViaOriginatingTask($incident, $task, $originTask, $classification['summary']);
+            }
+        }
+
         if ($classification['fix_applied'] && $classification['changed_files'] !== []) {
             return $this->applyRepair($incident, $classification, $task);
         }
@@ -126,7 +161,7 @@ class WorkflowRecoveryEngine
         return $incident->fresh();
     }
 
-    /** @return ?array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string} */
+    /** @return ?array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string, origin_task_id?: int} */
     private function classifyDeterministically(?Task $task): ?array
     {
         if ($task === null) {
@@ -136,6 +171,13 @@ class WorkflowRecoveryEngine
         $blockingEvent = $task->auditEvents()->whereIn('event_type', array_keys(self::KnownDeterministicBlocks))->latest('occurred_at')->first();
         if ($blockingEvent === null) {
             return null;
+        }
+
+        if ($blockingEvent->event_type === 'task.blocked_dirty_repository') {
+            $attribution = $this->attributeStaleAttempt($task);
+            if ($attribution !== null) {
+                return $attribution;
+            }
         }
 
         $category = self::KnownDeterministicBlocks[$blockingEvent->event_type];
@@ -149,6 +191,68 @@ class WorkflowRecoveryEngine
             'fix_summary' => null,
             'escalation_reason' => "Automatic recovery is unsafe for category [{$category}]; the condition needs operator review and manual resolution before this task can be requeued.",
         ];
+    }
+
+    /**
+     * A task blocked on a dirty repository is often blocked by another task's own abandoned work,
+     * not its own: if the dirty tree is fully explained by a persisted, uncommitted TaskAttempt
+     * belonging to some task in the project, that origin task (not this one) is the actual thing
+     * to resume. Refuses to guess: any unexplained file, or more than one equally-plausible
+     * origin, falls through to the existing unconditional escalation.
+     *
+     * @return ?array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string, origin_task_id: int}
+     */
+    private function attributeStaleAttempt(Task $task): ?array
+    {
+        $task->loadMissing('project');
+        $state = $this->git->inspect($task->project->path);
+
+        if (! $state['inspectable'] || $state['clean']) {
+            return null;
+        }
+
+        $attempt = $this->attributor->attribute($task->project, $state);
+        if ($attempt === null) {
+            return null;
+        }
+
+        $originTask = $attempt->task;
+
+        return [
+            'category' => 'stale_agent_attempt',
+            'summary' => "The repository's uncommitted changes match task {$originTask->key} attempt #{$attempt->number}, which never committed before it was interrupted; resuming that task instead of escalating.",
+            'recoverable' => true,
+            'fix_applied' => false,
+            'changed_files' => [],
+            'fix_summary' => null,
+            'escalation_reason' => null,
+            'origin_task_id' => $originTask->id,
+        ];
+    }
+
+    private function recoverViaOriginatingTask(RecoveryIncident $incident, Task $incidentTask, Task $originTask, string $summary): RecoveryIncident
+    {
+        $incident->update(['status' => RecoveryIncidentStatus::Validating]);
+        $resultingStatus = $this->requeueTask($originTask);
+        $this->audit->record('task.stale_attempt_reclaimed', [
+            'recovery_incident_id' => $incident->id,
+            'origin_task_id' => $originTask->id,
+            'origin_task_key' => $originTask->key,
+            'resulting_status' => $resultingStatus,
+        ], $incident->project, $originTask);
+
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Recovered,
+            'fix_summary' => $summary,
+            'resulting_task_transition' => "task_{$originTask->key}:{$resultingStatus}",
+            'resolved_at' => now(),
+        ]);
+        $this->audit->record('recovery.recovered', [
+            'recovery_incident_id' => $incident->id,
+            'resulting_task_transition' => $incident->fresh()->resulting_task_transition,
+        ], $incident->project, $incidentTask);
+
+        return $incident->fresh();
     }
 
     /** @return array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string} */
@@ -307,7 +411,6 @@ class WorkflowRecoveryEngine
      */
     private function escalate(RecoveryIncident $incident, array $classification, ?Task $task, ?string $reasonOverride = null, ?array $validationEvidence = null): RecoveryIncident
     {
-        file_put_contents('/tmp/debug.log', json_encode(['classification' => $classification, 'reasonOverride' => $reasonOverride]).PHP_EOL, FILE_APPEND);
         $incident->update([
             'status' => RecoveryIncidentStatus::Escalated,
             'recoverable' => false,

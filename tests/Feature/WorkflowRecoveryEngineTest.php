@@ -18,6 +18,8 @@ use App\Services\WorkflowRecoveryScanner;
 use App\TaskStatus;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Process;
 use Mockery\MockInterface;
 
 function recoveryProject(string $name = 'Example'): Project
@@ -287,6 +289,118 @@ test('recovering a later task cannot bypass an incomplete earlier task', functio
 
     expect($secondTask->refresh()->status)->toBe(TaskStatus::Queued)
         ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder))->toBeNull();
+});
+
+test('a diagnosing incident whose recovery engineer run died mid-execution is reclaimed for a fresh diagnosis', function () {
+    config()->set('aios.recovery_claim_stale_after_seconds', 60);
+    $project = recoveryProject();
+    $task = recoveryTask($project, 'TASK-001', 1, TaskStatus::Blocked);
+    $incident = RecoveryIncident::create([
+        'project_id' => $project->id, 'task_id' => $task->id, 'failure_type' => 'task_blocked',
+        'status' => RecoveryIncidentStatus::Diagnosing, 'detected_at' => now()->subMinutes(20),
+        'claim_token' => (string) Str::uuid(), 'claimed_at' => now()->subMinutes(20),
+    ]);
+    $run = AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'recovery_incident_id' => $incident->id, 'role' => AgentRole::RecoveryEngineer, 'status' => AgentRunStatus::Running, 'prompt_hash' => hash('sha256', 'stale'), 'started_at' => now()->subMinutes(20)]);
+
+    app(WorkflowRecoveryEngine::class)->reclaimStaleClaims($project);
+
+    expect($incident->refresh()->status)->toBe(RecoveryIncidentStatus::Detected)
+        ->and($incident->claimed_at)->toBeNull()
+        ->and($run->refresh()->status)->toBe(AgentRunStatus::Interrupted)
+        ->and($project->auditEvents()->where('event_type', 'recovery.claim_reclaimed')->exists())->toBeTrue();
+});
+
+test('a recently claimed diagnosing incident is left untouched by the reclaim pass', function () {
+    config()->set('aios.recovery_claim_stale_after_seconds', 900);
+    $project = recoveryProject();
+    $task = recoveryTask($project, 'TASK-001', 1, TaskStatus::Blocked);
+    $incident = RecoveryIncident::create([
+        'project_id' => $project->id, 'task_id' => $task->id, 'failure_type' => 'task_blocked',
+        'status' => RecoveryIncidentStatus::Diagnosing, 'detected_at' => now()->subMinutes(2),
+        'claim_token' => (string) Str::uuid(), 'claimed_at' => now()->subMinutes(2),
+    ]);
+
+    app(WorkflowRecoveryEngine::class)->reclaimStaleClaims($project);
+
+    expect($incident->refresh()->status)->toBe(RecoveryIncidentStatus::Diagnosing);
+});
+
+test('resolved incidents are never touched by the reclaim pass regardless of age', function () {
+    config()->set('aios.recovery_claim_stale_after_seconds', 1);
+    $project = recoveryProject();
+    $task = recoveryTask($project, 'TASK-001', 1, TaskStatus::Blocked);
+    $incident = RecoveryIncident::create([
+        'project_id' => $project->id, 'task_id' => $task->id, 'failure_type' => 'task_blocked',
+        'status' => RecoveryIncidentStatus::Escalated, 'detected_at' => now()->subHours(2),
+        'claim_token' => (string) Str::uuid(), 'claimed_at' => now()->subHours(2), 'resolved_at' => now()->subHours(2),
+    ]);
+
+    app(WorkflowRecoveryEngine::class)->reclaimStaleClaims($project);
+
+    expect($incident->refresh()->status)->toBe(RecoveryIncidentStatus::Escalated);
+});
+
+test('a dirty tree attributable to another task auto-resumes that task instead of escalating', function () {
+    $path = sys_get_temp_dir().'/aios-recovery-attribution-'.fake()->uuid();
+    File::ensureDirectoryExists($path);
+    Process::path($path)->run(['git', 'init']);
+    Process::path($path)->run(['git', 'config', 'user.email', 'aios@example.test']);
+    Process::path($path)->run(['git', 'config', 'user.name', 'AIOS Test']);
+    File::put($path.'/baseline.txt', 'baseline');
+    Process::path($path)->run(['git', 'add', 'baseline.txt']);
+    Process::path($path)->run(['git', 'commit', '-m', 'Baseline']);
+    $head = trim(Process::path($path)->run(['git', 'rev-parse', 'HEAD'])->output());
+    $project = Project::create(['name' => 'Attribution', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'dirty']);
+
+    $originTask = recoveryTask($project, 'TASK-095', 1, TaskStatus::Blocked);
+    TaskAttempt::create(['task_id' => $originTask->id, 'number' => 3, 'base_sha' => $head, 'status' => 'failed', 'changed_files' => ['app/Recipe.php'], 'started_at' => now()]);
+    $originTask->auditEvents()->create(['event_type' => 'task.coder_retry_exhausted', 'payload' => [], 'occurred_at' => now()]);
+    File::ensureDirectoryExists($path.'/app');
+    File::put($path.'/app/Recipe.php', 'stale work');
+
+    $blockedTask = recoveryTask($project, 'TASK-096', 2, TaskStatus::Blocked);
+    $blockedTask->auditEvents()->create(['event_type' => 'task.blocked_dirty_repository', 'payload' => [], 'occurred_at' => now()]);
+    $incident = RecoveryIncident::create(['project_id' => $project->id, 'task_id' => $blockedTask->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Detected, 'detected_at' => now()]);
+    recoveryMock(RecoveryEngineerRunner::class)->shouldNotReceive('run');
+
+    $processed = app(WorkflowRecoveryEngine::class)->process($incident);
+
+    expect($processed->status)->toBe(RecoveryIncidentStatus::Recovered)
+        ->and($processed->root_cause_category)->toBe('stale_agent_attempt')
+        ->and($originTask->refresh()->status)->toBe(TaskStatus::Queued)
+        ->and($blockedTask->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($project->auditEvents()->where('event_type', 'task.stale_attempt_reclaimed')->exists())->toBeTrue();
+});
+
+test('a dirty tree with an unexplained extra file is escalated even when a partial match exists', function () {
+    $path = sys_get_temp_dir().'/aios-recovery-attribution-'.fake()->uuid();
+    File::ensureDirectoryExists($path);
+    Process::path($path)->run(['git', 'init']);
+    Process::path($path)->run(['git', 'config', 'user.email', 'aios@example.test']);
+    Process::path($path)->run(['git', 'config', 'user.name', 'AIOS Test']);
+    File::put($path.'/baseline.txt', 'baseline');
+    Process::path($path)->run(['git', 'add', 'baseline.txt']);
+    Process::path($path)->run(['git', 'commit', '-m', 'Baseline']);
+    $head = trim(Process::path($path)->run(['git', 'rev-parse', 'HEAD'])->output());
+    $project = Project::create(['name' => 'Attribution', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'dirty']);
+
+    $originTask = recoveryTask($project, 'TASK-095', 1, TaskStatus::Blocked);
+    TaskAttempt::create(['task_id' => $originTask->id, 'number' => 3, 'base_sha' => $head, 'status' => 'failed', 'changed_files' => ['app/Recipe.php'], 'started_at' => now()]);
+    File::ensureDirectoryExists($path.'/app');
+    File::put($path.'/app/Recipe.php', 'stale work');
+    File::put($path.'/app/Unexplained.php', 'someone else touched this');
+
+    $blockedTask = recoveryTask($project, 'TASK-096', 2, TaskStatus::Blocked);
+    $blockedTask->auditEvents()->create(['event_type' => 'task.blocked_dirty_repository', 'payload' => [], 'occurred_at' => now()]);
+    $incident = RecoveryIncident::create(['project_id' => $project->id, 'task_id' => $blockedTask->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Detected, 'detected_at' => now()]);
+    recoveryMock(RecoveryEngineerRunner::class)->shouldNotReceive('run');
+
+    $processed = app(WorkflowRecoveryEngine::class)->process($incident);
+
+    expect($processed->status)->toBe(RecoveryIncidentStatus::Escalated)
+        ->and($processed->root_cause_category)->toBe('unsafe_git_state')
+        ->and($originTask->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($blockedTask->refresh()->status)->toBe(TaskStatus::Blocked);
 });
 
 test('recovery preserves the historical AgentRun and audit evidence from the original failed attempt', function () {

@@ -26,12 +26,60 @@ class WorkflowRecoveryScanner
 {
     private const array TerminalStuckStatuses = [TaskStatus::Blocked, TaskStatus::Interrupted, TaskStatus::Failed];
 
-    public function __construct(private StaleWorkerRecovery $staleWorkerRecovery, private AuditLogger $audit) {}
+    /** Block reasons that are purely a symptom of a dirty repository, and the status to resume into once it's clean. */
+    private const array AutoUnblockableBlockReasons = [
+        'task.blocked_dirty_repository' => TaskStatus::ChangesRequired,
+    ];
+
+    public function __construct(private StaleWorkerRecovery $staleWorkerRecovery, private AuditLogger $audit, private ProjectGitState $git, private TaskWorkflow $workflow) {}
 
     public function scan(Project $project): void
     {
         $this->recoverStaleExecutions($project);
+        $this->autoUnblockCleanRepositories($project);
         $this->detectStuckTasks($project);
+    }
+
+    /**
+     * A task blocked purely because CoderRepositoryGuard found the repository dirty is blocked on
+     * a symptom, not a root cause: once the working tree is clean again (whether a human resolved
+     * it out of band, or an earlier task's own recovery committed it), the original precondition
+     * is satisfied and the task can resume without any operator action or Recovery Engineer
+     * diagnosis. Other block reasons (misconfigured Agent, unsafe path, exhausted retries) still
+     * require explicit human/Recovery Engineer resolution and are left untouched here.
+     */
+    private function autoUnblockCleanRepositories(Project $project): void
+    {
+        Task::query()
+            ->whereBelongsTo($project)
+            ->where('status', TaskStatus::Blocked)
+            ->get()
+            ->each(function (Task $task) use ($project): void {
+                DB::transaction(function () use ($project, $task): void {
+                    $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+                    if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::Blocked) {
+                        return;
+                    }
+
+                    $lastBlockReason = $lockedTask->auditEvents()
+                        ->whereIn('event_type', array_keys(self::AutoUnblockableBlockReasons))
+                        ->orderByDesc('occurred_at')
+                        ->orderByDesc('id')
+                        ->first();
+                    if ($lastBlockReason === null) {
+                        return;
+                    }
+
+                    $lockedTask->loadMissing('project');
+                    $state = $this->git->inspect($lockedTask->project->path);
+                    if (! $state['clean'] || $state['base_sha'] === null) {
+                        return;
+                    }
+
+                    $this->workflow->transition($lockedTask, self::AutoUnblockableBlockReasons[$lastBlockReason->event_type]);
+                    $this->audit->record('task.auto_unblocked', ['reason' => 'repository_clean', 'head_sha' => $state['head_sha'], 'previous_block_event' => $lastBlockReason->event_type], $project, $lockedTask);
+                }, attempts: 3);
+            });
     }
 
     private function recoverStaleExecutions(Project $project): void
