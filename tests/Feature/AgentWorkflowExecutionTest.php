@@ -259,7 +259,7 @@ test('the reviewer receives the complete task capsule and implementation evidenc
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Ship the foundation.']);
-    $firstTask = Task::create([
+    $siblingTask = Task::create([
         'project_id' => $project->id,
         'phase_id' => $phase->id,
         'key' => 'TASK-000',
@@ -271,7 +271,7 @@ test('the reviewer receives the complete task capsule and implementation evidenc
         'context_capsule' => [],
         'status' => TaskStatus::ReadyForReview,
     ]);
-    TaskAttempt::create(['task_id' => $firstTask->id, 'number' => 1, 'commit_sha' => 'foundation-commit', 'status' => 'completed', 'started_at' => now(), 'finished_at' => now()]);
+    TaskAttempt::create(['task_id' => $siblingTask->id, 'number' => 1, 'commit_sha' => 'foundation-commit', 'status' => 'completed', 'started_at' => now(), 'finished_at' => now()]);
     $task = reviewTask($project);
     $task->update(['phase_id' => $phase->id]);
     $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'base_sha' => 'base-sha', 'head_sha' => 'head-sha', 'commit_sha' => 'commit-sha', 'status' => 'completed', 'validation_results' => ['git_diff_check' => true], 'changed_files' => ['app/Example.php'], 'started_at' => now(), 'finished_at' => now()]);
@@ -284,16 +284,14 @@ test('the reviewer receives the complete task capsule and implementation evidenc
                 && $callback instanceof Closure
                 && str_contains($prompt, '"implementation_prompt":"Implement it."')
                 && str_contains($prompt, '"commit_sha":"commit-sha"')
-                && str_contains($prompt, '"changed_files":["app\\/Example.php"]')
-                && str_contains($prompt, '"title":"Foundation"')
-                && str_contains($prompt, '"commit_sha":"foundation-commit"');
+                && str_contains($prompt, '"changed_files":["app\\/Example.php"]');
         })
         ->andReturn(['exit_code' => 0, 'output' => json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => json_encode($review, JSON_THROW_ON_ERROR)]], JSON_THROW_ON_ERROR), 'error_output' => '']);
 
     app(RunReviewerTask::class)->run($task, $attempt);
 
     expect($task->refresh()->status)->toBe(TaskStatus::Done)
-        ->and($firstTask->refresh()->status)->toBe(TaskStatus::Done);
+        ->and($siblingTask->refresh()->status)->toBe(TaskStatus::ReadyForReview);
 });
 
 test('roadmap tasks have deterministic serial dependencies', function () {

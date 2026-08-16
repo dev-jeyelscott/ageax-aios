@@ -62,8 +62,7 @@ class RunReviewerTask
 
         $context = $this->capsules->make($task, AgentRole::Reviewer);
         $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Reviewer, $context);
-        $phaseBrief = $this->notes->writePhaseReviewBrief($task);
-        $prompt = "You are the Reviewer. This is a read-only phase review: independently inspect every task in the supplied phase, repository documentation, current implementation, verification results, and exact Git diffs. Never edit files, create tests, format code, commit, or otherwise mutate the project. Use Git to inspect the recorded base and head SHAs, but run verification commands only from the managed project checkout provided as your working directory. Do not create temporary checkouts, copy repositories or tests, or invoke Artisan/Pest from another directory: those environments do not have the managed runtime, dependencies, or assets and their failures are invalid evidence. Approve only when the complete phase meets its acceptance criteria; approval completes every task in the phase. If changes are needed, return findings for the final task so the Coder can correct the phase in a fresh attempt. Return exactly one JSON object with `outcome` (`approved` or `changes_required`) and `summary`. For `changes_required`, include a non-empty `findings` array. Every finding must contain these string fields: `severity`, `location`, `current_implementation`, `expected_implementation`, `why_incorrect`, `required_fix`, `verification_requirement`, and `implementation_fix_context`. Do not use `actionable_findings`, `task_key`, `path`, `lines`, `finding`, or `required_action` as substitutes. When approved, make summary a concise, concrete implementation summary suitable for an Obsidian project record, covering the phase changes and verification.\n\n".json_encode(['task' => $assembled?->toArray() ?? $context, 'attempt' => $attempt->only(['number', 'base_sha', 'head_sha', 'commit_sha', 'validation_results', 'changed_files']), 'phase_review_brief' => $this->phaseReviewContext($task), 'phase_review_brief_path' => $phaseBrief], JSON_THROW_ON_ERROR);
+        $prompt = "You are the Reviewer. This is a read-only task review: independently inspect this task, repository documentation, current implementation, verification results, and exact Git diffs. Never edit files, create tests, format code, commit, or otherwise mutate the project. Use Git to inspect the recorded base and head SHAs, but run verification commands only from the managed project checkout provided as your working directory. Do not create temporary checkouts, copy repositories or tests, or invoke Artisan/Pest from another directory: those environments do not have the managed runtime, dependencies, or assets and their failures are invalid evidence. Approve only when this task meets its acceptance criteria; approval completes this task alone. If changes are needed, return findings so the Coder can correct this task in a fresh attempt. Return exactly one JSON object with `outcome` (`approved` or `changes_required`) and `summary`. For `changes_required`, include a non-empty `findings` array. Every finding must contain these string fields: `severity`, `location`, `current_implementation`, `expected_implementation`, `why_incorrect`, `required_fix`, `verification_requirement`, and `implementation_fix_context`. Do not use `actionable_findings`, `task_key`, `path`, `lines`, `finding`, or `required_action` as substitutes. When approved, make summary a concise, concrete implementation summary suitable for an Obsidian project record, covering the task's changes and verification.\n\n".json_encode(['task' => $assembled?->toArray() ?? $context, 'attempt' => $attempt->only(['number', 'base_sha', 'head_sha', 'commit_sha', 'validation_results', 'changed_files'])], JSON_THROW_ON_ERROR);
         $run = $this->runs->start($task->project, AgentRole::Reviewer, $prompt, $task, $attempt, $lease, $context['retrieval_manifest'], $agent, $assembled);
         try {
             $onOutput = function (string $type, string $output) use ($run, $task, $lease): void {
@@ -142,7 +141,7 @@ class RunReviewerTask
         $this->audit->record('review.completed', ['review_id' => $review->id, 'outcome' => $outcome->value, 'finding_count' => count($findings), 'attempt_number' => $attempt->number], $task->project, $task);
 
         if ($outcome === ReviewStatus::Approved) {
-            $this->workflow->approvePhase($task, $attempt, $summary);
+            $this->workflow->approveTask($task, $attempt, $summary);
         } else {
             $this->workflow->transition($task, TaskStatus::ChangesRequired);
             $this->audit->record('task.rejected', ['review_id' => $review->id, 'attempt_number' => $attempt->number], $task->project, $task);
@@ -161,30 +160,5 @@ class RunReviewerTask
         }
 
         return [$agent, $this->harnesses->resolve($agent)];
-    }
-
-    /** @return array<string, mixed> */
-    private function phaseReviewContext(Task $task): array
-    {
-        $phaseTasks = $task->phase_id === null
-            ? collect([$task])
-            : Task::query()
-                ->whereBelongsTo($task->project)
-                ->where('phase_id', $task->phase_id)
-                ->with('attempts')
-                ->orderBy('position')
-                ->get();
-
-        return [
-            'title' => $task->phase?->title,
-            'objective' => $task->phase?->objective,
-            'tasks' => $phaseTasks->map(fn (Task $phaseTask): array => [
-                'key' => $phaseTask->key,
-                'title' => $phaseTask->title,
-                'objective' => $phaseTask->objective,
-                'acceptance_criteria' => $phaseTask->acceptance_criteria,
-                'attempts' => $phaseTask->attempts->map(fn (TaskAttempt $phaseAttempt): array => $phaseAttempt->only(['number', 'base_sha', 'head_sha', 'commit_sha', 'validation_results', 'changed_files']))->values()->all(),
-            ])->values()->all(),
-        ];
     }
 }

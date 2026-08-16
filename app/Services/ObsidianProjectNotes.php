@@ -84,29 +84,6 @@ class ObsidianProjectNotes
         return $path;
     }
 
-    public function writePhaseReviewBrief(Task $task): ?string
-    {
-        $task->loadMissing('project', 'phase');
-        $phaseTasks = $task->phase_id === null
-            ? collect([$task])
-            : Task::query()->whereBelongsTo($task->project)->where('phase_id', $task->phase_id)->with('attempts')->orderBy('position')->get();
-        $tasks = $phaseTasks->map(function (Task $phaseTask): string {
-            $attempt = $phaseTask->attempts->sortByDesc('number')->first();
-            $criteria = collect($this->taskStringList($phaseTask, 'acceptance_criteria'))->map(fn (string $criterion): string => "  - {$criterion}")->implode("\n");
-            $files = collect($attempt === null ? [] : $this->attemptStringList($attempt, 'changed_files'))->map(fn (string $file): string => "  - `{$file}`")->implode("\n");
-            $validation = $attempt === null ? [] : $this->attemptArray($attempt, 'validation_results');
-            $passed = ($validation['passed'] ?? false) === true ? 'passed' : 'not passed';
-
-            return "## {$phaseTask->key}: {$phaseTask->title}\n\n- Brief: [[Task Briefs/{$this->taskBriefFilename($phaseTask)}]]\n- Commit: ".($attempt === null ? 'Not recorded' : ($attempt->commit_sha ?? 'Not recorded'))."\n- Validation: {$passed}\n\n### Acceptance criteria\n\n{$criteria}\n\n### Changed files\n\n".($files !== '' ? $files : '- None recorded.');
-        })->implode("\n\n");
-
-        try {
-            return $this->writeProjectNote($task->project, 'Phase Reviews', $this->phaseReviewBriefFilename($task), '# Phase review: '.$this->phaseTitle($task)."\n\n## Objective\n\n".$this->phaseObjective($task)."\n\n{$tasks}\n");
-        } catch (Throwable) {
-            return null;
-        }
-    }
-
     public function writeRoadmapUpload(Roadmap $roadmap): ?string
     {
         $roadmap->loadMissing('project');
@@ -421,20 +398,6 @@ class ObsidianProjectNotes
         return array_values(array_filter($this->taskArray($task, $attribute), is_string(...)));
     }
 
-    /** @return array<string, mixed> */
-    private function attemptArray(TaskAttempt $attempt, string $attribute): array
-    {
-        $decoded = json_decode((string) $attempt->getRawOriginal($attribute), true);
-
-        return is_array($decoded) ? $decoded : [];
-    }
-
-    /** @return array<int, string> */
-    private function attemptStringList(TaskAttempt $attempt, string $attribute): array
-    {
-        return array_values(array_filter($this->attemptArray($attempt, $attribute), is_string(...)));
-    }
-
     private function projectDirectory(Project $project): ?string
     {
         $vault = config('aios.obsidian_vault_path');
@@ -460,20 +423,5 @@ class ObsidianProjectNotes
     private function taskBriefFilename(Task $task): string
     {
         return $task->key.' - '.Str::slug($task->title).'.md';
-    }
-
-    private function phaseReviewBriefFilename(Task $task): string
-    {
-        return str_pad((string) ($task->phase_id === null ? $task->position : $task->phase->position), 2, '0', STR_PAD_LEFT).' - '.Str::slug($this->phaseTitle($task)).'.md';
-    }
-
-    private function phaseTitle(Task $task): string
-    {
-        return $task->phase_id === null ? $task->title : $task->phase->title;
-    }
-
-    private function phaseObjective(Task $task): string
-    {
-        return $task->phase_id === null ? $task->objective : $task->phase->objective;
     }
 }

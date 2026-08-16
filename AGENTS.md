@@ -50,11 +50,11 @@ Priority: correctness → security → data integrity → deterministic workflow
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Project Manager | Turn uploaded roadmaps into ordered, dependency-aware tasks with criteria, prompts, safe verification commands, and concise project knowledge. Return structured output.                             | Mutate arbitrary app/database state; AIOS validates and persists the plan. |
 | Coder           | Claim one eligible task; inspect, implement, validate, secret-check, and return structured results. Preserve authorization, validation, transactions, idempotency, auditability, and data integrity. | Mark a task done.                                                          |
-| Reviewer        | Independently review the ready **phase**: its tasks, criteria, exact diffs, SHAs, changed files, implementation, and verification evidence.                                                          | Reject for taste, redesign valid work, or expand scope.                    |
+| Reviewer        | Independently review each ready **task**: its criteria, exact diffs, SHAs, changed files, implementation, and verification evidence.                                                          | Reject for taste, redesign valid work, or expand scope.                    |
 
 Reviewer outcomes:
 
-- `approved` → AIOS completes the reviewed phase.
+- `approved` → AIOS completes the reviewed task.
 - `changes_required` → findings must include severity, location, current vs. expected behavior, reason, required fix, and verification requirement.
 - Operational reviewer failures do not reject code; retain evidence and retry within the configured limit.
 

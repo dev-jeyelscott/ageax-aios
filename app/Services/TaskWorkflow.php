@@ -27,7 +27,7 @@ class TaskWorkflow
 
             $task = match ($role) {
                 AgentRole::Coder => $this->nextCoderTask($lockedProject),
-                AgentRole::Reviewer => $this->reviewablePhaseTask($lockedProject),
+                AgentRole::Reviewer => $this->reviewableTask($lockedProject),
                 default => null,
             };
 
@@ -114,58 +114,25 @@ class TaskWorkflow
         return $transitionedTask;
     }
 
-    /** @return array<int, Task> */
-    public function approvePhase(Task $task, ?TaskAttempt $attempt = null, ?string $reviewSummary = null): array
+    public function approveTask(Task $task, ?TaskAttempt $attempt = null, ?string $reviewSummary = null): Task
     {
-        $completedTasks = DB::transaction(function () use ($task): array {
+        $completedTask = DB::transaction(function () use ($task): Task {
             $reviewTask = Task::query()->lockForUpdate()->findOrFail($task->id);
 
             if (TaskStatus::from($reviewTask->getRawOriginal('status')) !== TaskStatus::Reviewing) {
-                throw new InvalidTaskTransition('Only a claimed review task can approve a phase.');
+                throw new InvalidTaskTransition('Only a claimed review task can be approved.');
             }
 
-            $phaseTasks = $reviewTask->phase_id === null
-                ? collect([$reviewTask])
-                : Task::query()
-                    ->whereBelongsTo($reviewTask->project)
-                    ->where('phase_id', $reviewTask->phase_id)
-                    ->orderBy('position')
-                    ->lockForUpdate()
-                    ->get();
+            $this->transitionLocked($reviewTask, TaskStatus::Done);
 
-            foreach ($phaseTasks as $phaseTask) {
-                $status = TaskStatus::from($phaseTask->getRawOriginal('status'));
-                $isValidPhaseState = $phaseTask->is($reviewTask)
-                    ? $status === TaskStatus::Reviewing
-                    : in_array($status, [TaskStatus::ReadyForReview, TaskStatus::Done], true);
-
-                if (! $isValidPhaseState) {
-                    throw new InvalidTaskTransition('A phase can only be approved after every task is ready for review.');
-                }
-            }
-
-            $transitionedTasks = [];
-            foreach ($phaseTasks as $phaseTask) {
-                if (TaskStatus::from($phaseTask->getRawOriginal('status')) === TaskStatus::Done) {
-                    continue;
-                }
-
-                $this->transitionLocked($phaseTask, TaskStatus::Done);
-                $transitionedTasks[] = $phaseTask;
-            }
-
-            return collect($transitionedTasks)->map(fn (Task $phaseTask): Task => $phaseTask->refresh())->all();
+            return $reviewTask->refresh();
         }, attempts: 3);
 
-        foreach ($completedTasks as $completedTask) {
-            $summary = $completedTask->is($task)
-                ? $reviewSummary ?? "Approved implementation of {$completedTask->title}."
-                : "Phase implementation approved after review. {$completedTask->objective}";
-            $this->notes->writeTaskCompletion($completedTask, $summary, $completedTask->is($task) ? $attempt : null, $completedTask->is($task) ? $reviewSummary : null);
-            $this->audit->record('task.approved', ['review_task_id' => $task->id, 'attempt_number' => $attempt?->number], $completedTask->project, $completedTask);
-        }
+        $summary = $reviewSummary ?? "Approved implementation of {$completedTask->title}.";
+        $this->notes->writeTaskCompletion($completedTask, $summary, $attempt, $reviewSummary);
+        $this->audit->record('task.approved', ['attempt_number' => $attempt?->number], $completedTask->project, $completedTask);
 
-        return $completedTasks;
+        return $completedTask;
     }
 
     private function hasClaimedWork(Project $project, AgentRole $role): bool
@@ -254,43 +221,18 @@ class TaskWorkflow
             ->first(fn (Task $task): bool => $this->dependenciesAreSatisfied($task));
     }
 
-    private function reviewablePhaseTask(Project $project): ?Task
+    private function reviewableTask(Project $project): ?Task
     {
-        $readyTasks = Task::query()
+        return Task::query()
             ->whereBelongsTo($project)
             ->where('status', TaskStatus::ReadyForReview)
             ->orderBy('position')
             ->lockForUpdate()
-            ->get();
-
-        foreach ($readyTasks as $task) {
-            if ($task->phase_id === null) {
-                return $task;
-            }
-
-            $phaseTasks = Task::query()
-                ->whereBelongsTo($project)
-                ->where('phase_id', $task->phase_id)
-                ->orderBy('position')
-                ->lockForUpdate()
-                ->get();
-
-            if ($phaseTasks->last(fn (Task $phaseTask): bool => TaskStatus::from($phaseTask->getRawOriginal('status')) === TaskStatus::ReadyForReview)?->is($task)
-                && $phaseTasks->every(fn (Task $phaseTask): bool => in_array(TaskStatus::from($phaseTask->getRawOriginal('status')), [TaskStatus::ReadyForReview, TaskStatus::Done], true))) {
-                return $task;
-            }
-        }
-
-        return null;
+            ->first();
     }
 
     private function dependenciesAreSatisfied(Task $task): bool
     {
-        return $task->dependencies()->get()->every(function (Task $dependency) use ($task): bool {
-            $status = TaskStatus::from($dependency->getRawOriginal('status'));
-
-            return $status === TaskStatus::Done
-                || ($task->phase_id !== null && $dependency->phase_id === $task->phase_id && $status === TaskStatus::ReadyForReview);
-        });
+        return $task->dependencies()->get()->every(fn (Task $dependency): bool => TaskStatus::from($dependency->getRawOriginal('status')) === TaskStatus::Done);
     }
 }

@@ -84,7 +84,7 @@ test('an exhausted reviewer operational retry blocks and can be requeued for rev
     expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview);
 });
 
-test('the reviewer is called once after every task in a phase is ready', function () {
+test('the reviewer reviews and approves each task in a phase individually', function () {
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $firstPhase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
@@ -105,56 +105,65 @@ test('the reviewer is called once after every task in a phase is ready', functio
     $transitionTask->handle($firstTask, TaskStatus::Validating);
     $transitionTask->handle($firstTask, TaskStatus::ReadyForReview);
 
-    expect($claimTask->handle($project, AgentRole::Reviewer))->toBeNull()
+    $firstReviewTask = $claimTask->handle($project, AgentRole::Reviewer);
+    expect($firstReviewTask?->id)->toBe($firstTask->id);
+
+    app(TaskWorkflow::class)->approveTask($firstReviewTask);
+
+    expect($firstTask->refresh()->status)->toBe(TaskStatus::Done)
+        ->and($secondTask->refresh()->status)->toBe(TaskStatus::Queued)
+        ->and($firstTask->auditEvents()->where('event_type', 'task.approved')->exists())->toBeTrue()
         ->and($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($secondTask->id);
 
     $transitionTask->handle($secondTask, TaskStatus::Validating);
     $transitionTask->handle($secondTask, TaskStatus::ReadyForReview);
 
-    $reviewTask = $claimTask->handle($project, AgentRole::Reviewer);
+    $secondReviewTask = $claimTask->handle($project, AgentRole::Reviewer);
+    expect($secondReviewTask?->id)->toBe($secondTask->id);
 
-    expect($reviewTask?->id)->toBe($secondTask->id);
+    app(TaskWorkflow::class)->approveTask($secondReviewTask);
 
-    app(TaskWorkflow::class)->approvePhase($reviewTask);
-
-    expect($firstTask->refresh()->status)->toBe(TaskStatus::Done)
-        ->and($secondTask->refresh()->status)->toBe(TaskStatus::Done)
-        ->and($firstTask->auditEvents()->where('event_type', 'task.approved')->exists())->toBeTrue()
+    expect($secondTask->refresh()->status)->toBe(TaskStatus::Done)
         ->and($secondTask->auditEvents()->where('event_type', 'task.approved')->exists())->toBeTrue()
         ->and($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($thirdTask->id);
 });
 
-test('a completed roadmap task does not block phase review of remaining work', function () {
+test('the coder cannot start a dependent task while its dependency only awaits review', function () {
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
-    $completedTask = createWorkflowTask($project, 1);
-    $reviewableTask = createWorkflowTask($project, 2);
-    $completedTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::Done, 'completed_at' => now()]);
-    $reviewableTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::ReadyForReview]);
+    $firstTask = createWorkflowTask($project, 1);
+    $secondTask = createWorkflowTask($project, 2);
+    $firstTask->update(['phase_id' => $phase->id]);
+    $secondTask->update(['phase_id' => $phase->id]);
+    $secondTask->dependencies()->attach($firstTask);
 
-    $claimedTask = app(ClaimTask::class)->handle($project, AgentRole::Reviewer);
+    $claimTask = app(ClaimTask::class);
+    $transitionTask = app(TransitionTask::class);
 
-    expect($claimedTask?->id)->toBe($reviewableTask->id);
+    expect($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($firstTask->id);
+    $transitionTask->handle($firstTask, TaskStatus::Validating);
+    $transitionTask->handle($firstTask, TaskStatus::ReadyForReview);
 
-    app(TaskWorkflow::class)->approvePhase($claimedTask);
+    expect($claimTask->handle($project, AgentRole::Coder))->toBeNull();
 
-    expect($completedTask->refresh()->status)->toBe(TaskStatus::Done)
-        ->and($reviewableTask->refresh()->status)->toBe(TaskStatus::Done)
-        ->and($completedTask->auditEvents()->where('event_type', 'task.approved')->doesntExist())->toBeTrue();
+    $reviewTask = $claimTask->handle($project, AgentRole::Reviewer);
+    app(TaskWorkflow::class)->approveTask($reviewTask);
+
+    expect($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($secondTask->id);
 });
 
-test('a rejected phase review returns only the final task to the coder', function () {
+test('a rejected task review returns only that task to the coder', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
     $firstTask = createWorkflowTask($project, 1);
-    $finalTask = createWorkflowTask($project, 2);
-    $firstTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::ReadyForReview]);
-    $finalTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::Reviewing]);
-    $finalTask->dependencies()->attach($firstTask);
+    $secondTask = createWorkflowTask($project, 2);
+    $firstTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::Reviewing]);
+    $secondTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::ReadyForReview]);
+    $secondTask->dependencies()->attach($firstTask);
 
-    app(TransitionTask::class)->handle($finalTask, TaskStatus::ChangesRequired);
+    app(TransitionTask::class)->handle($firstTask, TaskStatus::ChangesRequired);
 
-    expect($firstTask->refresh()->status)->toBe(TaskStatus::ReadyForReview)
-        ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder)?->id)->toBe($finalTask->id);
+    expect($secondTask->refresh()->status)->toBe(TaskStatus::ReadyForReview)
+        ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder)?->id)->toBe($firstTask->id);
 });
