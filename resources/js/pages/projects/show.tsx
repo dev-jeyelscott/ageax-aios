@@ -17,7 +17,7 @@ import {
     showTask,
     updateStatus,
 } from '@/actions/App/Http/Controllers/ProjectController';
-import type { OfficeWorker } from '@/components/agent-office';
+import type { OfficeWorkflow, OfficeWorker } from '@/components/agent-office';
 import { useAppHeaderSlot } from '@/components/app-header-slot';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
@@ -102,6 +102,7 @@ type Project = {
         status: string;
     }[];
     office_workers: OfficeWorker[];
+    office_workflow: OfficeWorkflow | null;
     tasks: Task[];
     token_usage_total: number;
     token_observability: Record<
@@ -152,11 +153,9 @@ function harnessLabel(harness: string | null): string {
 
 function ClientAgentOffice({
     project,
-    currentTask,
     completedTasks,
 }: {
     project: Project;
-    currentTask: Task | undefined;
     completedTasks: number;
 }) {
     const isClient = useSyncExternalStore(
@@ -189,7 +188,7 @@ function ClientAgentOffice({
                 workers={project.office_workers}
                 agents={project.agents}
                 workerBindings={project.workers}
-                currentTask={currentTask ?? null}
+                workflow={project.office_workflow}
                 taskProgress={{
                     completed: completedTasks,
                     total: project.tasks.length,
@@ -224,11 +223,11 @@ function OpsPanel({
 
 function RoadmapPanel({
     project,
-    currentTask,
+    roadmapTask,
     completedTasks,
 }: {
     project: Project;
-    currentTask: Task | undefined;
+    roadmapTask: Task | undefined;
     completedTasks: number;
 }) {
     const latestRoadmap = project.roadmaps[0];
@@ -268,19 +267,19 @@ function RoadmapPanel({
 
             <div className="mt-2 min-w-0 rounded-lg border border-border-subtle bg-foreground/2 p-2">
                 <p className="font-mono text-2xs text-muted-foreground uppercase">
-                    Current operation
+                    Next unfinished task
                 </p>
-                {currentTask ? (
+                {roadmapTask ? (
                     <Link
                         href={
                             showTask({
                                 project: project.id,
-                                task: currentTask.id,
+                                task: roadmapTask.id,
                             }).url
                         }
                         className="mt-0.5 block truncate text-xs font-medium text-foreground hover:text-primary"
                     >
-                        {currentTask.key}: {currentTask.title}
+                        {roadmapTask.key}: {roadmapTask.title}
                     </Link>
                 ) : (
                     <p className="mt-0.5 text-xs text-muted-foreground">
@@ -554,7 +553,7 @@ function HarnessUsagePanel({ project }: { project: Project }) {
                                 <span className="truncate text-muted-foreground">
                                     {role.replaceAll('_', ' ')}
                                 </span>
-                                <span className="shrink-0 font-mono text-muted-foreground">
+                                <span className="shrink-0 font-mono text-2xs text-muted-foreground">
                                     {usage.rolling_average === null
                                         ? 'no runs'
                                         : `${formatTokens(usage.rolling_average)} avg`}
@@ -569,11 +568,11 @@ function HarnessUsagePanel({ project }: { project: Project }) {
 
 function OverviewDashboard({
     project,
-    currentTask,
+    roadmapTask,
     completedTasks,
 }: {
     project: Project;
-    currentTask: Task | undefined;
+    roadmapTask: Task | undefined;
     completedTasks: number;
 }) {
     return (
@@ -581,7 +580,6 @@ function OverviewDashboard({
             <div className="min-h-0">
                 <ClientAgentOffice
                     project={project}
-                    currentTask={currentTask}
                     completedTasks={completedTasks}
                 />
             </div>
@@ -589,7 +587,7 @@ function OverviewDashboard({
             <aside className="min-h-0 space-y-2 overflow-y-auto pr-1">
                 <RoadmapPanel
                     project={project}
-                    currentTask={currentTask}
+                    roadmapTask={roadmapTask}
                     completedTasks={completedTasks}
                 />
                 <GitEvidencePanel project={project} />
@@ -799,7 +797,7 @@ export default function ProjectShow({
         { mode: 'rest' },
     );
 
-    const currentTask = project.tasks.find(
+    const roadmapTask = project.tasks.find(
         (task) => !['done', 'cancelled'].includes(task.status),
     );
     const completedTasks = project.tasks.filter(
@@ -931,7 +929,7 @@ export default function ProjectShow({
                         {tab === 'overview' && (
                             <OverviewDashboard
                                 project={project}
-                                currentTask={currentTask}
+                                roadmapTask={roadmapTask}
                                 completedTasks={completedTasks}
                             />
                         )}

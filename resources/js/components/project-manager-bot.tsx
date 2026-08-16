@@ -21,8 +21,7 @@ function Bot({ working }: { working: boolean }) {
         }
 
         if (bookRef.current) {
-            bookRef.current.position.y =
-                0.02 * Math.sin(t * pace + 1);
+            bookRef.current.position.y = 0.02 * Math.sin(t * pace + 1);
         }
 
         const glowPulse = working
@@ -36,8 +35,8 @@ function Bot({ working }: { working: boolean }) {
             antennaTipRef,
         ]) {
             if (ref.current) {
-                const material =
-                    ref.current.material as THREE.MeshStandardMaterial;
+                const material = ref.current
+                    .material as THREE.MeshStandardMaterial;
                 material.emissiveIntensity = glowPulse;
             }
         }
@@ -249,8 +248,16 @@ export function ProjectManagerBotVisual({
             >
                 <ambientLight intensity={0.65} />
                 <directionalLight position={[1.2, 1.8, 1.4]} intensity={1.1} />
-                <pointLight position={[0.8, 0.6, 1.6]} intensity={1.4} color="#22d3ee" />
-                <pointLight position={[-1, 0.2, 0.8]} intensity={0.5} color="#c084fc" />
+                <pointLight
+                    position={[0.8, 0.6, 1.6]}
+                    intensity={1.4}
+                    color="#22d3ee"
+                />
+                <pointLight
+                    position={[-1, 0.2, 0.8]}
+                    intensity={0.5}
+                    color="#c084fc"
+                />
 
                 <Suspense fallback={null}>
                     <Float

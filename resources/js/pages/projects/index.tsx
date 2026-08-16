@@ -1,9 +1,6 @@
 import { Form, Head, Link } from '@inertiajs/react';
 import { FolderGit2, Plus } from 'lucide-react';
-import {
-    show,
-    store,
-} from '@/actions/App/Http/Controllers/ProjectController';
+import { show, store } from '@/actions/App/Http/Controllers/ProjectController';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

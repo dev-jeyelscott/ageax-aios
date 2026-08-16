@@ -19,11 +19,12 @@ export type OfficeWorker = {
     status: string;
     last_heartbeat_at: string | null;
     lease_state: 'active' | 'expired' | 'none';
+    activity_mode: 'current' | 'recent' | null;
     run: {
         id: number;
         status: string;
         attempt_number: number | null;
-        started_at: string;
+        started_at: string | null;
         finished_at: string | null;
         failure_reason: string | null;
     } | null;
@@ -59,6 +60,14 @@ export type OfficeTask = {
     key: string;
     title: string;
     status: string;
+};
+
+export type OfficeWorkflow = {
+    mode: 'current' | 'recent';
+    worker_id: number;
+    role: string;
+    run_id: number;
+    task: OfficeTask | null;
 };
 
 type OfficePresentation = {
@@ -112,6 +121,12 @@ const workflowStages = [
     { key: 'review', label: 'Review' },
     { key: 'done', label: 'Done' },
 ];
+
+const exceptionalWorkflowStatuses = new Set([
+    'blocked',
+    'interrupted',
+    'failed',
+]);
 
 export function officePresentation(status: string): OfficePresentation {
     switch (status) {
@@ -173,14 +188,7 @@ function labelForHarness(harness: string): string {
     }
 }
 
-function workflowStageIndex(
-    status: string | undefined,
-    isComplete: boolean,
-): number {
-    if (isComplete) {
-        return 4;
-    }
-
+function workflowStageIndex(status: string | undefined): number {
     switch (status) {
         case 'queued':
             return 0;
@@ -339,6 +347,8 @@ function AgentCard({
     agent: OfficeAgent | undefined;
 }) {
     const presentation = officePresentation(worker.status);
+    const taskLabel =
+        worker.activity_mode === 'current' ? 'Current task' : 'Recent task';
 
     return (
         <article className="panel-elevated relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-2.5">
@@ -409,7 +419,7 @@ function AgentCard({
                         className="block focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
                     >
                         <p className="font-mono text-2xs text-primary uppercase">
-                            Current task · {worker.task.status}
+                            {taskLabel} · {worker.task.status}
                         </p>
 
                         <p className="mt-0.5 truncate text-xs font-medium text-foreground">
@@ -482,10 +492,10 @@ function Metric({
 }
 
 function WorkflowPipeline({
-    currentTask,
+    workflow,
     taskProgress,
 }: {
-    currentTask: OfficeTask | null;
+    workflow: OfficeWorkflow | null;
     taskProgress: {
         completed: number;
         total: number;
@@ -493,14 +503,23 @@ function WorkflowPipeline({
 }) {
     const isComplete =
         taskProgress.total > 0 && taskProgress.completed === taskProgress.total;
-
-    const activeIndex = workflowStageIndex(currentTask?.status, isComplete);
+    const workflowTask = workflow?.task ?? null;
+    const activeIndex = workflowTask
+        ? workflowStageIndex(workflowTask.status)
+        : workflow === null && isComplete
+          ? workflowStages.length - 1
+          : -1;
     const trackFillPercent =
         activeIndex <= 0
             ? 0
             : (Math.min(activeIndex, workflowStages.length - 1) /
                   (workflowStages.length - 1)) *
               100;
+    const hasWorkflowException = workflowTask
+        ? exceptionalWorkflowStatuses.has(workflowTask.status)
+        : false;
+    const operationLabel =
+        workflow?.mode === 'recent' ? 'Recent operation' : 'Current operation';
 
     return (
         <div className="panel-recessed px-3 py-2.5">
@@ -563,29 +582,50 @@ function WorkflowPipeline({
                         );
                     })}
                 </div>
+
+                {hasWorkflowException && workflowTask && (
+                    <p className="mt-1.5 text-center font-mono text-2xs text-destructive-foreground uppercase">
+                        Workflow exception · {workflowTask.status}
+                    </p>
+                )}
             </div>
 
             <div className="mt-2.5 flex min-w-0 items-center justify-between gap-3 border-t border-border-subtle pt-2">
                 <div className="min-w-0">
                     <p className="text-2xs text-muted-foreground uppercase">
-                        Active operation
+                        {workflow ? operationLabel : 'Workflow operation'}
                     </p>
 
                     <p className="truncate text-xs font-medium text-foreground">
-                        {currentTask
-                            ? `${currentTask.key}: ${currentTask.title}`
-                            : isComplete
-                              ? 'Roadmap execution complete'
-                              : 'No active task'}
+                        {workflowTask
+                            ? `${workflowTask.key}: ${workflowTask.title}`
+                            : workflow
+                              ? `${labelForRole(workflow.role)} run #${workflow.run_id} has no task association`
+                              : isComplete
+                                ? 'Roadmap execution complete'
+                                : 'No current or recent task execution'}
                     </p>
+
+                    {workflow && (
+                        <p className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">
+                            {labelForRole(workflow.role)} · Run #
+                            {workflow.run_id}
+                        </p>
+                    )}
                 </div>
 
-                {currentTask && (
+                {workflowTask && (
                     <Badge
-                        variant="outline"
-                        className="shrink-0 border-primary/20 bg-primary/5 font-mono text-2xs text-primary"
+                        variant={
+                            hasWorkflowException ? 'destructive' : 'outline'
+                        }
+                        className={
+                            hasWorkflowException
+                                ? 'shrink-0 font-mono text-2xs'
+                                : 'shrink-0 border-primary/20 bg-primary/5 font-mono text-2xs text-primary'
+                        }
                     >
-                        {currentTask.status}
+                        {workflowTask.status}
                     </Badge>
                 )}
             </div>
@@ -601,7 +641,7 @@ export function AgentOffice({
     workers,
     agents,
     workerBindings,
-    currentTask,
+    workflow,
     taskProgress,
 }: {
     projectId: number;
@@ -611,7 +651,7 @@ export function AgentOffice({
     workers: OfficeWorker[];
     agents: OfficeAgent[];
     workerBindings: OfficeWorkerBinding[];
-    currentTask: OfficeTask | null;
+    workflow: OfficeWorkflow | null;
     taskProgress: {
         completed: number;
         total: number;
@@ -748,7 +788,7 @@ export function AgentOffice({
 
                 <div className="mt-2.5 shrink-0">
                     <WorkflowPipeline
-                        currentTask={currentTask}
+                        workflow={workflow}
                         taskProgress={taskProgress}
                     />
                 </div>

@@ -159,9 +159,14 @@ class ProjectController extends Controller
             'token_observability',
             $tokens->forProject($project),
         );
+        $officeWorkers = $this->officeWorkers($project, $runs);
         $project->setAttribute(
             'office_workers',
-            $this->officeWorkers($project, $runs),
+            $officeWorkers,
+        );
+        $project->setAttribute(
+            'office_workflow',
+            $this->officeWorkflow($officeWorkers),
         );
         $project->setAttribute(
             'git_evidence',
@@ -325,6 +330,7 @@ class ProjectController extends Controller
      *     status: string,
      *     last_heartbeat_at: ?string,
      *     lease_state: string,
+     *     activity_mode: 'current'|'recent'|null,
      *     run: ?array{
      *         id: int,
      *         status: string,
@@ -386,23 +392,37 @@ class ProjectController extends Controller
             $leaseExpiresAt = $worker->getAttribute(
                 'lease_expires_at',
             );
+            $leaseState = ! $leaseExpiresAt
+                    instanceof CarbonInterface
+                    ? 'none'
+                    : ($leaseExpiresAt->isFuture()
+                    ? 'active'
+                    : 'expired');
+            $workerStatus = (string) $worker->getAttribute('status');
+            $isCurrentActivity = $run !== null
+                && $leaseState !== 'expired'
+                && in_array(
+                    $workerStatus,
+                    ['working', 'recovering'],
+                    true,
+                )
+                && $run->getRawOriginal('status') === 'running';
+            $activityMode = $run === null
+                ? null
+                : ($isCurrentActivity ? 'current' : 'recent');
 
             $officeWorkers[] = [
                 'id' => $worker->id,
                 'role' => $worker->getRawOriginal(
                     'role',
                 ),
-                'status' => $worker->status,
+                'status' => $workerStatus,
                 'last_heartbeat_at' => $this->serializeDateAttribute(
                     $worker,
                     'last_heartbeat_at',
                 ),
-                'lease_state' => ! $leaseExpiresAt
-                        instanceof CarbonInterface
-                        ? 'none'
-                        : ($leaseExpiresAt->isFuture()
-                        ? 'active'
-                        : 'expired'),
+                'lease_state' => $leaseState,
+                'activity_mode' => $activityMode,
                 'run' => $run === null
                     ? null
                     : [
@@ -441,6 +461,115 @@ class ProjectController extends Controller
         }
 
         return $officeWorkers;
+    }
+
+    /**
+     * @param array<int, array{
+     *     id: int,
+     *     role: string,
+     *     status: string,
+     *     last_heartbeat_at: ?string,
+     *     lease_state: string,
+     *     activity_mode: 'current'|'recent'|null,
+     *     run: ?array{
+     *         id: int,
+     *         status: string,
+     *         attempt_number: ?int,
+     *         started_at: ?string,
+     *         finished_at: ?string,
+     *         failure_reason: ?string
+     *     },
+     *     task: ?array{
+     *         id: int,
+     *         key: string,
+     *         title: string,
+     *         status: string
+     *     }
+     * }> $workers
+     * @return array{
+     *     mode: 'current'|'recent',
+     *     worker_id: int,
+     *     role: string,
+     *     run_id: int,
+     *     task: ?array{id: int, key: string, title: string, status: string}
+     * }|null
+     */
+    private function officeWorkflow(array $workers): ?array
+    {
+        $coreRoles = [
+            AgentRole::ProjectManager->value,
+            AgentRole::Coder->value,
+            AgentRole::Reviewer->value,
+        ];
+        $selectedMode = null;
+        $selectedWorkerId = null;
+        $selectedRole = null;
+        $selectedRunId = null;
+        $selectedTask = null;
+        $selectedStartedAt = '';
+
+        foreach ($workers as $worker) {
+            if (! in_array($worker['role'], $coreRoles, true)) {
+                continue;
+            }
+
+            $run = $worker['run'];
+            $mode = $worker['activity_mode'];
+
+            if ($run === null || $mode === null) {
+                continue;
+            }
+
+            if ($mode === 'recent' && $worker['task'] === null) {
+                continue;
+            }
+
+            $modeRank = $mode === 'current' ? 1 : 0;
+            $selectedRank = $selectedMode === 'current' ? 1 : 0;
+            $startedAt = $run['started_at'] ?? '';
+            $isNewer = $startedAt > $selectedStartedAt
+                || ($startedAt === $selectedStartedAt
+                    && $run['id'] > ($selectedRunId ?? 0));
+
+            if (
+                $selectedMode !== null
+                && $modeRank < $selectedRank
+            ) {
+                continue;
+            }
+
+            if (
+                $selectedMode !== null
+                && $modeRank === $selectedRank
+                && ! $isNewer
+            ) {
+                continue;
+            }
+
+            $selectedMode = $mode;
+            $selectedWorkerId = $worker['id'];
+            $selectedRole = $worker['role'];
+            $selectedRunId = $run['id'];
+            $selectedTask = $worker['task'];
+            $selectedStartedAt = $startedAt;
+        }
+
+        if (
+            $selectedMode === null
+            || $selectedWorkerId === null
+            || $selectedRole === null
+            || $selectedRunId === null
+        ) {
+            return null;
+        }
+
+        return [
+            'mode' => $selectedMode,
+            'worker_id' => $selectedWorkerId,
+            'role' => $selectedRole,
+            'run_id' => $selectedRunId,
+            'task' => $selectedTask,
+        ];
     }
 
     private function serializeDateAttribute(

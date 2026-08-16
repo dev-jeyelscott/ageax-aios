@@ -31,7 +31,7 @@ export default function Welcome() {
                 </header>
                 <div className="flex w-full items-center justify-center opacity-100 transition-opacity duration-750 lg:grow starting:opacity-0">
                     <main className="flex w-full max-w-[335px] flex-col-reverse lg:max-w-4xl lg:flex-row">
-                        <div className="flex-1 rounded-br-lg rounded-bl-lg bg-[#161615] p-6 pb-12 text-[13px] text-[#EDEDEC] leading-[20px] shadow-[inset_0px_0px_0px_1px_#fffaed2d] lg:rounded-tl-lg lg:rounded-br-none lg:p-20">
+                        <div className="flex-1 rounded-br-lg rounded-bl-lg bg-[#161615] p-6 pb-12 text-[13px] leading-[20px] text-[#EDEDEC] shadow-[inset_0px_0px_0px_1px_#fffaed2d] lg:rounded-tl-lg lg:rounded-br-none lg:p-20">
                             <h1 className="mb-1 font-medium">
                                 Let's get started
                             </h1>
