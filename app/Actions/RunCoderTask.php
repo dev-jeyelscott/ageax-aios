@@ -129,17 +129,25 @@ class RunCoderTask
                 'recovery_attempt_number' => $preflight['recovery_attempt']?->number,
             ];
             $validationPassed = $validation['passed'] && $changedFiles !== null && $headUnchanged;
-            $commitSha = $validationPassed ? $this->committer->commit($task, $changedFiles, $baseSha) : null;
-            $passed = $validationPassed && $commitSha !== null;
+            // A validated attempt with zero changed files means the repository already satisfies
+            // this task (e.g. a prior attempt or unrelated task already implemented it) rather
+            // than a failed commit; nothing to commit is expected, not an error.
+            $alreadyImplemented = $validationPassed && $changedFiles === [];
+            $commitSha = $validationPassed && ! $alreadyImplemented ? $this->committer->commit($task, $changedFiles, $baseSha) : null;
+            $passed = $alreadyImplemented || ($validationPassed && $commitSha !== null);
 
             if ($validationPassed) {
-                $validation['checks']['task_commit'] = $commitSha !== null;
+                $validation['checks']['task_commit'] = $alreadyImplemented || $commitSha !== null;
                 $validation['evidence']['task_commit'] = [
                     'name' => 'task_commit',
-                    'passed' => $commitSha !== null,
+                    'passed' => $alreadyImplemented || $commitSha !== null,
                     'verification_identifier' => 'git commit',
-                    'exit_code' => $commitSha === null ? 1 : 0,
-                    'summary' => $commitSha === null ? 'The validated task changes could not be committed.' : null,
+                    'exit_code' => ($alreadyImplemented || $commitSha !== null) ? 0 : 1,
+                    'summary' => match (true) {
+                        $alreadyImplemented => 'No changes were required; the repository already satisfies this task, so nothing was committed.',
+                        $commitSha === null => 'The validated task changes could not be committed.',
+                        default => null,
+                    },
                 ];
             }
 
