@@ -158,13 +158,18 @@ test('agent configuration rejects high confidence secret material', function (st
     'environment credential' => 'API_KEY=super-secret-value',
     'lowercase environment credential' => 'provider_token=super-secret-value',
     'private key' => "-----BEGIN PRIVATE KEY-----\nsecret-material",
+    'json access token assignment' => '{"access_token": "provider-token-value-123456"}',
+    'json api key assignment' => '{"api_key": "provider-api-key-value-123456"}',
+    'yaml access token assignment' => 'access_token: provider-token-value-123456',
+    'yaml api key assignment' => 'api_key: provider-api-key-value-123456',
+    'credential-bearing url' => 'postgresql://aios:database-password-123@db.example.test/aios',
 ]);
 
 test('agent context may describe security rules without being treated as a secret', function () {
     $project = createAgentPersistenceProject('Security guidance agent configuration');
 
     $agent = Agent::factory()->for($project)->create([
-        'default_context' => 'Never expose API keys, access tokens, credentials, or .env contents.',
+        'default_context' => 'Security rule: never expose API keys or access tokens. Credentials and .env contents must stay outside AIOS configuration.',
     ]);
 
     expect($agent->exists)->toBeTrue();
