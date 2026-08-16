@@ -72,7 +72,7 @@ class UpdateAgentRequest extends FormRequest
         /** @var Agent $agent */
         $agent = $this->route('agent');
 
-        if ($project->status !== ProjectStatus::Running) {
+        if (ProjectStatus::from((string) $project->getRawOriginal('status')) !== ProjectStatus::Running) {
             return;
         }
 

@@ -40,7 +40,9 @@ class StructuredResultParser
     /** @return array<string, mixed>|null */
     private function decodeFencedOrEmbeddedJsonObject(string $output): ?array
     {
-        if (preg_match_all('/```(?:json)?\s*(.*?)\s*```/s', $output, $matches) && $matches[1] !== []) {
+        $matchCount = preg_match_all('/```(?:json)?\s*(.*?)\s*```/s', $output, $matches);
+
+        if (is_int($matchCount) && $matchCount > 0) {
             foreach (array_reverse($matches[1]) as $candidate) {
                 if (($decoded = $this->decodeJsonObject($candidate)) !== null) {
                     return $decoded;

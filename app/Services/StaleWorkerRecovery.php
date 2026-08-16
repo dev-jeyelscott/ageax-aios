@@ -83,14 +83,15 @@ class StaleWorkerRecovery
                 return false;
             }
 
-            $worker = AgentWorker::query()->whereBelongsTo($lockedRun->project)->where('role', $lockedRun->role)->first();
+            $role = AgentRole::from((string) $lockedRun->getRawOriginal('role'));
+            $worker = AgentWorker::query()->whereBelongsTo($lockedRun->project)->where('role', $role)->first();
             if ($worker !== null && $worker->lease_id !== null && $worker->lease_id === $lockedRun->worker_lease_id) {
                 // The lease that started this run is still held; it is genuinely still executing.
                 return false;
             }
 
             $task = $lockedRun->task_id === null ? null : Task::query()->lockForUpdate()->find($lockedRun->task_id);
-            $expectedStatuses = match ($lockedRun->role) {
+            $expectedStatuses = match ($role) {
                 AgentRole::Coder => [TaskStatus::Coding, TaskStatus::Validating],
                 AgentRole::Reviewer => [TaskStatus::Reviewing],
                 AgentRole::KnowledgeArchitect, AgentRole::ProjectManager, AgentRole::RecoveryEngineer => [],
@@ -104,14 +105,14 @@ class StaleWorkerRecovery
             $evidence = $this->recoveryEvidence($task);
             $this->storeRecoveryEvidence($task, $evidence);
 
-            if ($lockedRun->role === AgentRole::Coder) {
+            if ($role === AgentRole::Coder) {
                 $task->attempts()->where('status', 'running')->update(['status' => 'interrupted', 'finished_at' => now()]);
                 $this->workflow->transition($task, TaskStatus::Failed);
             } else {
                 $this->workflow->recordReviewerOperationalFailure($task, $task->attempts()->latest('number')->first(), ['reason' => 'orphaned_agent_run', 'evidence' => $evidence]);
             }
 
-            $this->audit->record('task.recovered', ['role' => $lockedRun->role->value, 'reason' => 'orphaned_agent_run', 'agent_run_id' => $lockedRun->id, 'evidence' => $evidence], $lockedRun->project, $task);
+            $this->audit->record('task.recovered', ['role' => $role->value, 'reason' => 'orphaned_agent_run', 'agent_run_id' => $lockedRun->id, 'evidence' => $evidence], $lockedRun->project, $task);
 
             return true;
         }, attempts: 3);

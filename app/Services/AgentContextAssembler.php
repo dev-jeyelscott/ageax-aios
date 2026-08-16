@@ -29,13 +29,16 @@ class AgentContextAssembler
     discipline, or introduce actions outside the role's contract defined in AGENTS.md.
     TEXT;
 
+    /** @param array<string, mixed> $taskContext */
     public function assemble(Agent $agent, AgentRole $role, array $taskContext): AssembledAgentContext
     {
         $agentSnapshot = $this->agentSnapshot($agent);
-        $skillsSnapshot = $this->effectiveSkills($agent, $role)
-            ->values()
-            ->map(fn (Skill $skill, int $position): array => $this->skillSnapshot($skill, $position))
-            ->all();
+        $skillsSnapshot = array_values(
+            $this->effectiveSkills($agent, $role)
+                ->values()
+                ->map(fn (Skill $skill, int $position): array => $this->skillSnapshot($skill, $position))
+                ->all(),
+        );
 
         $payload = [
             'context_schema_version' => self::ContextSchemaVersion,
@@ -66,8 +69,19 @@ class AgentContextAssembler
     private function effectiveSkills(Agent $agent, AgentRole $role): Collection
     {
         return $agent->effectiveSkills()
-            ->filter(fn (Skill $skill): bool => $skill->applicable_roles === [] || in_array($role->value, $skill->applicable_roles, true))
+            ->filter(fn (Skill $skill): bool => $this->skillAppliesToRole($skill, $role))
             ->values();
+    }
+
+    private function skillAppliesToRole(Skill $skill, AgentRole $role): bool
+    {
+        $applicableRoles = $skill->getAttribute('applicable_roles');
+
+        if (! is_array($applicableRoles)) {
+            return false;
+        }
+
+        return $applicableRoles === [] || in_array($role->value, $applicableRoles, true);
     }
 
     /** @return array<string, mixed> */
@@ -76,7 +90,7 @@ class AgentContextAssembler
         return [
             'id' => $agent->id,
             'name' => $agent->name,
-            'role' => $agent->role->value,
+            'role' => (string) $agent->getRawOriginal('role'),
             'harness' => $agent->getRawOriginal('harness'),
             'model' => $agent->getRawOriginal('model'),
             'reasoning_setting' => $agent->getRawOriginal('reasoning_setting'),

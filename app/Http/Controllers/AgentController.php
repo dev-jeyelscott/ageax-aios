@@ -48,7 +48,7 @@ class AgentController extends Controller
     ): RedirectResponse {
         abort_unless($agent->project_id === $project->id, 404);
 
-        $skill = Skill::query()->findOrFail($request->validated('skill_id'));
+        $skill = Skill::query()->findOrFail((int) $request->validated('skill_id'));
 
         try {
             $assignSkillToAgent->handle($agent, $skill);
@@ -93,7 +93,7 @@ class AgentController extends Controller
     ): RedirectResponse {
         abort_unless($agent->project_id === $project->id, 404);
 
-        $worker = AgentWorker::query()->findOrFail($request->validated('agent_worker_id'));
+        $worker = AgentWorker::query()->findOrFail((int) $request->validated('agent_worker_id'));
 
         try {
             $bindAgentWorker->handle($worker, $agent);
