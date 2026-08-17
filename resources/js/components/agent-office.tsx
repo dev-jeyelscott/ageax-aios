@@ -405,32 +405,6 @@ function AgentCard({
     );
 }
 
-function Metric({
-    label,
-    value,
-    tone,
-}: {
-    label: string;
-    value: number;
-    tone: string;
-}) {
-    return (
-        <div className="flex min-w-24 items-center gap-2 rounded-lg border border-border-subtle bg-background/40 px-2.5 py-1">
-            <span className={`size-1.5 rounded-full ${tone}`} />
-
-            <div>
-                <p className="text-sm leading-none font-semibold text-foreground">
-                    {value}
-                </p>
-
-                <p className="mt-1 font-mono text-2xs tracking-wide text-muted-foreground uppercase">
-                    {label}
-                </p>
-            </div>
-        </div>
-    );
-}
-
 function WorkflowPipeline({
     workflow,
     taskProgress,
@@ -622,16 +596,8 @@ export function AgentOffice({
         return agentMap;
     }, [agents, workerBindings]);
 
-    const workingWorkers = displayedWorkers.filter(
-        (worker) => worker.status === 'working',
-    ).length;
-
     const boundWorkers = displayedWorkers.filter((worker) =>
         agentByWorkerId.has(worker.id),
-    ).length;
-
-    const attentionWorkers = displayedWorkers.filter((worker) =>
-        ['recovering', 'interrupted'].includes(worker.status),
     ).length;
 
     return (
