@@ -680,26 +680,6 @@ export function AgentOffice({
                         </Badge>
                     </div>
                 </div>
-
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                    <Metric
-                        label="working"
-                        value={workingWorkers}
-                        tone="bg-success"
-                    />
-
-                    <Metric
-                        label="bound"
-                        value={boundWorkers}
-                        tone="bg-primary"
-                    />
-
-                    <Metric
-                        label="attention"
-                        value={attentionWorkers}
-                        tone="bg-destructive"
-                    />
-                </div>
             </header>
 
             <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden p-2.5">
