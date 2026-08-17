@@ -5,6 +5,7 @@ namespace App\Services;
 use App\AgentRole;
 use App\Exceptions\InvalidTaskTransition;
 use App\Models\AuditEvent;
+use App\Models\Phase;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
@@ -212,9 +213,17 @@ class TaskWorkflow
 
     private function nextCoderTask(Project $project): ?Task
     {
-        return Task::query()
+        $phase = $this->currentPhase($project);
+
+        $query = Task::query()
             ->whereBelongsTo($project)
-            ->whereIn('status', [TaskStatus::Queued, TaskStatus::ChangesRequired, TaskStatus::Failed])
+            ->whereIn('status', [TaskStatus::Queued, TaskStatus::ChangesRequired, TaskStatus::Failed]);
+
+        if ($phase !== null) {
+            $query->where('phase_id', $phase->id);
+        }
+
+        return $query
             ->orderBy('position')
             ->lockForUpdate()
             ->get()
@@ -223,9 +232,47 @@ class TaskWorkflow
 
     private function reviewableTask(Project $project): ?Task
     {
-        return Task::query()
+        $phase = $this->currentPhase($project);
+
+        if ($phase === null) {
+            return Task::query()
+                ->whereBelongsTo($project)
+                ->where('status', TaskStatus::ReadyForReview)
+                ->orderBy('position')
+                ->lockForUpdate()
+                ->first();
+        }
+
+        $phaseTasks = Task::query()
             ->whereBelongsTo($project)
-            ->where('status', TaskStatus::ReadyForReview)
+            ->where('phase_id', $phase->id)
+            ->orderBy('position')
+            ->lockForUpdate()
+            ->get();
+
+        if (! $phaseTasks->every(
+            fn (Task $task): bool => in_array(
+                TaskStatus::from($task->getRawOriginal('status')),
+                [TaskStatus::ReadyForReview, TaskStatus::Done],
+                true,
+            ),
+        )) {
+            return null;
+        }
+
+        return $phaseTasks->first(
+            fn (Task $task): bool => TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::ReadyForReview,
+        );
+    }
+
+    private function currentPhase(Project $project): ?Phase
+    {
+        return Phase::query()
+            ->whereBelongsTo($project)
+            ->whereHas(
+                'tasks',
+                fn ($tasks) => $tasks->where('status', '!=', TaskStatus::Done),
+            )
             ->orderBy('position')
             ->lockForUpdate()
             ->first();
@@ -233,6 +280,13 @@ class TaskWorkflow
 
     private function dependenciesAreSatisfied(Task $task): bool
     {
-        return $task->dependencies()->get()->every(fn (Task $dependency): bool => TaskStatus::from($dependency->getRawOriginal('status')) === TaskStatus::Done);
+        return $task->dependencies()->get()->every(function (Task $dependency) use ($task): bool {
+            $status = TaskStatus::from($dependency->getRawOriginal('status'));
+
+            return $status === TaskStatus::Done
+                || ($task->phase_id !== null
+                    && $dependency->phase_id === $task->phase_id
+                    && $status === TaskStatus::ReadyForReview);
+        });
     }
 }
