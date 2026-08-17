@@ -21,6 +21,7 @@ use App\Services\CodexCliRunner;
 use App\Services\ObsidianProjectNotes;
 use App\Services\StructuredResultParser;
 use App\Services\TaskContextCapsuleFactory;
+use App\Services\TaskContractGuard;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
 use App\TaskStatus;
@@ -31,13 +32,35 @@ use Throwable;
 
 class RunReviewerTask
 {
-    public function __construct(private TaskWorkflow $workflow, private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private StructuredResultParser $parser, private TaskContextCapsuleFactory $capsules, private ObsidianProjectNotes $notes, private WorkerHeartbeat $heartbeat, private AuditLogger $audit) {}
+    public function __construct(private TaskWorkflow $workflow, private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private StructuredResultParser $parser, private TaskContextCapsuleFactory $capsules, private TaskContractGuard $contracts, private ObsidianProjectNotes $notes, private WorkerHeartbeat $heartbeat, private AuditLogger $audit) {}
 
     /** @return array{exit_code: int, output: string, error_output: string} */
     public function run(Task $task, TaskAttempt $attempt, ?WorkerLease $lease = null): array
     {
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Reviewing, 409, 'Only claimed review tasks may execute.');
         $task->loadMissing('project', 'phase');
+
+        $context = $this->capsules->make($task, AgentRole::Reviewer);
+        $contract = $this->contracts->evaluate($task, $context, $attempt);
+
+        if ($contract['drifted']) {
+            $this->audit->record('task.contract_drift_detected', [
+                'operation' => 'reviewer',
+                'baseline_attempt_number' => $contract['baseline_attempt_number'],
+                'baseline_fingerprint' => $contract['baseline']['fingerprint'] ?? null,
+                'current_fingerprint' => $contract['current']['fingerprint'],
+                'changed_inputs' => $contract['changed_inputs'],
+                'recovery_pinned' => false,
+            ], $task->project, $task);
+            $this->workflow->transition($task, TaskStatus::Blocked);
+
+            return [
+                'exit_code' => -1,
+                'output' => '',
+                'error_output' => 'Task contract drift detected before Reviewer execution. Explicitly requeue/replan/rebase the task before review.',
+            ];
+        }
+
         $this->audit->record('review.started', ['attempt_number' => $attempt->number], $task->project, $task);
 
         // AIOS resolves the Agent bound to this workflow role for the deterministic context
@@ -60,7 +83,6 @@ class RunReviewerTask
             return $execution;
         }
 
-        $context = $this->capsules->make($task, AgentRole::Reviewer);
         $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Reviewer, $context);
         $prompt = "You are the Reviewer. This is a read-only task review: independently inspect this task, repository documentation, current implementation, verification results, and exact Git diffs. Never edit files, create tests, format code, commit, or otherwise mutate the project. Use Git to inspect the recorded base and head SHAs, but run verification commands only from the managed project checkout provided as your working directory. Do not create temporary checkouts, copy repositories or tests, or invoke Artisan/Pest from another directory: those environments do not have the managed runtime, dependencies, or assets and their failures are invalid evidence. Approve only when this task meets its acceptance criteria; approval completes this task alone. If changes are needed, return findings so the Coder can correct this task in a fresh attempt. Return exactly one JSON object with `outcome` (`approved` or `changes_required`) and `summary`. For `changes_required`, include a non-empty `findings` array. Every finding must contain these string fields: `severity`, `location`, `current_implementation`, `expected_implementation`, `why_incorrect`, `required_fix`, `verification_requirement`, and `implementation_fix_context`. Do not use `actionable_findings`, `task_key`, `path`, `lines`, `finding`, or `required_action` as substitutes. When approved, make summary a concise, concrete implementation summary suitable for an Obsidian project record, covering the task's changes and verification.\n\n".json_encode(['task' => $assembled?->toArray() ?? $context, 'attempt' => $attempt->only(['number', 'base_sha', 'head_sha', 'commit_sha', 'validation_results', 'changed_files'])], JSON_THROW_ON_ERROR);
         $run = $this->runs->start($task->project, AgentRole::Reviewer, $prompt, $task, $attempt, $lease, $context['retrieval_manifest'], $agent, $assembled);

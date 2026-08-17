@@ -16,7 +16,7 @@ class RequeueBlockedTask
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Blocked, 409, 'Only blocked tasks may be requeued.');
 
         $latestBlockDecision = $task->auditEvents()
-            ->whereIn('event_type', ['review.retry_exhausted', 'task.coder_retry_exhausted', 'task.no_progress_detected'])
+            ->whereIn('event_type', ['review.retry_exhausted', 'task.coder_retry_exhausted', 'task.no_progress_detected', 'task.contract_drift_detected'])
             ->orderByDesc('occurred_at')
             ->orderByDesc('id')
             ->first();
@@ -28,13 +28,19 @@ class RequeueBlockedTask
             : null;
         $status = match ($latestBlockDecision?->event_type) {
             'review.retry_exhausted' => TaskStatus::ReadyForReview,
+            'task.contract_drift_detected' => TaskStatus::ChangesRequired,
             'task.no_progress_detected' => $operation === 'reviewer'
                 ? TaskStatus::ReadyForReview
                 : TaskStatus::ChangesRequired,
             default => TaskStatus::ChangesRequired,
         };
         $task = $this->workflow->transition($task, $status);
-        $this->audit->record('task.requeued', ['reason' => 'manual recovery', 'status' => $status->value], $task->project, $task);
+        $this->audit->record('task.requeued', [
+            'reason' => $latestBlockDecision?->event_type === 'task.contract_drift_detected'
+                ? 'manual contract rebase'
+                : 'manual recovery',
+            'status' => $status->value,
+        ], $task->project, $task);
 
         return $task;
     }

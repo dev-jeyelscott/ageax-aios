@@ -6,6 +6,7 @@ use App\AgentRole;
 use App\Exceptions\AgentNotBoundToRole;
 use App\Exceptions\UnsafeProjectPath;
 use App\Models\Agent;
+use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
@@ -14,6 +15,7 @@ use App\Services\AgentHarness;
 use App\Services\AgentHarnessResolver;
 use App\Services\AgentResolver;
 use App\Services\AgentRunRecorder;
+use App\Services\AssembledAgentContext;
 use App\Services\AuditLogger;
 use App\Services\CoderRepositoryGuard;
 use App\Services\CodexCliRunner;
@@ -21,6 +23,7 @@ use App\Services\NoProgressRetryGuard;
 use App\Services\ProjectGitState;
 use App\Services\TaskCommitter;
 use App\Services\TaskContextCapsuleFactory;
+use App\Services\TaskContractGuard;
 use App\Services\TaskValidator;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
@@ -32,7 +35,7 @@ use Throwable;
 
 class RunCoderTask
 {
-    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private NoProgressRetryGuard $noProgress, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git) {}
+    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskContractGuard $contracts, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private NoProgressRetryGuard $noProgress, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git) {}
 
     public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
     {
@@ -52,20 +55,23 @@ class RunCoderTask
         }
 
         $baseSha = $preflight['base_sha'];
+        $context = $this->capsules->make($task);
+        $contract = $this->contracts->evaluate($task, $context, $preflight['recovery_attempt']);
 
-        // AIOS resolves the Agent bound to this workflow role for the deterministic context
-        // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
-        // Agent fall back to the legacy default execution path; such runs remain legacy runs.
-        // A binding that exists but is disabled, missing, or otherwise misconfigured blocks
-        // processing with actionable audit evidence instead of silently falling back (P2-015).
+        if ($contract['drifted']) {
+            return $this->blockContractDrift($task, $baseSha, $contract);
+        }
+
+        $contractEvidence = $contract['recovery_pinned'] && $contract['baseline'] !== null
+            ? $contract['baseline']
+            : $contract['current'];
+
         try {
-            [$agent, $harness] = $this->resolveAgent($task->project, AgentRole::Coder);
+            [$agent, $harness, $assembled] = $this->executionConfiguration($task, $context, $preflight['recovery_attempt']);
         } catch (LogicException $exception) {
             return $this->blockMisconfiguredAgent($task, $exception);
         }
 
-        $context = $this->capsules->make($task);
-        $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Coder, $context);
         $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
         $attempt = TaskAttempt::create([
             'task_id' => $task->id,
@@ -78,6 +84,7 @@ class RunCoderTask
                     'base_sha' => $baseSha,
                     'recovery_attempt_number' => $preflight['recovery_attempt']?->number,
                 ],
+                'task_contract' => $contractEvidence,
             ],
             'started_at' => now(),
         ]);
@@ -129,10 +136,8 @@ class RunCoderTask
                 'mode' => $preflight['mode'],
                 'recovery_attempt_number' => $preflight['recovery_attempt']?->number,
             ];
+            $validation['task_contract'] = $contractEvidence;
             $validationPassed = $validation['passed'] && $changedFiles !== null && $headUnchanged;
-            // A validated attempt with zero changed files means the repository already satisfies
-            // this task (e.g. a prior attempt or unrelated task already implemented it) rather
-            // than a failed commit; nothing to commit is expected, not an error.
             $alreadyImplemented = $validationPassed && $changedFiles === [];
             $commitSha = $validationPassed && ! $alreadyImplemented ? $this->committer->commit($task, $changedFiles, $baseSha) : null;
             $passed = $alreadyImplemented || ($validationPassed && $commitSha !== null);
@@ -195,6 +200,7 @@ class RunCoderTask
                         'mode' => $preflight['mode'],
                         'recovery_attempt_number' => $preflight['recovery_attempt']?->number,
                     ],
+                    'task_contract' => $contractEvidence,
                 ],
                 'changed_files' => $changedFiles,
                 'finished_at' => now(),
@@ -210,6 +216,47 @@ class RunCoderTask
         }
 
         return $attempt->refresh();
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     * @return array{0: ?Agent, 1: ?AgentHarness, 2: ?AssembledAgentContext}
+     */
+    private function executionConfiguration(Task $task, array $context, ?TaskAttempt $recoveryAttempt): array
+    {
+        if ($recoveryAttempt === null) {
+            [$agent, $harness] = $this->resolveAgent($task->project, AgentRole::Coder);
+
+            return [$agent, $harness, $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Coder, $context)];
+        }
+
+        $run = AgentRun::query()
+            ->whereBelongsTo($task)
+            ->where('role', AgentRole::Coder)
+            ->where('attempt_number', $recoveryAttempt->number)
+            ->orderByDesc('started_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($run === null || ($run->agent_id === null && $run->configuration_snapshot === null)) {
+            return [null, null, null];
+        }
+
+        if (! is_array($run->configuration_snapshot)) {
+            throw new LogicException('The interrupted Coder run is missing its immutable configuration snapshot; explicitly requeue/rebase the task instead of adopting current Agent configuration.');
+        }
+
+        $agent = $this->contextAssembler->agentFromSnapshot($run->configuration_snapshot, $task->project->id);
+
+        if (! Agent::query()->whereKey($agent->id)->where('project_id', $task->project->id)->exists()) {
+            throw new LogicException('The Agent referenced by the interrupted Coder configuration snapshot no longer exists in this project.');
+        }
+
+        return [
+            $agent,
+            $this->harnesses->resolve($agent),
+            $this->contextAssembler->restore($run->configuration_snapshot, $context),
+        ];
     }
 
     /**
@@ -290,6 +337,53 @@ class RunCoderTask
         }
 
         return [$agent, $this->harnesses->resolve($agent)];
+    }
+
+    /**
+     * @param array{
+     *     drifted: bool,
+     *     baseline: ?array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>},
+     *     current: array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>},
+     *     baseline_attempt_number: ?int,
+     *     changed_inputs: list<string>,
+     *     recovery_pinned: bool
+     * } $contract
+     */
+    private function blockContractDrift(Task $task, string $baseSha, array $contract): TaskAttempt
+    {
+        $attempt = TaskAttempt::create([
+            'task_id' => $task->id,
+            'number' => $task->attempts()->max('number') + 1,
+            'base_sha' => $baseSha,
+            'status' => 'blocked',
+            'validation_results' => [
+                'passed' => false,
+                'checks' => ['task_contract' => false],
+                'task_contract' => $contract['current'],
+                'contract_drift' => [
+                    'baseline_attempt_number' => $contract['baseline_attempt_number'],
+                    'baseline_fingerprint' => $contract['baseline']['fingerprint'] ?? null,
+                    'current_fingerprint' => $contract['current']['fingerprint'],
+                    'changed_inputs' => $contract['changed_inputs'],
+                    'recovery_pinned' => $contract['recovery_pinned'],
+                ],
+            ],
+            'started_at' => now(),
+            'finished_at' => now(),
+        ]);
+
+        $this->audit->record('task.contract_drift_detected', [
+            'operation' => 'coder',
+            'baseline_attempt_number' => $contract['baseline_attempt_number'],
+            'blocked_attempt_number' => $attempt->number,
+            'baseline_fingerprint' => $contract['baseline']['fingerprint'] ?? null,
+            'current_fingerprint' => $contract['current']['fingerprint'],
+            'changed_inputs' => $contract['changed_inputs'],
+            'recovery_pinned' => $contract['recovery_pinned'],
+        ], $task->project, $task);
+        $this->workflow->transition($task, TaskStatus::Blocked);
+
+        return $attempt;
     }
 
     private function blockMisconfiguredAgent(Task $task, LogicException $exception): TaskAttempt

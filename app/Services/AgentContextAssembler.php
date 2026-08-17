@@ -6,6 +6,7 @@ use App\AgentRole;
 use App\Models\Agent;
 use App\Models\Skill;
 use Illuminate\Support\Collection;
+use LogicException;
 
 /**
  * Assembles the effective, deterministic execution context for an Agent run.
@@ -64,6 +65,82 @@ class AgentContextAssembler
             contextCostEstimate: $costEstimate,
             contextCostSchemaVersion: ContextCostEstimator::SchemaVersion,
         );
+    }
+
+    /**
+     * Restore the immutable Agent/Skill execution configuration for the same interrupted
+     * execution attempt. The task context may be rebuilt only after the Task Contract Drift
+     * Gate proves its governing contract still matches the persisted baseline.
+     *
+     * @param  array<string, mixed>  $configurationSnapshot
+     * @param  array<string, mixed>  $taskContext
+     */
+    public function restore(array $configurationSnapshot, array $taskContext): AssembledAgentContext
+    {
+        $agentSnapshot = $configurationSnapshot['agent'] ?? null;
+        $skillsSnapshot = $configurationSnapshot['skills'] ?? null;
+        $contextSchemaVersion = $configurationSnapshot['context_schema_version'] ?? null;
+        $contextHash = $configurationSnapshot['context_hash'] ?? null;
+
+        if (! is_array($agentSnapshot)
+            || ! is_array($skillsSnapshot)
+            || ! is_int($contextSchemaVersion)
+            || ! is_string($contextHash)
+            || $contextHash === '') {
+            throw new LogicException('The interrupted Agent run is missing a valid immutable configuration snapshot.');
+        }
+
+        $skills = array_values(array_filter($skillsSnapshot, fn (mixed $skill): bool => is_array($skill)));
+        $costEstimate = $this->costEstimator->estimate(self::SystemRules, $agentSnapshot, $skills, $taskContext);
+
+        return new AssembledAgentContext(
+            contextSchemaVersion: $contextSchemaVersion,
+            systemRules: self::SystemRules,
+            agentSnapshot: $agentSnapshot,
+            skillsSnapshot: $skills,
+            taskContext: $taskContext,
+            hash: $contextHash,
+            contextCostEstimate: $costEstimate,
+            contextCostSchemaVersion: ContextCostEstimator::SchemaVersion,
+        );
+    }
+
+    /**
+     * Rehydrate only the provider-facing immutable Agent settings needed to dispatch the same
+     * interrupted execution. The model is intentionally not persisted; its id still references
+     * the durable Agent row for AgentRun evidence.
+     *
+     * @param  array<string, mixed>  $configurationSnapshot
+     */
+    public function agentFromSnapshot(array $configurationSnapshot, int $projectId): Agent
+    {
+        $snapshot = $configurationSnapshot['agent'] ?? null;
+
+        if (! is_array($snapshot)
+            || ! is_int($snapshot['id'] ?? null)
+            || ! is_string($snapshot['name'] ?? null)
+            || ! is_string($snapshot['role'] ?? null)
+            || ! is_string($snapshot['harness'] ?? null)
+            || ! is_int($snapshot['configuration_version'] ?? null)) {
+            throw new LogicException('The interrupted Agent run is missing restorable Agent configuration evidence.');
+        }
+
+        $agent = new Agent;
+        $agent->forceFill([
+            'project_id' => $projectId,
+            'name' => $snapshot['name'],
+            'role' => $snapshot['role'],
+            'harness' => $snapshot['harness'],
+            'model' => is_string($snapshot['model'] ?? null) ? $snapshot['model'] : null,
+            'reasoning_setting' => is_string($snapshot['reasoning_setting'] ?? null) ? $snapshot['reasoning_setting'] : null,
+            'default_context' => is_string($snapshot['default_context'] ?? null) ? $snapshot['default_context'] : null,
+            'enabled' => true,
+            'configuration_version' => $snapshot['configuration_version'],
+        ]);
+        $agent->setAttribute('id', $snapshot['id']);
+        $agent->syncOriginal();
+
+        return $agent;
     }
 
     /**
