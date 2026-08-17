@@ -8,6 +8,7 @@ use App\Actions\RunProjectManager;
 use App\Actions\RunReviewerTask;
 use App\Actions\SetProjectStatus;
 use App\AgentRole;
+use App\Models\AgentWorker;
 use App\Models\Project;
 use App\Models\Roadmap;
 use App\ProjectStatus;
@@ -54,6 +55,10 @@ class RunAiosWorkers extends Command
                 }
 
                 foreach ([AgentRole::Coder, AgentRole::Reviewer] as $role) {
+                    if ($this->onTaskCooldown($project, $role)) {
+                        continue;
+                    }
+
                     $lease = $heartbeat->acquire($project, $role, $workerInstanceId);
                     if ($lease === null) {
                         continue;
@@ -73,6 +78,8 @@ class RunAiosWorkers extends Command
                             $heartbeat->release($lease);
                         }
 
+                        AgentWorker::query()->whereBelongsTo($project)->where('role', $role)->update(['task_completed_at' => now()]);
+
                         if ($this->stopRequested($project, $setProjectStatus)) {
                             continue 2;
                         }
@@ -90,6 +97,18 @@ class RunAiosWorkers extends Command
         } while (! $this->option('once'));
 
         return self::SUCCESS;
+    }
+
+    private function onTaskCooldown(Project $project, AgentRole $role): bool
+    {
+        $cooldownSeconds = max(0, (int) config('aios.worker_task_cooldown_seconds'));
+        if ($cooldownSeconds === 0) {
+            return false;
+        }
+
+        $worker = AgentWorker::query()->whereBelongsTo($project)->where('role', $role)->first();
+
+        return $worker?->task_completed_at !== null && $worker->task_completed_at->addSeconds($cooldownSeconds)->isFuture();
     }
 
     /** @phpstan-impure */

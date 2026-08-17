@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['project_id', 'role', 'agent_id', 'status', 'worker_instance_id', 'lease_id', 'last_heartbeat_at', 'lease_expires_at', 'process_id', 'started_at', 'stopped_at'])]
+#[Fillable(['project_id', 'role', 'agent_id', 'status', 'worker_instance_id', 'lease_id', 'last_heartbeat_at', 'lease_expires_at', 'process_id', 'started_at', 'stopped_at', 'task_completed_at'])]
 /**
  * @property AgentRole $role
  * @property ?int $agent_id
@@ -19,6 +19,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property ?CarbonImmutable $lease_expires_at
  * @property ?CarbonImmutable $started_at
  * @property ?CarbonImmutable $stopped_at
+ * @property ?CarbonImmutable $task_completed_at
  */
 class AgentWorker extends Model
 {
@@ -27,7 +28,7 @@ class AgentWorker extends Model
 
     protected function casts(): array
     {
-        return ['role' => AgentRole::class, 'last_heartbeat_at' => 'immutable_datetime', 'lease_expires_at' => 'immutable_datetime', 'started_at' => 'immutable_datetime', 'stopped_at' => 'immutable_datetime'];
+        return ['role' => AgentRole::class, 'last_heartbeat_at' => 'immutable_datetime', 'lease_expires_at' => 'immutable_datetime', 'started_at' => 'immutable_datetime', 'stopped_at' => 'immutable_datetime', 'task_completed_at' => 'immutable_datetime'];
     }
 
     /** @return BelongsTo<Project, $this> */

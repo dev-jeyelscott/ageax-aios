@@ -375,6 +375,57 @@ test('the worker applies a reviewer decision during a polling cycle', function (
         ->and($task->auditEvents()->where('event_type', 'task.approved')->exists())->toBeTrue();
 });
 
+test('the worker waits for a cooldown after completing a task before claiming another for the same role', function () {
+    config()->set('aios.worker_task_cooldown_seconds', 300);
+    $vault = storage_path('framework/testing/obsidian-'.fake()->uuid());
+    config()->set('aios.obsidian_vault_path', $vault);
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    foreach (AgentRole::cases() as $role) {
+        AgentWorker::create(['project_id' => $project->id, 'role' => $role, 'status' => 'idle']);
+    }
+    $firstTask = Task::create([
+        'project_id' => $project->id,
+        'key' => 'TASK-001',
+        'position' => 1,
+        'title' => 'First reviewable task',
+        'objective' => 'Verify the implementation.',
+        'acceptance_criteria' => ['It works.'],
+        'implementation_prompt' => 'Implement it.',
+        'context_capsule' => [],
+        'status' => TaskStatus::ReadyForReview,
+    ]);
+    TaskAttempt::create(['task_id' => $firstTask->id, 'number' => 1, 'status' => 'completed', 'started_at' => now(), 'finished_at' => now()]);
+    $secondTask = Task::create([
+        'project_id' => $project->id,
+        'key' => 'TASK-002',
+        'position' => 2,
+        'title' => 'Second reviewable task',
+        'objective' => 'Verify the implementation.',
+        'acceptance_criteria' => ['It works.'],
+        'implementation_prompt' => 'Implement it.',
+        'context_capsule' => [],
+        'status' => TaskStatus::ReadyForReview,
+    ]);
+    TaskAttempt::create(['task_id' => $secondTask->id, 'number' => 1, 'status' => 'completed', 'started_at' => now(), 'finished_at' => now()]);
+    $review = ['outcome' => 'approved', 'summary' => 'All acceptance criteria are met.', 'findings' => []];
+    Process::fake(['*' => Process::result(output: json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => json_encode($review, JSON_THROW_ON_ERROR)]], JSON_THROW_ON_ERROR))]);
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($firstTask->refresh()->status)->toBe(TaskStatus::Done)
+        ->and($secondTask->refresh()->status)->toBe(TaskStatus::ReadyForReview);
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($secondTask->refresh()->status)
+        ->toBe(TaskStatus::ReadyForReview, 'the reviewer worker should still be on cooldown and must not claim a second task');
+
+    $this->travel(301)->seconds();
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($secondTask->refresh()->status)->toBe(TaskStatus::Done);
+});
+
 test('the worker loop no longer performs stale recovery itself; that is owned by the scheduled recovery scan', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     foreach (AgentRole::cases() as $role) {

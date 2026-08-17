@@ -15,6 +15,7 @@ return [
     'stale_worker_after_seconds' => (int) env('AIOS_STALE_WORKER_AFTER_SECONDS', 1860),
     'worker_lease_seconds' => (int) env('AIOS_WORKER_LEASE_SECONDS', 60),
     'worker_heartbeat_interval_seconds' => (int) env('AIOS_WORKER_HEARTBEAT_INTERVAL_SECONDS', 5),
+    'worker_task_cooldown_seconds' => (int) env('AIOS_WORKER_TASK_COOLDOWN_SECONDS', 300),
     'max_coder_attempts' => (int) env('AIOS_MAX_CODER_ATTEMPTS', 3),
     'max_reviewer_attempts' => (int) env('AIOS_MAX_REVIEWER_ATTEMPTS', 3),
     'roadmap_scan_interval_hours' => (int) env('AIOS_ROADMAP_SCAN_INTERVAL_HOURS', 24),
