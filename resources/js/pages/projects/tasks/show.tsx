@@ -1365,6 +1365,8 @@ export default function TaskShow({
                                     })}
                                 </CardContent>
                             </Card>
+
+                            <ReviewSummary review={latestReview} />
                         </main>
 
                         <aside className="min-w-0 space-y-3 xl:sticky xl:top-3 xl:self-start">
@@ -1596,8 +1598,6 @@ export default function TaskShow({
                             </Card>
                         </aside>
                     </div>
-
-                    <ReviewSummary review={latestReview} />
                 </div>
             </div>
         </>
