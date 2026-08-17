@@ -15,7 +15,7 @@ export default function AppSidebarLayout({ children }: AppLayoutProps) {
                     className="min-w-0 overflow-x-hidden"
                 >
                     <AppSidebarHeader />
-                    <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col [&>*]:min-h-0 [&>*]:min-w-0 [&>*]:w-full [&>*]:max-w-none [&>*]:flex-auto">
+                    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col [&>*]:min-h-0 [&>*]:w-full [&>*]:max-w-none [&>*]:min-w-0 [&>*]:flex-auto">
                         {children}
                     </div>
                 </AppContent>

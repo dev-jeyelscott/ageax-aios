@@ -7,6 +7,7 @@ use App\Http\Requests\UpdateGlobalAgentRequest;
 use App\Jobs\RunWorkflowRecoveryEngineerNow;
 use App\Models\Agent;
 use App\Models\AgentRun;
+use App\Models\AuditEvent;
 use App\Models\RecoveryIncident;
 use App\RecoveryIncidentStatus;
 use App\Services\AgentHarnessResolver;
@@ -25,17 +26,143 @@ class GlobalAgentController extends Controller
 
     public function index(): Response
     {
-        $openStatuses = array_map(fn (RecoveryIncidentStatus $status): string => $status->value, RecoveryIncidentStatus::open());
+        $openStatuses = array_map(
+            fn (RecoveryIncidentStatus $status): string => $status->value,
+            RecoveryIncidentStatus::open(),
+        );
 
-        $agents = Agent::query()->whereNull('project_id')->orderBy('name')->get();
-        $agents->each(function (Agent $agent) use ($openStatuses): void {
-            $agent->setAttribute('open_incident_count', RecoveryIncident::query()
-                ->whereHas('recoveryRuns', fn (Builder $query) => $query->where('agent_id', $agent->id))
-                ->whereIn('status', $openStatuses)
-                ->count());
-        });
+        $activeStatuses = [
+            RecoveryIncidentStatus::Diagnosing->value,
+            RecoveryIncidentStatus::Repairing->value,
+            RecoveryIncidentStatus::Validating->value,
+        ];
 
-        return Inertia::render('agents/index', ['agents' => $agents]);
+        $agents = Agent::query()
+            ->whereNull('project_id')
+            ->orderBy('name')
+            ->get();
+
+        $agentPayload = $agents
+            ->map(function (Agent $agent) use ($openStatuses): array {
+                $recentRuns = AgentRun::query()
+                    ->where('agent_id', $agent->id)
+                    ->latest('started_at')
+                    ->limit(8)
+                    ->get();
+
+                $latestRun = $recentRuns->first();
+
+                $openIncidentCount = RecoveryIncident::query()
+                    ->whereHas(
+                        'recoveryRuns',
+                        fn (Builder $query) => $query->where('agent_id', $agent->id),
+                    )
+                    ->whereIn('status', $openStatuses)
+                    ->count();
+
+                return [
+                    'id' => $agent->id,
+                    'name' => $agent->name,
+                    'role' => (string) $agent->getRawOriginal('role'),
+                    'harness' => (string) $agent->getRawOriginal('harness'),
+                    'model' => $agent->model,
+                    'reasoning_setting' => $agent->reasoning_setting,
+                    'enabled' => $agent->enabled,
+                    'configuration_version' => $agent->configuration_version,
+                    'open_incident_count' => $openIncidentCount,
+                    'runtime_status' => ! $agent->enabled
+                        ? 'disabled'
+                        : ($this->invokeInProgress($agent) ? 'working' : 'idle'),
+                    'latest_run' => $latestRun === null
+                        ? null
+                        : [
+                            'id' => $latestRun->id,
+                            'status' => (string) $latestRun->getRawOriginal('status'),
+                            'started_at' => $latestRun->started_at->toIso8601String(),
+                            'finished_at' => $latestRun->finished_at?->toIso8601String(),
+                        ],
+                    'recent_activity' => $recentRuns
+                        ->reverse()
+                        ->values()
+                        ->map(fn (AgentRun $run): array => [
+                            'id' => $run->id,
+                            'status' => (string) $run->getRawOriginal('status'),
+                            'started_at' => $run->started_at->toIso8601String(),
+                            'finished_at' => $run->finished_at?->toIso8601String(),
+                            'duration_seconds' => $this->runDurationSeconds($run),
+                        ])
+                        ->all(),
+                ];
+            })
+            ->values();
+
+        $activeIncidents = RecoveryIncident::query()
+            ->whereIn('status', $openStatuses)
+            ->with([
+                'project:id,name',
+                'task:id,key,title,project_id',
+            ])
+            ->latest('detected_at')
+            ->limit(5)
+            ->get()
+            ->map(fn (RecoveryIncident $incident): array => [
+                'id' => $incident->id,
+                'status' => (string) $incident->getRawOriginal('status'),
+                'failure_type' => $incident->failure_type,
+                'root_cause_category' => $incident->root_cause_category,
+                'detected_at' => $incident->detected_at->toIso8601String(),
+                'project' => $incident->project === null
+                    ? null
+                    : [
+                        'id' => $incident->project->id,
+                        'name' => $incident->project->name,
+                    ],
+                'task' => $incident->task === null
+                    ? null
+                    : [
+                        'key' => $incident->task->key,
+                        'title' => $incident->task->title,
+                        'project_id' => $incident->task->project_id,
+                    ],
+            ])
+            ->values();
+
+        $recentEvents = AuditEvent::query()
+            ->with('project:id,name')
+            ->latest('occurred_at')
+            ->limit(6)
+            ->get(['id', 'project_id', 'event_type', 'occurred_at'])
+            ->map(fn (AuditEvent $event): array => [
+                'id' => $event->id,
+                'event_type' => $event->event_type,
+                'occurred_at' => $event->occurred_at->toIso8601String(),
+                'project' => $event->project === null
+                    ? null
+                    : [
+                        'id' => $event->project->id,
+                        'name' => $event->project->name,
+                    ],
+            ])
+            ->values();
+
+        return Inertia::render('agents/index', [
+            'agents' => $agentPayload,
+            'system' => [
+                'total_agents' => $agents->count(),
+                'enabled_agents' => $agents
+                    ->filter(fn (Agent $agent): bool => $agent->enabled)
+                    ->count(),
+                'open_incidents' => RecoveryIncident::query()
+                    ->whereIn('status', $openStatuses)
+                    ->count(),
+                'active_recoveries' => RecoveryIncident::query()
+                    ->whereIn('status', $activeStatuses)
+                    ->count(),
+            ],
+            'recent_events' => $recentEvents,
+            'active_incidents' => $activeIncidents,
+            'generated_at' => now()->toIso8601String(),
+        ]);
     }
 
     public function show(Agent $agent, AgentHarnessResolver $harnesses): Response
@@ -156,12 +283,28 @@ class GlobalAgentController extends Controller
         }
 
         return RecoveryIncident::query()
-            ->whereIn('status', [RecoveryIncidentStatus::Diagnosing, RecoveryIncidentStatus::Repairing, RecoveryIncidentStatus::Validating])
+            ->whereIn('status', [
+                RecoveryIncidentStatus::Diagnosing,
+                RecoveryIncidentStatus::Repairing,
+                RecoveryIncidentStatus::Validating,
+            ])
             ->exists();
     }
 
     private function isRecoveryEngineer(Agent $agent): bool
     {
         return AgentRole::tryFrom((string) $agent->getRawOriginal('role')) === AgentRole::RecoveryEngineer;
+    }
+
+    private function runDurationSeconds(AgentRun $run): ?int
+    {
+        if ($run->finished_at === null) {
+            return null;
+        }
+
+        return max(
+            0,
+            (int) round($run->started_at->diffInSeconds($run->finished_at)),
+        );
     }
 }

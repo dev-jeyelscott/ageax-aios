@@ -22,7 +22,7 @@ export function AppContent({
             >
                 <AppBackground contained />
 
-                <div className="relative z-10 flex min-h-0 min-w-0 w-full flex-1 flex-col">
+                <div className="relative z-10 flex min-h-0 w-full min-w-0 flex-1 flex-col">
                     {children}
                 </div>
             </SidebarInset>
@@ -32,7 +32,7 @@ export function AppContent({
     return (
         <main
             className={cn(
-                'flex min-h-0 min-w-0 w-full flex-1 flex-col gap-4 rounded-xl',
+                'flex min-h-0 w-full min-w-0 flex-1 flex-col gap-4 rounded-xl',
                 className,
             )}
             {...props}

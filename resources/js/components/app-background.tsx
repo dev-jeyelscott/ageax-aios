@@ -5,10 +5,7 @@ type Props = {
     className?: string;
 };
 
-export function AppBackground({
-    contained = false,
-    className,
-}: Props) {
+export function AppBackground({ contained = false, className }: Props) {
     return (
         <div
             aria-hidden="true"
