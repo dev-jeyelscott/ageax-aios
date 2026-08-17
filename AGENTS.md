@@ -46,16 +46,17 @@ Priority: correctness → security → data integrity → deterministic workflow
 
 ## Role contracts
 
-| Role            | Must do                                                                                                                                                                                              | Must not do                                                                |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Project Manager | Turn uploaded roadmaps into ordered, dependency-aware tasks with criteria, prompts, safe verification commands, and concise project knowledge. Return structured output.                             | Mutate arbitrary app/database state; AIOS validates and persists the plan. |
-| Coder           | Claim one eligible task; inspect, implement, validate, secret-check, and return structured results. Preserve authorization, validation, transactions, idempotency, auditability, and data integrity. | Mark a task done.                                                          |
-| Reviewer        | Independently review each ready **task**: its criteria, exact diffs, SHAs, changed files, implementation, and verification evidence.                                                          | Reject for taste, redesign valid work, or expand scope.                    |
+| Role            | Must do                                                                                                                                                                                                                                                                      | Must not do                                                                |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Project Manager | Turn uploaded roadmaps into ordered, dependency-aware phases and tasks with criteria, prompts, safe verification commands, and concise project knowledge. Return structured output.                                                                                           | Mutate arbitrary app/database state; AIOS validates and persists the plan. |
+| Coder           | Claim one eligible task at a time; inspect, implement, validate, secret-check, and return structured results. Within the current phase, AIOS may advance to the next eligible task after the previous task reaches `ready_for_review` when persisted dependencies permit.       | Mark a task done or execute multiple coding tasks concurrently.             |
+| Reviewer        | Independently review one task at a time, only after the current phase reaches its review barrier. Review ready tasks in deterministic position order using their criteria, exact diffs, SHAs, changed files, implementation, and verification evidence.                         | Review a phase prematurely, reject for taste, redesign valid work, or expand scope. |
 
 Reviewer outcomes:
 
 - `approved` → AIOS completes the reviewed task.
 - `changes_required` → findings must include severity, location, current vs. expected behavior, reason, required fix, and verification requirement.
+- `changes_required` closes/pauses further phase review until the rejected task is corrected and returns to `ready_for_review`.
 - Operational reviewer failures do not reject code; retain evidence and retry within the configured limit.
 
 ## Workflow and concurrency
@@ -68,14 +69,62 @@ queued → coding → validating → ready_for_review → reviewing → done
 
 - Exceptional states: `blocked`, `interrupted`, `failed`, `cancelled`.
 - AIOS alone validates transitions, with database transactions and row locks.
-- Task execution remains strictly serial per project. One task claim runs at a time, and ordering follows persisted dependencies.
+- Execution remains strictly serial. Serial means one active Coder task at a time and one active Reviewer task at a time according to AIOS-owned ordering; it does not require every same-phase implementation to be reviewed before the next eligible same-phase Coder task may start.
+- Within the current phase, a Coder task reaching `ready_for_review` may allow the next eligible same-phase Coder task to be claimed when persisted dependency rules permit.
+- Explicit task dependencies remain authoritative and must never be bypassed merely to fill a phase review batch.
+- Before the first review in a phase, every required task in that phase must be `ready_for_review`.
+- Once phase review begins, already approved `done` tasks count as barrier-satisfied while remaining reviewable tasks stay `ready_for_review`.
+- Reviewer claims are deterministic and occur one task at a time in task-position order.
+- A `changes_required` task closes/pauses the phase review barrier. Later tasks in the phase must not continue through review until the rejected task is corrected and returns to `ready_for_review`.
+- The next phase must not begin while the current phase contains unresolved implementation or review work.
+- Coder and Reviewer workers observe the centrally configured per-role cooldown after completing a claimed task. The default is `AIOS_WORKER_TASK_COOLDOWN_SECONDS=300`, so a role waits five minutes before claiming its next task.
+- Worker cooldowns are AIOS scheduling state and must not be implemented or bypassed by Agents, harnesses, prompts, or frontend code.
 - Additional project Agents do not self-schedule or create additional worker lanes; only AIOS-controlled supported workflow-role slots execute work.
 - Failed validation never reaches review; retry context includes failed validation evidence.
+
+Normal phase progression:
+
+```text
+Coder TASK-001
+→ ready_for_review
+→ configured Coder cooldown
+
+Coder TASK-002
+→ ready_for_review
+→ configured Coder cooldown
+
+Coder TASK-003
+→ ready_for_review
+
+all required current-phase tasks ready_for_review
+→ phase review barrier opens
+
+Reviewer TASK-001
+→ done
+→ configured Reviewer cooldown
+
+Reviewer TASK-002
+→ done
+→ configured Reviewer cooldown
+
+Reviewer TASK-003
+→ done
+
+current phase complete
+→ next phase may begin
+```
 
 ## Git and validation
 
 ```text
-clean/recoverable preflight → Coder edits → deterministic checks → exact diff → task-only commit → review
+clean/recoverable preflight
+→ Coder edits
+→ deterministic checks
+→ exact diff
+→ task-only commit
+→ ready_for_review
+→ phase review barrier
+→ review
 ```
 
 - Persist `base_sha`, `head_sha`, `commit_sha`, changed files, attempts, and evidence.
@@ -89,13 +138,13 @@ clean/recoverable preflight → Coder edits → deterministic checks → exact d
 - Store meaningful state changes and approved outcomes. Do not store chain-of-thought.
 - Resolve every managed project path inside `~/workspace`; prevent traversal, absolute-path injection, and symlink escapes.
 - Never expose or commit secrets, credentials, keys, tokens, or `.env` contents.
-- Audit transitions, runs, commands, Git changes, validation, reviews, failures, Agent/harness selection, configuration snapshots, and recovery. Heartbeats detect crashes; resume the same task from persisted Git state and execution evidence.
+- Audit transitions, phase review barrier decisions, runs, commands, Git changes, validation, reviews, failures, Agent/harness selection, configuration snapshots, and recovery. Heartbeats detect crashes; resume the same task from persisted Git state and execution evidence.
 
 ## Guardrails
 
 - Prefer framework-native code, explicit state machines, transactions, locking, schema-validated structured output, immutable attempts, append-only audit logs, idempotency, and focused services.
 - Do not add persistent shared LLM chats, global Agent templates, executable Skills/plugins, agent self-scheduling, parallel task execution, hidden state, broad prompts, full vault/repo dumps, blind retries, or new infrastructure without a demonstrated need.
-- Agents and harnesses may reason, inspect, implement, and review. **AIOS controls state, permissions, task ordering, validation, Git lifecycle, persistence, recovery, auditing, context assembly, knowledge storage, worker leases, and run configuration snapshots.**
+- Agents and harnesses may reason, inspect, implement, and review. **AIOS controls state, permissions, task ordering, phase review barriers, worker task cooldowns, validation, Git lifecycle, persistence, recovery, auditing, context assembly, knowledge storage, worker leases, and run configuration snapshots.**
 
 <laravel-boost-guidelines>
 === foundation rules ===
@@ -173,7 +222,7 @@ This project has domain-specific skills available in `**/skills/**`. You MUST ac
 ## Project Rules
 
 - This project contains committed, area-grouped rules in `.ai/rules` when that directory exists (settled decisions, non-obvious traps, standing constraints). Framework and package guidelines that only apply to specific paths (testing, frontend, components) also live there, under `.ai/rules/boost` — this is not just recorded decisions, it is load-bearing guidance you have not seen inline. Before you enter plan mode or create/edit any file, you MUST first: open @.ai/rules/index.md (it maps file globs to rule files), read every rule file whose globs cover the path(s) in scope, and run `grep -rin 'keyword' .ai/rules` to catch what a path match alone misses. Do not write code until you have read and are following every matching rule. If `.ai/rules` does not exist, continue without it.
-- Record durable rules with `record-rule` so the next agent or teammate inherits them instead of working them out again. Pass a `glob` (e.g. `app/Http/Controllers/**`), a short `title`, and a few-line `note`. Always use `record-rule`, never your native memory or notes tool — native memory is personal and session-scoped; only `.ai/rules` is shared with the team and persists in the repo.
+- Record durable rules with `record-rule` so the next agent or teammate inherits them instead of working them out again. Pass a `glob` (e.g., `app/Http/Controllers/**`), a short `title`, and a few-line `note`. Always use `record-rule`, never your native memory or notes tool — native memory is personal and session-scoped; only `.ai/rules` is shared with the team and persists in the repo.
 
 ## Artisan
 
@@ -185,7 +234,7 @@ This project has domain-specific skills available in `**/skills/**`. You MUST ac
 
 - Execute PHP in app context for debugging and testing code. Do not create models without user approval, prefer tests with factories instead. Prefer existing Artisan commands over custom tinker code.
 - Always use single quotes to prevent shell expansion: `php artisan tinker --execute 'Your::code();'`
-    - Double quotes for PHP strings inside: `php artisan tinker --execute 'User::where("active", true)->count();'`
+    - Double quotes for PHP strings inside: `php artisan tinker --execute 'User::where(\"active\", true)->count();'`
 
 === php rules ===
 
@@ -238,7 +287,7 @@ This project has domain-specific skills available in `**/skills/**`. You MUST ac
 
 # Do Things the Laravel Way
 
-- Use `php artisan make:` commands to create new files (i.e. migrations, controllers, models, etc.). You can list available Artisan commands using `php artisan list` and check their parameters with `php artisan [command] --help`.
+- Use `php artisan make:` commands to create new files (i.e., migrations, controllers, models, etc.). You can list available Artisan commands using `php artisan list` and check their parameters with `php artisan [command] --help`.
 - If you're creating a generic PHP class, use `php artisan make:class`.
 - Pass `--no-interaction` to all Artisan commands to ensure they work without user input. You should also pass the correct `--options` to ensure correct behavior.
 

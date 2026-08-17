@@ -167,6 +167,10 @@ changes_required
 → ready_for_review
 ```
 
+Within the current phase, reaching `ready_for_review` completes the Coder's implementation work for that task. AIOS may then allow the Coder to claim the next eligible task in the same phase without waiting for the previous task to become `done`, provided persisted dependency rules allow that task to start.
+
+This phase batching does not permit parallel coding. Only one Coder task may be actively claimed or executed at a time.
+
 The Coder must:
 
 - inspect before editing;
@@ -183,7 +187,43 @@ The Coder cannot mark a task `done`.
 
 ### Reviewer
 
-The Reviewer independently reviews exactly **one `ready_for_review` task at a time**.
+The Reviewer independently reviews exactly **one eligible `ready_for_review` task at a time**.
+
+The Reviewer must not begin reviewing a phase while that phase is still being prepared by the Coder.
+
+Before the first review in a phase:
+
+```text
+every required task in the current phase
+→ ready_for_review
+```
+
+Only then may AIOS open the phase review barrier and allow Reviewer claims.
+
+After phase review has started, already approved tasks in `done` count as having crossed the review barrier. Remaining reviewable tasks must remain `ready_for_review` before the next review may be claimed.
+
+Review order must be deterministic:
+
+```text
+lowest task position
+→ next task position
+→ ...
+```
+
+If any review returns `changes_required`:
+
+```text
+changes_required
+→ close/pause phase review
+→ return task to Coder
+→ coding
+→ validating
+→ ready_for_review
+→ phase becomes review-eligible again
+→ Reviewer resumes in deterministic order
+```
+
+Later tasks in that phase must not continue through review while a `changes_required` task remains unresolved.
 
 Inspect:
 
@@ -253,16 +293,101 @@ State transitions must be centrally validated by AIOS.
 
 Agents must not arbitrarily change task state.
 
-### Serial Execution
+### Serial Phase Execution
 
-MVP execution is strictly serial.
+Execution remains strictly serial. Serial means AIOS permits only one active Coder task and one active Reviewer task according to the authoritative workflow rules; it does **not** require every Coder task to become `done` before the next same-phase implementation may begin.
+
+The normal phase lifecycle is:
 
 ```text
-TASK-001 not done
-→ TASK-002 cannot start
+Phase N
+
+Coder TASK-001
+→ ready_for_review
+
+Coder TASK-002
+→ ready_for_review
+
+Coder TASK-003
+→ ready_for_review
+
+all required Phase N tasks reached ready_for_review
+→ phase review barrier opens
+
+Reviewer TASK-001
+→ done
+
+wait configured Reviewer cooldown
+
+Reviewer TASK-002
+→ done
+
+wait configured Reviewer cooldown
+
+Reviewer TASK-003
+→ done
+
+all required Phase N tasks done
+→ Phase N+1 may begin
 ```
 
-Enforce this through application/database concurrency controls, not prompts alone.
+Coder execution remains one task at a time:
+
+```text
+TASK-N implementation active
+→ no second Coder task may execute concurrently
+```
+
+The next eligible task within the same phase may start after the current Coder task reaches `ready_for_review`, provided its persisted dependency requirements are satisfied.
+
+Phase batching must never bypass explicit task dependencies. A task whose required dependencies are not satisfied remains ineligible.
+
+Reviewer execution remains one task at a time:
+
+```text
+phase review barrier closed
+→ Reviewer claims nothing
+
+phase review barrier open
+→ Reviewer claims lowest-position ready_for_review task
+→ reviewing
+→ outcome persisted
+→ no concurrent Reviewer claim
+```
+
+Before the first review in a phase, every required task in that phase must be `ready_for_review`.
+
+After review begins, tasks already approved as `done` remain barrier-satisfied while remaining tasks await review in `ready_for_review`.
+
+A `changes_required` result immediately blocks further review progression in the phase until the rejected task is corrected and returns to `ready_for_review`.
+
+The next phase must not begin while the current phase contains unresolved implementation or review work.
+
+### Worker Task Cooldown
+
+Coder and Reviewer workers must observe the centrally configured per-role task cooldown after completing a claimed task before claiming another task for the same project and role.
+
+Default:
+
+```text
+AIOS_WORKER_TASK_COOLDOWN_SECONDS=300
+```
+
+Therefore:
+
+```text
+Coder finishes task
+→ wait 5 minutes
+→ next eligible Coder task may be claimed
+
+Reviewer finishes review
+→ wait 5 minutes
+→ next eligible review may be claimed
+```
+
+The cooldown is AIOS-owned scheduling state. Agents, harnesses, prompts, or frontend code must not bypass or implement their own competing timer.
+
+Enforce phase barriers, task ordering, cooldown eligibility, and serial execution through application/database concurrency controls rather than prompts alone.
 
 Use transactions and row locking where appropriate.
 
@@ -284,6 +409,8 @@ clean/recoverable repository preflight
 → capture exact diff
 → task-only commit
 → ready_for_review
+→ phase review barrier
+→ review
 ```
 
 Track relevant:
@@ -412,6 +539,7 @@ Significant actions must be auditable, including:
 
 ```text
 task transitions
+phase review barrier decisions
 agent runs
 Agent/harness selection
 run configuration snapshots
@@ -484,6 +612,8 @@ AI agents and supported harnesses may reason, inspect, implement, and review.
 state
 permissions
 task ordering
+phase review barriers
+worker task cooldowns
 Git lifecycle
 deterministic validation
 persistence
