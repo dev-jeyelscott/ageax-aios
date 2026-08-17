@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Actions\CreateProject;
+use App\Actions\DeleteProject;
 use App\Actions\ProvisionDefaultProjectAgents;
 use App\Actions\RecordProjectManagerMessage;
 use App\Actions\RecordTaskOperatorMessage;
@@ -581,6 +582,15 @@ class ProjectController extends Controller
         return $value instanceof CarbonInterface
             ? $value->toISOString()
             : null;
+    }
+
+    public function destroy(
+        Project $project,
+        DeleteProject $deleteProject,
+    ): RedirectResponse {
+        $deleteProject->handle($project);
+
+        return to_route('projects.index');
     }
 
     public function updateStatus(

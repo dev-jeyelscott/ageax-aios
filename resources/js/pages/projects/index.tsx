@@ -1,6 +1,6 @@
 import { Form, Head, Link } from '@inertiajs/react';
-import { FolderGit2, Plus } from 'lucide-react';
-import { show, store } from '@/actions/App/Http/Controllers/ProjectController';
+import { FolderGit2, Plus, Trash2 } from 'lucide-react';
+import { destroy, show, store } from '@/actions/App/Http/Controllers/ProjectController';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,15 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import {
+    Dialog,
+    DialogClose,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogTitle,
+    DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
 type Project = {
@@ -98,31 +107,90 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                 </Card>
                 <div className="grid gap-4 md:grid-cols-2">
                     {projects.map((project) => (
-                        <Link
+                        <Card
                             key={project.id}
-                            href={show(project).url}
-                            className="rounded-xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                            className="relative h-full transition-colors hover:bg-accent"
                         >
-                            <Card className="h-full transition-colors hover:bg-accent">
-                                <CardHeader>
-                                    <div className="flex items-center justify-between gap-4">
-                                        <CardTitle className="flex items-center gap-2">
-                                            <FolderGit2 className="size-5" />
-                                            {project.name}
-                                        </CardTitle>
+                            <Link
+                                href={show(project).url}
+                                className="absolute inset-0 z-0 rounded-xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                                aria-label={`Open ${project.name}`}
+                            />
+                            <CardHeader>
+                                <div className="flex items-center justify-between gap-4">
+                                    <CardTitle className="flex items-center gap-2">
+                                        <FolderGit2 className="size-5" />
+                                        {project.name}
+                                    </CardTitle>
+                                    <div className="relative z-10 flex items-center gap-2">
                                         <Badge variant="secondary">
                                             {project.status}
                                         </Badge>
+                                        <Dialog>
+                                            <DialogTrigger asChild>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="size-8 text-muted-foreground hover:text-destructive"
+                                                    aria-label={`Delete ${project.name}`}
+                                                >
+                                                    <Trash2 className="size-4" />
+                                                </Button>
+                                            </DialogTrigger>
+                                            <DialogContent>
+                                                <DialogTitle>
+                                                    Delete {project.name}?
+                                                </DialogTitle>
+                                                <DialogDescription>
+                                                    This permanently deletes
+                                                    the project and all of its
+                                                    roadmaps, tasks, agents,
+                                                    and run history. This
+                                                    cannot be undone.
+                                                </DialogDescription>
+                                                <Form
+                                                    {...destroy.form(project)}
+                                                    options={{
+                                                        preserveScroll: true,
+                                                    }}
+                                                >
+                                                    {({ processing }) => (
+                                                        <DialogFooter className="gap-2">
+                                                            <DialogClose
+                                                                asChild
+                                                            >
+                                                                <Button variant="secondary">
+                                                                    Cancel
+                                                                </Button>
+                                                            </DialogClose>
+                                                            <Button
+                                                                variant="destructive"
+                                                                disabled={
+                                                                    processing
+                                                                }
+                                                                asChild
+                                                            >
+                                                                <button type="submit">
+                                                                    Delete
+                                                                    project
+                                                                </button>
+                                                            </Button>
+                                                        </DialogFooter>
+                                                    )}
+                                                </Form>
+                                            </DialogContent>
+                                        </Dialog>
                                     </div>
-                                    <CardDescription className="truncate">
-                                        {project.path}
-                                    </CardDescription>
-                                </CardHeader>
-                                <CardContent className="text-sm text-muted-foreground">
-                                    Git: {project.git_status}
-                                </CardContent>
-                            </Card>
-                        </Link>
+                                </div>
+                                <CardDescription className="truncate">
+                                    {project.path}
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="text-sm text-muted-foreground">
+                                Git: {project.git_status}
+                            </CardContent>
+                        </Card>
                     ))}
                     {projects.length === 0 && (
                         <Card>

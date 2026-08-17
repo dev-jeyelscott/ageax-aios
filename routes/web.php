@@ -10,7 +10,7 @@ Route::inertia('/', 'welcome')->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::inertia('dashboard', 'dashboard')->name('dashboard');
-    Route::resource('projects', ProjectController::class)->only(['index', 'store', 'show']);
+    Route::resource('projects', ProjectController::class)->only(['index', 'store', 'show', 'destroy']);
 
     Route::get('agents', [GlobalAgentController::class, 'index'])->name('agents.index');
     Route::get('agents/{agent}', [GlobalAgentController::class, 'show'])->name('agents.show');
