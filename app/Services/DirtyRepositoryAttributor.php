@@ -41,9 +41,13 @@ class DirtyRepositoryAttributor
         return $candidates->count() === 1 ? $candidates->first() : null;
     }
 
+    /**
+     * @param  array<int, string>  $dirtyFiles
+     */
     private function accountsForAllDirtyFiles(array $dirtyFiles, TaskAttempt $attempt): bool
     {
-        $expectedFiles = $this->normalize($attempt->changed_files ?? []);
+        $changedFiles = $attempt->getAttribute('changed_files');
+        $expectedFiles = $this->normalize(is_array($changedFiles) ? $changedFiles : []);
 
         // A prior attempt's own file set only needs to cover the current dirty state, not match it
         // exactly: the agent may have already staged/committed part of its own diff before it was
@@ -52,14 +56,24 @@ class DirtyRepositoryAttributor
     }
 
     /**
-     * @param  array<int, string>  $files
+     * @param  array<array-key, mixed>  $files
      * @return array<int, string>
      */
     private function normalize(array $files): array
     {
-        $files = array_values(array_unique(array_filter($files, fn (string $file): bool => $file !== '')));
-        sort($files);
+        $normalized = [];
 
-        return $files;
+        foreach ($files as $file) {
+            if (! is_string($file) || $file === '') {
+                continue;
+            }
+
+            $normalized[] = $file;
+        }
+
+        $normalized = array_values(array_unique($normalized));
+        sort($normalized);
+
+        return $normalized;
     }
 }

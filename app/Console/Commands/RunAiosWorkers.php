@@ -13,6 +13,7 @@ use App\Models\Project;
 use App\Models\Roadmap;
 use App\ProjectStatus;
 use App\Services\WorkerHeartbeat;
+use Carbon\CarbonImmutable;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
@@ -107,8 +108,10 @@ class RunAiosWorkers extends Command
         }
 
         $worker = AgentWorker::query()->whereBelongsTo($project)->where('role', $role)->first();
+        $taskCompletedAt = $worker?->getAttribute('task_completed_at');
 
-        return $worker?->task_completed_at !== null && $worker->task_completed_at->addSeconds($cooldownSeconds)->isFuture();
+        return $taskCompletedAt instanceof CarbonImmutable
+            && $taskCompletedAt->addSeconds($cooldownSeconds)->isFuture();
     }
 
     /** @phpstan-impure */
