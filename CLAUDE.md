@@ -5,12 +5,60 @@
 - Claude Code is a supported AIOS execution harness, not the workflow orchestrator.
 - Core workflow roles remain **Project Manager**, **Coder**, and **Reviewer**.
 - Project Agent configuration is project-scoped and separate from `AgentWorker` runtime, lease, heartbeat, and orchestration state.
-- Every roadmap analysis, implementation attempt, fix/retry attempt, and review must use a fresh Claude Code execution context when Claude Code is the selected harness. Do not rely on persistent Claude conversations for durable project state.
+- Every roadmap analysis, Project Manager `ticket_triage` attempt, implementation attempt, fix/retry attempt, and review must use a fresh Claude Code execution context when Claude Code is the selected harness. Do not rely on persistent Claude conversations for durable project state.
 - AIOS-managed Agent Skills are project-scoped, declarative, deterministic context only. They are non-executable and cannot introduce shell hooks, arbitrary code execution, package installation, or workflow control. They are separate from repository/harness tooling such as `.agents/skills/**` and `.claude/skills/**`, which AIOS must not automatically mutate.
 - AIOS must persist an immutable configuration snapshot for each new execution attempt, including the selected Agent, harness, model/reasoning settings, bounded execution settings, default context, effective Skills and versions/order/content, and context schema version where applicable. Snapshots must exclude credentials, `.env` contents, and raw host environment values. Historical runs must not be reconstructed from mutable current configuration.
-- AIOS exclusively controls state transitions, permissions, task ordering, Git lifecycle, deterministic validation, persistence, recovery, auditing, worker leases, and context assembly. Claude Code may reason, inspect, implement, and review only within the context AIOS provides.
-- Do not introduce global Agents, parallel task execution, agent self-scheduling, persistent shared LLM conversations, or executable Skills.
-- Preserve the existing clean/recoverable Git preflight, task-only commit discipline, reviewer independence, operational-failure retry behavior, and same-task recovery guarantees.
+- AIOS exclusively controls state transitions, permissions, task ordering, Git lifecycle, deterministic validation, persistence, recovery, auditing, worker leases, and context assembly. Claude Code may reason, inspect, implement, review, and return structured Ticket triage proposals only within the context AIOS provides.
+- Preserve the existing clean/recoverable Git preflight, task-only commit discipline, phase review barriers, reviewer independence, operational-failure retry behavior, same-task recovery guarantees, immutable run snapshots, and serial Coder/Reviewer execution.
+
+## Phase 3 Ticket Governance
+
+- **Ticket != Task.** Tickets are intake/conversation/triage records; Tasks are executable implementation work.
+- The existing Project Manager performs `ticket_triage`. Phase 3 adds no Ticket Reviewer role or additional project worker lane.
+- Project Manager roadmap analysis and Ticket triage share the existing PM worker/lease boundary.
+- Ticket triage uses the currently bound Project Manager Agent/harness and a fresh execution context for every new triage/re-triage attempt.
+- Claude Code must return only the structured Ticket triage result requested by AIOS. It must not directly claim Tickets, transition Ticket state, persist replies, create Tasks, assign phase positions/dependencies, reorder roadmap work, or resolve operator escalation.
+- AIOS alone owns Ticket claiming/state, escalation, Ticket-to-Task conversion, phase placement, task ordering, persistence, recovery, and auditing.
+- Automatic conversion is limited to exactly one clear, safe, bounded implementation-required Task with confidence `>= 0.80` and no mandatory escalation condition.
+- Automatic conversion must not bypass dependencies, phase review barriers, serial ordering, Coder Git preflight, deterministic validation, or Reviewer review.
+- Mandatory operator escalation includes low confidence, unclear/contradictory requirements, architectural decisions, breaking/destructive/material migration risk, security/privacy/auth judgment, approved-documentation conflict, unclear business priority, high/multi-Task scope, roadmap reordering/interruption, and unsafe/non-deterministic placement.
+- Confidence does not override deterministic escalation.
+- Critical/emergency roadmap interruption or reordering always requires explicit operator approval.
+- Current-phase Ticket work may be appended only before phase review begins and only when placement/dependencies are deterministic. Once review begins, new work cannot alter that phase's required composition.
+- AI-authored public Ticket replies must be visibly disclosed as `AI-generated response` and durably attributable to the AgentRun where applicable.
+- `needs_information` and `self_service` requester-dependent Tickets use the approved 72-hour inactivity policy.
+- No requester response within 72 hours causes AIOS-controlled inactivity closure with audit/system evidence.
+- An eligible late requester response to an inactivity-closed Ticket reopens it and triggers a fresh PM triage attempt. Explicit rejection/duplicate/operator-close semantics remain governed separately by AIOS.
+
+## Phase 3 Context Budget Governance
+
+- Context budgeting is owned by AIOS, not Claude Code.
+- Default Phase 3 utilization policy is `70%` target, `75%` warning, `80%` hard ceiling.
+- AIOS resolves context capacity from validated harness/model capability and approved policy before launching Claude Code.
+- Required workflow/security contract, current Task/Ticket objective, acceptance criteria/triage contract, and required current failure/review/validation evidence are non-overridable.
+- Project target configuration cannot override the system hard ceiling.
+- Context reduction is deterministic, reproducible, hashable, and auditable and may reduce only approved lower-priority context.
+- Do not initiate an extra Claude Code summarization execution merely to make another execution fit its Context Budget.
+- If required context still cannot fit below the hard ceiling, AIOS blocks provider execution rather than silently removing required evidence.
+- Claude Code must not implement a competing authoritative prompt truncation or budget policy.
+- AIOS persists immutable Context Budget evidence including policy/capacity source, original/final estimates, utilization, and reduced/excluded source evidence where applicable.
+
+## Phase 3 Harness Scorecard Governance
+
+- Harness scorecards are AIOS-derived from durable Task/attempt/review/AgentRun/audit/token/timing evidence, not Claude Code self-reported quality.
+- Optimization priority is **quality > reliability > token efficiency > speed**.
+- Initial Coder composite weighting is `55%` quality, `25%` reliability, `15%` token efficiency, and `5%` speed.
+- First-pass Reviewer approval is the strongest individual Coder quality signal.
+- Phase 3 cost means token/run consumption, not monetary provider pricing history.
+- Comparisons must use fair comparable cohorts across workflow role, work type, complexity, project/repository, harness, model, and reasoning configuration where sufficient evidence exists.
+- Confidence thresholds are:
+  - `0-4` comparable completed Tasks → `insufficient_data`;
+  - `5-19` → `preliminary`;
+  - `20+` → `recommendation_eligible`.
+- Reviewer diagnostics must not use raw approval or raw rejection rate as a standalone quality score.
+- Scorecard methodology must be versioned and reproducible.
+- Phase 3 scorecards are recommendation-only. They must not automatically switch Claude Code/Codex, change models/reasoning, mutate Agent bindings, route Tasks, or reorder workflow execution.
+- Do not introduce global Agents, parallel task execution, agent self-scheduling, persistent shared LLM conversations, executable Skills, a Ticket Reviewer role, parallel PM triage workers, automatic harness/model routing, or LLM summarization solely to bypass Context Budget limits.
 
 <laravel-boost-guidelines>
 === foundation rules ===
@@ -99,7 +147,7 @@ This project has domain-specific skills available in `**/skills/**`. You MUST ac
 
 - Execute PHP in app context for debugging and testing code. Do not create models without user approval, prefer tests with factories instead. Prefer existing Artisan commands over custom tinker code.
 - Always use single quotes to prevent shell expansion: `php artisan tinker --execute 'Your::code();'`
-  - Double quotes for PHP strings inside: `php artisan tinker --execute 'User::where("active", true)->count();'`
+  - Double quotes for PHP strings inside: `php artisan tinker --execute 'User::where(\"active\", true)->count();'`
 
 === php rules ===
 

@@ -9,6 +9,7 @@
 - Project Agents are project-scoped execution configuration; `AgentWorker` is durable orchestration, lease, heartbeat, and runtime state.
 - Supported execution harnesses are **Codex** and **Claude Code**.
 - No global Agents or parallel task execution are introduced in Phase 2.
+- Phase 3 adds Ticket intake/PM triage, AIOS-owned deterministic Context Budget enforcement, and evidence-derived harness scorecards without adding a Ticket Reviewer role, parallel PM lane, or automatic harness/model routing.
 
 ## Rules of precedence
 
@@ -32,25 +33,27 @@ Priority: correctness → security → data integrity → deterministic workflow
 
 ## Agent execution
 
-- Every roadmap analysis, implementation attempt, fix/retry attempt, and review uses a fresh, ephemeral execution context regardless of whether the selected harness is Codex or Claude Code.
+- Every roadmap analysis, Project Manager `ticket_triage` attempt, implementation attempt, fix/retry attempt, and review uses a fresh, ephemeral execution context regardless of whether the selected harness is Codex or Claude Code.
 - Never depend on a persistent Codex or Claude Code conversation for project or workflow state.
 - AIOS resolves the project Agent bound to the required workflow role and validates its harness, model, reasoning/effort setting, and bounded execution settings before execution.
 - Project Agent configuration is not worker state. Agent configuration describes identity and execution behavior; `AgentWorker` remains the durable AIOS-controlled workflow slot and lease/runtime state for a core role.
 - AIOS-managed Agent Skills are project-scoped, declarative context/capability packages only. They may provide instructions, constraints, and guidance, but they are non-executable and must never introduce shell hooks, arbitrary code execution, package installation, or workflow control. They are separate from repository/harness tooling such as `.agents/skills/**` and `.claude/skills/**`, which AIOS must not automatically mutate.
-- Skill application order must be deterministic, and Agent or Skill text must not override AIOS-owned workflow, security, Git, validation, recovery, persistence, audit, or context-assembly rules.
+- Skill application order must be deterministic, and Agent or Skill text must not override AIOS-owned workflow, security, Git, validation, recovery, persistence, audit, Context Budget, or context-assembly rules.
 - At the start of every new execution attempt, AIOS must persist an immutable snapshot of the effective run configuration, including the selected Agent identity/role/configuration version, harness, model, reasoning/effort setting, bounded execution settings, default context, assigned Skill identities/versions/order/effective content, and context schema version where applicable. Run snapshots must exclude credentials, `.env` contents, and raw host environment values.
 - Historical runs must be resolved from their persisted snapshot, not from mutable current Agent or Skill records. Editing Agent or Skill configuration affects future runs only.
 - Recovery of the same interrupted execution attempt must preserve its persisted snapshot/evidence; a new retry or future attempt captures a new snapshot from the then-current valid configuration.
-- Send only task context: objective, criteria, scope, constraints, dependencies, relevant paths/docs, prior evidence, findings, and verification commands.
-- Never send full conversations, repositories, logs, or vaults unless required.
+- Send only targeted context: Task/Ticket objective, criteria/triage contract, scope, constraints, dependencies, relevant paths/docs, prior evidence, findings/requester evidence, and verification commands.
+- Never send full conversations, repositories, roadmaps, logs, ticket histories, or vaults unless required.
 
 ## Role contracts
 
-| Role            | Must do                                                                                                                                                                                                                                                                      | Must not do                                                                |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Project Manager | Turn uploaded roadmaps into ordered, dependency-aware phases and tasks with criteria, prompts, safe verification commands, and concise project knowledge. Return structured output.                                                                                           | Mutate arbitrary app/database state; AIOS validates and persists the plan. |
-| Coder           | Claim one eligible task at a time; inspect, implement, validate, secret-check, and return structured results. Within the current phase, AIOS may advance to the next eligible task after the previous task reaches `ready_for_review` when persisted dependencies permit.       | Mark a task done or execute multiple coding tasks concurrently.             |
-| Reviewer        | Independently review one task at a time, only after the current phase reaches its review barrier. Review ready tasks in deterministic position order using their criteria, exact diffs, SHAs, changed files, implementation, and verification evidence.                         | Review a phase prematurely, reject for taste, redesign valid work, or expand scope. |
+| Role | Must do | Must not do |
+| --- | --- | --- |
+| Project Manager | Turn uploaded roadmaps into ordered, dependency-aware phases and tasks with criteria, prompts, safe verification commands, and concise project knowledge. Perform fresh-context `ticket_triage` using the bound PM Agent/harness and return structured classification, reply, escalation, and at most one bounded Task proposal where eligible. | Mutate arbitrary app/database state; directly claim/transition Tickets; create/reorder Tasks or phases; bypass escalation. AIOS validates and persists all durable outcomes. |
+| Coder | Claim one eligible task at a time; inspect, implement, validate, secret-check, and return structured results. Within the current phase, AIOS may advance to the next eligible task after the previous task reaches `ready_for_review` when persisted dependencies permit. | Mark a task done or execute multiple coding tasks concurrently. |
+| Reviewer | Independently review one task at a time, only after the current phase reaches its review barrier. Review ready tasks in deterministic position order using their criteria, exact diffs, SHAs, changed files, implementation, and verification evidence. | Review a phase prematurely, reject for taste, redesign valid work, or expand scope. |
+
+Ticket-origin metadata and Context Budget evidence may be consumed by Coder/Reviewer as relevant context, but neither changes the existing Coder or Reviewer workflow contract.
 
 Reviewer outcomes:
 
@@ -58,6 +61,125 @@ Reviewer outcomes:
 - `changes_required` → findings must include severity, location, current vs. expected behavior, reason, required fix, and verification requirement.
 - `changes_required` closes/pauses further phase review until the rejected task is corrected and returns to `ready_for_review`.
 - Operational reviewer failures do not reject code; retain evidence and retry within the configured limit.
+
+## Phase 3 Ticket contract
+
+### Ticket != Task
+
+- **Ticket != Task.**
+- Tickets are project intake, conversation, triage, and escalation records.
+- Tasks are executable implementation work governed by the existing Coder → validation → Reviewer lifecycle.
+- A Ticket must not become executable work until AIOS validates and persists an eligible conversion.
+
+### Project Manager ticket triage
+
+- The existing Project Manager performs `ticket_triage`; Phase 3 does not add a Ticket Reviewer role.
+- Roadmap analysis and Ticket triage share the same Project Manager worker/lease boundary and remain serial.
+- New triage/re-triage attempts always use fresh execution context and the currently bound PM Agent/harness.
+- PM output is structured proposal/evidence only.
+- AIOS owns Ticket claiming, Ticket state, escalation, replies, conversion, phase placement, dependencies, ordering, persistence, and recovery.
+- Pending roadmap work keeps the approved deterministic precedence over Ticket triage.
+
+### Automatic conversion
+
+AIOS may automatically create exactly one Task only when all locked eligibility rules are satisfied, including:
+
+- approved decision;
+- implementation is actually required;
+- confidence is at least `0.80`;
+- clear, safe, bounded scope;
+- not high complexity;
+- exactly one implementation Task;
+- no mandatory escalation condition;
+- phase/dependency placement is deterministic.
+
+Automatic conversion must not:
+
+- create multiple Tasks;
+- bypass dependencies or phase barriers;
+- alter a phase after review has begun;
+- reorder/interfere with roadmap execution;
+- bypass Git preflight;
+- bypass validation;
+- bypass Reviewer review.
+
+A Ticket-created Task has the same permissions and lifecycle as every other Task.
+
+### Mandatory escalation
+
+AIOS must escalate when any locked condition applies, including:
+
+- confidence `< 0.80`;
+- unclear or contradictory requirements;
+- architectural decision required;
+- breaking public/API/data contract;
+- material schema/data-migration risk;
+- destructive operation;
+- security/privacy/auth impact requiring judgment;
+- conflict with approved documentation;
+- unclear business priority;
+- high complexity;
+- multiple Tasks/phases required;
+- roadmap/phase interruption or reordering;
+- critical/emergency work that would preempt queued roadmap work;
+- unsafe or unresolved dependency/phase placement.
+
+Confidence never overrides deterministic escalation predicates.
+
+Critical/emergency roadmap interruption or reordering always requires explicit operator approval.
+
+### Phase placement
+
+- Current-phase append is permitted only before phase review begins, when composition can safely change and placement/dependencies are deterministic.
+- Once phase review starts, new Ticket work must not alter that phase's required composition.
+- Otherwise eligible work uses the approved append-only future intake/backlog placement.
+- Non-deterministic placement or roadmap interruption escalates.
+
+### Ticket replies and requester timeout
+
+- AI-authored public replies are visibly labeled `AI-generated response` and retain durable AgentRun attribution where applicable.
+- `needs_information` and `self_service` requester-dependent outcomes use a 72-hour response deadline.
+- No eligible requester response within 72 hours → AIOS inactivity-closes the Ticket with system/audit evidence.
+- An eligible late requester response to an inactivity-closed Ticket reopens it and queues a fresh PM triage attempt with fresh context.
+- Explicitly rejected, duplicate, or operator-closed Tickets must not be reopened by this policy unless separately allowed.
+
+## Phase 3 Context Budget
+
+- Context budgeting is owned by AIOS, never by an Agent or harness.
+- Default thresholds are:
+  - target: `70%`;
+  - warning: `75%`;
+  - hard ceiling: `80%`.
+- Capacity is deterministically resolved from validated harness/model capability plus approved workflow/project policy.
+- Project target overrides must remain within safe approved bounds and can never bypass the system hard ceiling.
+- Required workflow/security context, current Task/Ticket objective, acceptance criteria/triage contract, and critical current validation/review/failure evidence are non-overridable.
+- Deterministic reduction may affect only approved lower-priority context in the locked order.
+- Do not add an LLM summarization run merely to make context fit.
+- Reduction must be reproducible, hashable, and audited with capacity, policy version, original/final estimates, utilization, included/reduced/excluded sources, and reason/method.
+- If required context cannot fit below the hard ceiling after permitted reduction, AIOS blocks execution. It must not silently truncate required evidence or call the provider.
+- Codex/Claude Code receive budget-approved context; harnesses do not own competing truncation policy.
+
+## Phase 3 Harness scorecards
+
+- Scorecards are AIOS-derived from durable execution/software-delivery evidence, never Agent self-reporting.
+- Optimization priority: **quality > reliability > token efficiency > speed**.
+- Initial Coder weighting:
+  - quality `55%`;
+  - reliability `25%`;
+  - token efficiency `15%`;
+  - speed `5%`.
+- First-pass Reviewer approval is the strongest individual Coder quality signal.
+- Phase 3 cost means token/run consumption, not monetary pricing history.
+- Comparisons use fair comparable cohorts across role, work type, complexity, project/repository, harness, model, and reasoning setting where evidence permits.
+- Deterministic broader-cohort fallbacks must be explicit and labeled.
+- Recommendation confidence:
+  - `0-4` comparable completed Tasks → `insufficient_data`;
+  - `5-19` → `preliminary`;
+  - `20+` → `recommendation_eligible`.
+- Score/recommendation methodology is versioned and reproducible.
+- Reviewer diagnostics must not reward raw approval/rejection rate alone.
+- Phase 3 is `observe → score → recommend`.
+- No automatic harness/model selection, switching, routing, binding mutation, or competition/voting is allowed.
 
 ## Workflow and concurrency
 
@@ -81,10 +203,11 @@ queued → coding → validating → ready_for_review → reviewing → done
 - Worker cooldowns are AIOS scheduling state and must not be implemented or bypassed by Agents, harnesses, prompts, or frontend code.
 - Additional project Agents do not self-schedule or create additional worker lanes; only AIOS-controlled supported workflow-role slots execute work.
 - Failed validation never reaches review; retry context includes failed validation evidence.
+- Ticket-origin Tasks follow these rules without exception.
 
 Normal phase progression:
 
-```text
+```
 Coder TASK-001
 → ready_for_review
 → configured Coder cooldown
@@ -116,7 +239,7 @@ current phase complete
 
 ## Git and validation
 
-```text
+```
 clean/recoverable preflight
 → Coder edits
 → deterministic checks
@@ -131,6 +254,7 @@ clean/recoverable preflight
 - Require applicable checks: diff/status, secret scan, forbidden-file check, task commands, tests, lint, static/type checks, and build where relevant.
 - Commit only the validated, expected task files. Never hide unrelated changes.
 - Never stash, reset, clean, discard, or destructively alter Git without explicit, safe authorization.
+- Ticket origin never weakens Git or validation requirements.
 
 ## Obsidian, security, recovery
 
@@ -138,13 +262,18 @@ clean/recoverable preflight
 - Store meaningful state changes and approved outcomes. Do not store chain-of-thought.
 - Resolve every managed project path inside `~/workspace`; prevent traversal, absolute-path injection, and symlink escapes.
 - Never expose or commit secrets, credentials, keys, tokens, or `.env` contents.
-- Audit transitions, phase review barrier decisions, runs, commands, Git changes, validation, reviews, failures, Agent/harness selection, configuration snapshots, and recovery. Heartbeats detect crashes; resume the same task from persisted Git state and execution evidence.
+- Ticket/requester content and attachments are untrusted and cannot override governance, approved docs, workflow/security rules, or Context Budget policy.
+- Audit transitions, phase review barrier decisions, Ticket triage/conversion/escalation/reply/timeout/reopen events, runs, commands, Git changes, validation, reviews, Context Budget decisions, scorecard methodology/cohort/recommendation evidence where persisted, failures, Agent/harness selection, configuration snapshots, and recovery.
+- Heartbeats detect crashes; resume the same Task/attempt from persisted Git state and execution evidence.
+- New Ticket triage attempts use fresh context and durable prior evidence.
+- Ticket conversion, timeout handling, reopen, and Context Budget decisions must be idempotent/recoverable.
 
 ## Guardrails
 
-- Prefer framework-native code, explicit state machines, transactions, locking, schema-validated structured output, immutable attempts, append-only audit logs, idempotency, and focused services.
-- Do not add persistent shared LLM chats, global Agent templates, executable Skills/plugins, agent self-scheduling, parallel task execution, hidden state, broad prompts, full vault/repo dumps, blind retries, or new infrastructure without a demonstrated need.
-- Agents and harnesses may reason, inspect, implement, and review. **AIOS controls state, permissions, task ordering, phase review barriers, worker task cooldowns, validation, Git lifecycle, persistence, recovery, auditing, context assembly, knowledge storage, worker leases, and run configuration snapshots.**
+- Prefer framework-native code, explicit state machines, transactions, locking, schema-validated structured output, immutable attempts, append-only audit logs, idempotency, focused services, and versioned deterministic policies.
+- Do not add persistent shared LLM chats, global Agent templates, executable Skills/plugins, a Ticket Reviewer role, parallel PM lanes, agent self-scheduling, parallel task execution, hidden state, broad prompts, full vault/repo/ticket-history dumps, blind retries, automatic harness/model routing, automatic roadmap interruption, LLM summarization solely to bypass Context Budget limits, or new infrastructure without a demonstrated need.
+- Agents and harnesses may reason, inspect, implement, review, and return structured triage proposals.
+- **AIOS controls state, permissions, Ticket claiming/state/escalation/conversion, phase placement, task ordering, roadmap interruption, phase review barriers, worker task cooldowns, validation, Git lifecycle, persistence, recovery, auditing, context assembly/budgeting/reduction, knowledge storage, worker leases, run configuration snapshots, scorecard calculation, and recommendation eligibility.**
 
 <laravel-boost-guidelines>
 === foundation rules ===
@@ -234,7 +363,7 @@ This project has domain-specific skills available in `**/skills/**`. You MUST ac
 
 - Execute PHP in app context for debugging and testing code. Do not create models without user approval, prefer tests with factories instead. Prefer existing Artisan commands over custom tinker code.
 - Always use single quotes to prevent shell expansion: `php artisan tinker --execute 'Your::code();'`
-    - Double quotes for PHP strings inside: `php artisan tinker --execute 'User::where(\"active\", true)->count();'`
+  - Double quotes for PHP strings inside: `php artisan tinker --execute 'User::where(\"active\", true)->count();'`
 
 === php rules ===
 
