@@ -348,6 +348,10 @@ test('agent run audit evidence records selected harness and immutable snapshot i
         ->where('event_type', 'agent_run.configuration_snapshotted')
         ->sole();
 
+    $costEstimate = $project->auditEvents()
+        ->where('event_type', 'agent_run.context_cost_estimated')
+        ->sole();
+
     expect($selection->payload['agent_run_id'])->toBe($run->id)
         ->and($selection->payload['project_id'])->toBe($project->id)
         ->and($selection->payload['agent_id'])->toBe($agent->id)
@@ -361,10 +365,15 @@ test('agent run audit evidence records selected harness and immutable snapshot i
                 'skill_version' => $skill->version,
                 'position' => 0,
             ],
-        ]);
+        ])
+        ->and($costEstimate->payload['agent_run_id'])->toBe($run->id)
+        ->and($costEstimate->payload['context_cost_schema_version'])->toBe($context->contextCostSchemaVersion)
+        ->and($costEstimate->payload['breakdown'])->toBe($context->contextCostEstimate)
+        ->and($run->fresh()->context_cost_estimate)->toBe($context->contextCostEstimate)
+        ->and($run->fresh()->context_cost_schema_version)->toBe($context->contextCostSchemaVersion);
 
     $serialized = json_encode(
-        [$selection->payload, $snapshot->payload],
+        [$selection->payload, $snapshot->payload, $costEstimate->payload],
         JSON_THROW_ON_ERROR,
     );
 
@@ -372,6 +381,59 @@ test('agent run audit evidence records selected harness and immutable snapshot i
         ->not->toContain('RUN-PROMPT-MUST-NOT-ENTER-AUDIT')
         ->not->toContain('AGENT-CONTEXT-MUST-NOT-ENTER-AUDIT')
         ->not->toContain('SKILL-CONTENT-MUST-NOT-ENTER-AUDIT');
+});
+
+test('disproportionate context cost sections are flagged as a distinct audit warning', function () {
+    $project = phase2HardeningProject('Context cost warning');
+
+    $agent = Agent::factory()
+        ->for($project)
+        ->create(['role' => AgentRole::Coder, 'default_context' => null]);
+
+    AgentWorker::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::Coder,
+        'agent_id' => $agent->id,
+        'status' => 'idle',
+    ]);
+
+    $context = app(AgentContextAssembler::class)->assemble(
+        $agent,
+        AgentRole::Coder,
+        ['obsidian_project_knowledge' => str_repeat('Oversized Obsidian retrieval content. ', 500)],
+    );
+
+    $run = app(AgentRunRecorder::class)->start(
+        project: $project,
+        role: AgentRole::Coder,
+        prompt: 'Prompt.',
+        agent: $agent,
+        context: $context,
+    );
+
+    expect($context->contextCostEstimate['disproportionate_sections'])->toContain('obsidian_context');
+
+    $warning = $project->auditEvents()
+        ->where('event_type', 'agent_run.context_cost_warning')
+        ->sole();
+
+    expect($warning->payload['agent_run_id'])->toBe($run->id)
+        ->and($warning->payload['disproportionate_sections'])->toContain('obsidian_context');
+});
+
+test('legacy runs without a resolved agent or context leave context cost evidence unset', function () {
+    $project = phase2HardeningProject('Legacy run context cost');
+
+    $run = app(AgentRunRecorder::class)->start(
+        $project,
+        AgentRole::Coder,
+        'Legacy prompt.',
+    );
+
+    expect($run->context_cost_estimate)->toBeNull()
+        ->and($run->context_cost_schema_version)->toBeNull()
+        ->and($project->auditEvents()->where('event_type', 'agent_run.context_cost_estimated')->count())->toBe(0)
+        ->and($project->auditEvents()->where('event_type', 'agent_run.context_cost_warning')->count())->toBe(0);
 });
 
 test('sanitized execution environment allowlists runtime keys and rejects provider and application credentials', function () {

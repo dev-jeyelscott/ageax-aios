@@ -30,6 +30,28 @@ export type ConfigurationSnapshot = {
     agent: ConfigurationSnapshotAgent;
     skills: ConfigurationSnapshotSkill[];
 };
+export type ContextCostMeasurement = {
+    characters: number;
+    estimated_tokens: number;
+};
+export type ContextCostSkill = ContextCostMeasurement & {
+    slug: string | null;
+    position: number | null;
+};
+export type ContextCostEstimate = {
+    schema_version: number;
+    characters_per_token_ratio: number;
+    system_rules: ContextCostMeasurement;
+    agent_default_context: ContextCostMeasurement;
+    skills: ContextCostSkill[];
+    skills_total: ContextCostMeasurement;
+    task_core: ContextCostMeasurement;
+    obsidian_context: ContextCostMeasurement;
+    retry_recovery_evidence: ContextCostMeasurement;
+    review_evidence: ContextCostMeasurement;
+    total: ContextCostMeasurement;
+    disproportionate_sections: string[];
+};
 export type AgentRun = {
     id: number;
     role: string;
@@ -44,6 +66,8 @@ export type AgentRun = {
     external_run_id: string | null;
     context_schema_version: number | null;
     configuration_snapshot: ConfigurationSnapshot | null;
+    context_cost_schema_version: number | null;
+    context_cost_estimate: ContextCostEstimate | null;
     task: { key: string; title: string } | null;
     worker: {
         role: string;
@@ -239,6 +263,110 @@ export function ConfigurationEvidenceCard({
                                 </ul>
                             )}
                         </div>
+                    </>
+                ) : (
+                    <Badge variant="outline">Legacy run</Badge>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
+const CONTEXT_COST_SECTIONS: {
+    key: keyof ContextCostEstimate;
+    label: string;
+}[] = [
+    { key: 'system_rules', label: 'AIOS system rules' },
+    { key: 'agent_default_context', label: 'Agent default context' },
+    { key: 'skills_total', label: 'Skills (total)' },
+    { key: 'task_core', label: 'Task / acceptance context' },
+    { key: 'obsidian_context', label: 'Obsidian project context' },
+    { key: 'retry_recovery_evidence', label: 'Retry / recovery evidence' },
+    { key: 'review_evidence', label: 'Review evidence' },
+];
+
+export function ContextCostCard({ agentRun }: { agentRun: AgentRun }) {
+    const estimate = agentRun.context_cost_estimate;
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>Context cost estimate</CardTitle>
+                <CardDescription>
+                    {estimate
+                        ? 'Deterministic preflight character/token estimate, attributed by source at run start.'
+                        : 'This run predates preflight context cost attribution.'}
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 text-sm">
+                {estimate ? (
+                    <>
+                        <div className="grid gap-1 text-muted-foreground">
+                            <p>
+                                Total:{' '}
+                                <span className="text-foreground">
+                                    {estimate.total.characters.toLocaleString()}{' '}
+                                    characters
+                                </span>{' '}
+                                (~
+                                {estimate.total.estimated_tokens.toLocaleString()}{' '}
+                                estimated tokens)
+                            </p>
+                        </div>
+                        <ul className="grid gap-1">
+                            {CONTEXT_COST_SECTIONS.map(({ key, label }) => {
+                                const measurement = estimate[
+                                    key
+                                ] as ContextCostMeasurement;
+
+                                return (
+                                    <li
+                                        key={key}
+                                        className="flex items-center justify-between rounded-md border px-2 py-1 text-xs"
+                                    >
+                                        <span>{label}</span>
+                                        <span className="flex items-center gap-2">
+                                            {estimate.disproportionate_sections.includes(
+                                                key,
+                                            ) && (
+                                                <Badge variant="destructive">
+                                                    disproportionate
+                                                </Badge>
+                                            )}
+                                            <Badge variant="outline">
+                                                {measurement.characters.toLocaleString()}{' '}
+                                                chars / ~
+                                                {measurement.estimated_tokens.toLocaleString()}{' '}
+                                                tok
+                                            </Badge>
+                                        </span>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                        {estimate.skills.length > 0 && (
+                            <div>
+                                <p className="mb-1 text-xs font-medium text-muted-foreground">
+                                    Per-skill breakdown
+                                </p>
+                                <ul className="grid gap-1">
+                                    {estimate.skills.map((skill) => (
+                                        <li
+                                            key={`${skill.slug}-${skill.position}`}
+                                            className="flex items-center justify-between rounded-md border px-2 py-1 text-xs"
+                                        >
+                                            <span>{skill.slug}</span>
+                                            <Badge variant="outline">
+                                                {skill.characters.toLocaleString()}{' '}
+                                                chars / ~
+                                                {skill.estimated_tokens.toLocaleString()}{' '}
+                                                tok
+                                            </Badge>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
                     </>
                 ) : (
                     <Badge variant="outline">Legacy run</Badge>

@@ -9,6 +9,7 @@ return [
     'token_observability_window' => (int) env('AIOS_TOKEN_OBSERVABILITY_WINDOW', 20),
     'token_warning_coder' => (int) env('AIOS_TOKEN_WARNING_CODER', 150000),
     'token_warning_reviewer' => (int) env('AIOS_TOKEN_WARNING_REVIEWER', 60000),
+    'context_cost_warning_share' => (float) env('AIOS_CONTEXT_COST_WARNING_SHARE', 0.5),
     'codex_binary' => env('AIOS_CODEX_BINARY', 'codex'),
     'claude_code_binary' => env('AIOS_CLAUDE_CODE_BINARY', 'claude'),
     'execution_timeout' => (int) env('AIOS_EXECUTION_TIMEOUT', 1800),

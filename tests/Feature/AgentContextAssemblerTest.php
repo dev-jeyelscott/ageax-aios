@@ -6,6 +6,7 @@ use App\Models\Agent;
 use App\Models\Project;
 use App\Models\Skill;
 use App\Services\AgentContextAssembler;
+use App\Services\ContextCostEstimator;
 use Illuminate\Support\Str;
 
 function assemblerProject(string $name): Project
@@ -27,6 +28,26 @@ test('the assembled context follows the approved precedence order and carries a 
         ->and($payload['context_schema_version'])->toBe(AgentContextAssembler::ContextSchemaVersion)
         ->and($payload['task_context'])->toBe(['task_key' => 'TASK-001'])
         ->and($payload['agent']['default_context'])->toBe('Prefer small, focused diffs.');
+});
+
+test('the context cost estimate is attributed per source but never enters the harness facing prompt payload', function () {
+    $project = assemblerProject('Cost estimate project');
+    $agent = Agent::factory()->for($project)->create(['default_context' => 'Prefer small, focused diffs.']);
+
+    $first = app(AgentContextAssembler::class)->assemble($agent, AgentRole::Coder, ['task_key' => 'TASK-001']);
+    $second = app(AgentContextAssembler::class)->assemble($agent, AgentRole::Coder, ['task_key' => 'TASK-001']);
+
+    expect($first->contextCostSchemaVersion)->toBe(ContextCostEstimator::SchemaVersion)
+        ->and($first->contextCostEstimate)->toBe($second->contextCostEstimate)
+        ->and($first->contextCostEstimate['agent_default_context']['characters'])->toBe(mb_strlen('Prefer small, focused diffs.'))
+        ->and($first->contextCostEstimate['total']['characters'])->toBeGreaterThan(0)
+        ->and($first->costEstimateSnapshot())->toBe([
+            'context_cost_schema_version' => $first->contextCostSchemaVersion,
+            'context_cost_estimate' => $first->contextCostEstimate,
+        ])
+        ->and(array_keys($first->toArray()))->not->toContain('context_cost_estimate')
+        ->and(array_keys($first->toArray()))->not->toContain('context_cost_schema_version')
+        ->and($first->hash)->toBe($second->hash);
 });
 
 test('AIOS system rules cannot be overridden by agent or skill text', function () {

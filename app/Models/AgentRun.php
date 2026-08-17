@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['project_id', 'task_id', 'agent_worker_id', 'recovery_incident_id', 'agent_id', 'worker_instance_id', 'worker_lease_id', 'role', 'harness', 'status', 'attempt_number', 'codex_run_id', 'external_run_id', 'prompt_hash', 'result', 'configuration_snapshot', 'context_schema_version', 'commands', 'file_modifications', 'token_usage', 'log_path', 'live_output', 'exit_code', 'started_at', 'finished_at'])]
+#[Fillable(['project_id', 'task_id', 'agent_worker_id', 'recovery_incident_id', 'agent_id', 'worker_instance_id', 'worker_lease_id', 'role', 'harness', 'status', 'attempt_number', 'codex_run_id', 'external_run_id', 'prompt_hash', 'result', 'configuration_snapshot', 'context_schema_version', 'context_cost_estimate', 'context_cost_schema_version', 'commands', 'file_modifications', 'token_usage', 'log_path', 'live_output', 'exit_code', 'started_at', 'finished_at'])]
 /**
  * @property AgentRole $role
  * @property AgentRunStatus $status
@@ -19,6 +19,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property ?string $harness
  * @property ?array<string, mixed> $configuration_snapshot
  * @property ?int $context_schema_version
+ * @property ?array<string, mixed> $context_cost_estimate
+ * @property ?int $context_cost_schema_version
  * @property CarbonImmutable $started_at
  * @property CarbonImmutable|null $finished_at
  */
@@ -29,7 +31,7 @@ class AgentRun extends Model
 
     protected function casts(): array
     {
-        return ['role' => AgentRole::class, 'status' => AgentRunStatus::class, 'result' => 'array', 'configuration_snapshot' => 'array', 'commands' => 'array', 'file_modifications' => 'array', 'started_at' => 'immutable_datetime', 'finished_at' => 'immutable_datetime'];
+        return ['role' => AgentRole::class, 'status' => AgentRunStatus::class, 'result' => 'array', 'configuration_snapshot' => 'array', 'context_cost_estimate' => 'array', 'commands' => 'array', 'file_modifications' => 'array', 'started_at' => 'immutable_datetime', 'finished_at' => 'immutable_datetime'];
     }
 
     /** @return BelongsTo<Project, $this> */

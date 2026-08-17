@@ -7,6 +7,7 @@ import {
 import {
     AgentMessagesCard,
     ConfigurationEvidenceCard,
+    ContextCostCard,
     ExecutionDetailsCard,
     isAgentRunLive,
     useAutoScrollConsole,
@@ -134,6 +135,8 @@ export default function AgentRunShow({
                 </div>
 
                 <ConfigurationEvidenceCard agentRun={agentRun} />
+
+                <ContextCostCard agentRun={agentRun} />
 
                 {isProjectManager && (
                     <Card>

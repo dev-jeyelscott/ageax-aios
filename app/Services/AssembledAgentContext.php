@@ -8,6 +8,7 @@ final readonly class AssembledAgentContext
      * @param  array<string, mixed>  $agentSnapshot
      * @param  list<array<string, mixed>>  $skillsSnapshot
      * @param  array<string, mixed>  $taskContext
+     * @param  array<string, mixed>  $contextCostEstimate
      */
     public function __construct(
         public int $contextSchemaVersion,
@@ -16,6 +17,8 @@ final readonly class AssembledAgentContext
         public array $skillsSnapshot,
         public array $taskContext,
         public string $hash,
+        public array $contextCostEstimate,
+        public int $contextCostSchemaVersion,
     ) {}
 
     /** @return array<string, mixed> */
@@ -39,6 +42,15 @@ final readonly class AssembledAgentContext
             'context_hash' => $this->hash,
             'agent' => $this->agentSnapshot,
             'skills' => $this->skillsSnapshot,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    public function costEstimateSnapshot(): array
+    {
+        return [
+            'context_cost_schema_version' => $this->contextCostSchemaVersion,
+            'context_cost_estimate' => $this->contextCostEstimate,
         ];
     }
 }

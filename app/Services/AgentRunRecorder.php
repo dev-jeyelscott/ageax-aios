@@ -47,6 +47,8 @@ class AgentRunRecorder
             'result' => $retrievalManifest === null ? null : ['retrieval_manifest' => $retrievalManifest],
             'configuration_snapshot' => $context?->configurationSnapshot(),
             'context_schema_version' => $context?->contextSchemaVersion,
+            'context_cost_estimate' => $context?->contextCostEstimate,
+            'context_cost_schema_version' => $context?->contextCostSchemaVersion,
             'started_at' => now(),
         ]);
 
@@ -84,6 +86,22 @@ class AgentRunRecorder
                     'context_hash' => $context->hash,
                     'skills' => $skills,
                 ], $project, $task);
+
+                $this->audit->record('agent_run.context_cost_estimated', [
+                    ...$selectionPayload,
+                    'context_cost_schema_version' => $context->contextCostSchemaVersion,
+                    'breakdown' => $context->contextCostEstimate,
+                ], $project, $task);
+
+                $disproportionateSections = $context->contextCostEstimate['disproportionate_sections'] ?? [];
+
+                if ($disproportionateSections !== []) {
+                    $this->audit->record('agent_run.context_cost_warning', [
+                        'agent_run_id' => $run->id,
+                        'disproportionate_sections' => $disproportionateSections,
+                        'total' => $context->contextCostEstimate['total'] ?? null,
+                    ], $project, $task);
+                }
             }
         }
 
