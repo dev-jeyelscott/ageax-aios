@@ -17,6 +17,7 @@ use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use App\Services\CoderRepositoryGuard;
 use App\Services\CodexCliRunner;
+use App\Services\NoProgressRetryGuard;
 use App\Services\ProjectGitState;
 use App\Services\TaskCommitter;
 use App\Services\TaskContextCapsuleFactory;
@@ -31,7 +32,7 @@ use Throwable;
 
 class RunCoderTask
 {
-    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git) {}
+    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private NoProgressRetryGuard $noProgress, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git) {}
 
     public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
     {
@@ -233,6 +234,10 @@ class RunCoderTask
 
     private function retryStatus(Task $task, TaskAttempt $attempt): TaskStatus
     {
+        $noProgress = $this->noProgress->coderFailure($task, $attempt->refresh());
+        $validationResults = is_array($attempt->validation_results) ? $attempt->validation_results : [];
+        $attempt->update(['validation_results' => [...$validationResults, 'no_progress' => $noProgress]]);
+
         $limit = max(1, (int) config('aios.max_coder_attempts'));
         $lastRecovery = $task->auditEvents()
             ->whereIn('event_type', ['task.requeued', 'task.coder_retry_exhausted'])
@@ -242,17 +247,35 @@ class RunCoderTask
             ->when($lastRecovery !== null, fn ($query) => $query->where('created_at', '>=', $lastRecovery->occurred_at))
             ->count();
 
-        if ($attemptsSinceRecovery < $limit) {
-            return TaskStatus::Failed;
+        if ($attemptsSinceRecovery >= $limit) {
+            $this->audit->record('task.coder_retry_exhausted', [
+                'attempt_number' => $attempt->number,
+                'retry_count' => $attemptsSinceRecovery,
+                'retry_limit' => $limit,
+                'no_progress' => $noProgress,
+            ], $task->project, $task);
+
+            return TaskStatus::Blocked;
         }
 
-        $this->audit->record('task.coder_retry_exhausted', [
-            'attempt_number' => $attempt->number,
-            'retry_count' => $attemptsSinceRecovery,
-            'retry_limit' => $limit,
-        ], $task->project, $task);
+        if ($noProgress['detected']) {
+            $this->audit->record('task.no_progress_detected', [
+                'operation' => 'coder',
+                'attempt_number' => $attempt->number,
+                'failure_fingerprint' => $noProgress['failure_fingerprint'],
+                'consecutive_identical_failures' => $noProgress['consecutive_identical_failures'],
+                'consecutive_repeat_count' => $noProgress['consecutive_repeat_count'],
+                'threshold' => $noProgress['threshold'],
+                'base_sha' => $attempt->base_sha,
+                'head_sha' => $attempt->head_sha,
+                'changed_files' => $attempt->changed_files ?? [],
+                'repository_fingerprint' => $noProgress['repository_fingerprint'],
+            ], $task->project, $task);
 
-        return TaskStatus::Blocked;
+            return TaskStatus::Blocked;
+        }
+
+        return TaskStatus::Failed;
     }
 
     /** @return array{0: ?Agent, 1: ?AgentHarness} */

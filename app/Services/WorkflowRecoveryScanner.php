@@ -20,7 +20,9 @@ use Illuminate\Support\Facades\DB;
  *    scan so the recovery remains auditable without duplicating that service's logic.
  *  - Terminal stuck tasks (blocked/interrupted/failed, persisted past a small anti-flake floor):
  *    a durable, open RecoveryIncident is created (at most one per task at a time) for the
- *    Workflow Recovery Engineer to diagnose and, where safe, repair.
+ *    Workflow Recovery Engineer to diagnose and, where safe, repair. Explicit no-progress blocks
+ *    are excluded because their deterministic evidence already requires operator intervention;
+ *    creating a recovery incident would only launch another unnecessary AI execution.
  */
 class WorkflowRecoveryScanner
 {
@@ -58,6 +60,10 @@ class WorkflowRecoveryScanner
                 DB::transaction(function () use ($project, $task): void {
                     $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
                     if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::Blocked) {
+                        return;
+                    }
+
+                    if ($this->isNoProgressBlock($lockedTask)) {
                         return;
                     }
 
@@ -131,6 +137,10 @@ class WorkflowRecoveryScanner
                 return;
             }
 
+            if ($status === TaskStatus::Blocked && $this->isNoProgressBlock($lockedTask)) {
+                return;
+            }
+
             $hasOpenIncident = RecoveryIncident::query()
                 ->where('task_id', $lockedTask->id)
                 ->whereIn('status', array_map(fn (RecoveryIncidentStatus $status): string => $status->value, RecoveryIncidentStatus::open()))
@@ -154,6 +164,23 @@ class WorkflowRecoveryScanner
                 'task_status' => $status->value,
             ], $project, $lockedTask);
         }, attempts: 3);
+    }
+
+    private function isNoProgressBlock(Task $task): bool
+    {
+        $lastNoProgressId = $task->auditEvents()
+            ->where('event_type', 'task.no_progress_detected')
+            ->max('id');
+
+        if ($lastNoProgressId === null) {
+            return false;
+        }
+
+        $lastRequeueId = $task->auditEvents()
+            ->where('event_type', 'task.requeued')
+            ->max('id');
+
+        return $lastRequeueId === null || $lastNoProgressId > $lastRequeueId;
     }
 
     /** @return array<string, mixed> */

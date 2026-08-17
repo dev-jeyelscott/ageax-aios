@@ -19,6 +19,7 @@ return [
     'worker_task_cooldown_seconds' => (int) env('AIOS_WORKER_TASK_COOLDOWN_SECONDS', 300),
     'max_coder_attempts' => (int) env('AIOS_MAX_CODER_ATTEMPTS', 3),
     'max_reviewer_attempts' => (int) env('AIOS_MAX_REVIEWER_ATTEMPTS', 3),
+    'no_progress_repeat_threshold' => (int) env('AIOS_NO_PROGRESS_REPEAT_THRESHOLD', 1),
     'roadmap_scan_interval_hours' => (int) env('AIOS_ROADMAP_SCAN_INTERVAL_HOURS', 24),
 
     // Workflow Recovery Engineer (AIOS system/reliability agent, not a project workflow role).

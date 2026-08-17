@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 
 class TaskWorkflow
 {
-    public function __construct(private AuditLogger $audit, private ObsidianProjectNotes $notes, private CoderRepositoryGuard $repositoryGuard) {}
+    public function __construct(private AuditLogger $audit, private ObsidianProjectNotes $notes, private CoderRepositoryGuard $repositoryGuard, private NoProgressRetryGuard $noProgress) {}
 
     public function claim(Project $project, AgentRole $role): ?Task
     {
@@ -90,22 +90,40 @@ class TaskWorkflow
                 })
                 ->count() + 1;
             $retryLimit = max(1, (int) config('aios.max_reviewer_attempts'));
-            $retryStatus = $failureCount >= $retryLimit ? TaskStatus::Blocked : TaskStatus::ReadyForReview;
+            $noProgress = $this->noProgress->reviewerFailure($lockedTask, $attempt, $failure);
+            $retryExhausted = $failureCount >= $retryLimit;
+            $noProgressDetected = ! $retryExhausted && $noProgress['detected'];
+            $retryStatus = $retryExhausted || $noProgressDetected ? TaskStatus::Blocked : TaskStatus::ReadyForReview;
             $payload = [
                 ...$failure,
                 'attempt_number' => $attempt?->number,
                 'retry_count' => $failureCount,
                 'retry_limit' => $retryLimit,
+                'no_progress' => $noProgress,
             ];
 
             $this->audit->record('review.failed', $payload, $lockedTask->project, $lockedTask);
             $this->transitionLocked($lockedTask, $retryStatus);
-            $this->audit->record(
-                $retryStatus === TaskStatus::Blocked ? 'review.retry_exhausted' : 'review.retry_scheduled',
-                $payload,
-                $lockedTask->project,
-                $lockedTask,
-            );
+
+            if ($retryExhausted) {
+                $this->audit->record('review.retry_exhausted', $payload, $lockedTask->project, $lockedTask);
+            } elseif ($noProgressDetected) {
+                $this->audit->record('task.no_progress_detected', [
+                    'operation' => 'reviewer',
+                    'attempt_number' => $attempt?->number,
+                    'failure_fingerprint' => $noProgress['failure_fingerprint'],
+                    'consecutive_identical_failures' => $noProgress['consecutive_identical_failures'],
+                    'consecutive_repeat_count' => $noProgress['consecutive_repeat_count'],
+                    'threshold' => $noProgress['threshold'],
+                    'reason' => $failure['reason'] ?? null,
+                    'base_sha' => $attempt?->base_sha,
+                    'head_sha' => $attempt?->head_sha,
+                    'commit_sha' => $attempt?->commit_sha,
+                    'changed_files' => $attempt?->changed_files ?? [],
+                ], $lockedTask->project, $lockedTask);
+            } else {
+                $this->audit->record('review.retry_scheduled', $payload, $lockedTask->project, $lockedTask);
+            }
 
             return $lockedTask->refresh();
         }, attempts: 3);

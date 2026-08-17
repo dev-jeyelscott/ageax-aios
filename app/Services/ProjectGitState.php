@@ -101,6 +101,34 @@ class ProjectGitState
         return $this->normalize([...$staged, ...$unstaged, ...$untracked]);
     }
 
+    public function workingTreeFingerprintFromBase(string $projectPath, string $baseSha): ?string
+    {
+        $projectPath = $this->paths->assertProjectPath($projectPath);
+        $diff = $this->result($projectPath, ['git', 'diff', '--binary', '--no-ext-diff', '--no-renames', $baseSha, '--']);
+        $untracked = $this->files($projectPath, ['git', 'ls-files', '--others', '--exclude-standard', '-z', '--']);
+
+        if (! $diff['successful'] || $untracked === null) {
+            return null;
+        }
+
+        $untrackedFingerprints = [];
+
+        foreach ($untracked as $file) {
+            $hash = $this->result($projectPath, ['git', 'hash-object', '--no-filters', '--', $file]);
+
+            if (! $hash['successful']) {
+                return null;
+            }
+
+            $untrackedFingerprints[] = $file."\0".trim($hash['output']);
+        }
+
+        return hash(
+            'sha256',
+            "tracked\0".$diff['output']."\0untracked\0".implode("\0", $untrackedFingerprints),
+        );
+    }
+
     /** @return array<int, string>|null */
     public function stagedFiles(string $projectPath): ?array
     {
