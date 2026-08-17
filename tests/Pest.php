@@ -1,8 +1,13 @@
 <?php
 
+use App\AgentRole;
 use App\Models\Task;
+use App\Models\TaskAttempt;
 use App\Services\CoderRepositoryGuard;
 use App\Services\ProjectGitState;
+use App\Services\TaskContextCapsuleFactory;
+use App\Services\TaskContractGuard;
+use App\TaskStatus;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -52,6 +57,46 @@ pest()->extend(TestCase::class)
                 }
             };
         });
+
+        /**
+         * Feature tests often create completed review attempts directly instead of running the
+         * Coder action. Mirror the production invariant that every reviewable Coder attempt has
+         * immutable task-contract evidence, without weakening the runtime missing-baseline gate.
+         */
+        TaskAttempt::creating(function (TaskAttempt $attempt): void {
+            if ($attempt->getAttribute('status') !== 'completed') {
+                return;
+            }
+
+            $taskId = $attempt->getAttribute('task_id');
+
+            if (! is_int($taskId)) {
+                return;
+            }
+
+            $task = Task::query()->find($taskId);
+
+            if ($task === null) {
+                return;
+            }
+
+            $status = TaskStatus::from((string) $task->getRawOriginal('status'));
+
+            if (! in_array($status, [TaskStatus::ReadyForReview, TaskStatus::Reviewing], true)) {
+                return;
+            }
+
+            $validationResults = $attempt->getAttribute('validation_results');
+            $validationResults = is_array($validationResults) ? $validationResults : [];
+
+            if (is_array($validationResults['task_contract'] ?? null)) {
+                return;
+            }
+
+            $context = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Reviewer);
+            $validationResults['task_contract'] = app(TaskContractGuard::class)->evidence($task, $context);
+            $attempt->setAttribute('validation_results', $validationResults);
+        });
     })
     ->in('Feature');
 
@@ -61,8 +106,8 @@ pest()->extend(TestCase::class)
 |--------------------------------------------------------------------------
 |
 | When you're writing tests, you may need to check that values meet certain conditions. The
-| "expect()" function gives you access to a set of "expectations" methods that you can use
-| to assert different things. Of course, you may extend the Expectation API at any time.
+| "expect()" function gives you access to a set of "expectations" methods that you can use.
+| Of course, you may extend the Expectation API at any time.
 |
 */
 

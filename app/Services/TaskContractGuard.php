@@ -95,12 +95,10 @@ final readonly class TaskContractGuard
         $validation = $this->decodedObject($attempt->getRawOriginal('validation_results'));
         $evidence = $validation['task_contract'] ?? null;
 
-        if (
-            ! is_array($evidence)
+        if (! is_array($evidence)
             || ! is_int($evidence['schema_version'] ?? null)
             || ! is_string($evidence['fingerprint'] ?? null)
-            || ! is_array($evidence['input_hashes'] ?? null)
-        ) {
+            || ! is_array($evidence['input_hashes'] ?? null)) {
             return null;
         }
 
@@ -265,23 +263,19 @@ final readonly class TaskContractGuard
     {
         $relativePath = str_replace('\\', '/', trim($relativePath));
 
-        if (
-            $relativePath === ''
+        if ($relativePath === ''
             || Str::contains($relativePath, ['..', "\0"])
-            || Str::startsWith($relativePath, '/')
-        ) {
+            || Str::startsWith($relativePath, '/')) {
             return null;
         }
 
         $resolvedProjectPath = realpath($projectPath);
         $resolved = realpath($projectPath.'/'.$relativePath);
 
-        if (
-            $resolvedProjectPath === false
+        if ($resolvedProjectPath === false
             || $resolved === false
             || ! Str::startsWith($resolved, $resolvedProjectPath.DIRECTORY_SEPARATOR)
-            || ! $this->files->isFile($resolved)
-        ) {
+            || ! $this->files->isFile($resolved)) {
             return null;
         }
 
@@ -290,10 +284,28 @@ final readonly class TaskContractGuard
 
     private function isDocumentationPath(string $path): bool
     {
-        $normalized = strtolower(str_replace('\\', '/', $path));
+        $normalized = strtolower(str_replace('\\', '/', trim($path)));
 
-        return Str::startsWith($normalized, ['docs/', 'documentation/', 'specs/', 'specifications/', '.ai/rules/'])
-            || Str::endsWith($normalized, ['.md', '.txt', '.rst', '.adoc']);
+        if (Str::startsWith($normalized, [
+            'docs/',
+            'documentation/',
+            'specs/',
+            'specifications/',
+            'roadmaps/',
+            'planning/',
+            'architecture/',
+            'decisions/',
+            'adr/',
+            'adrs/',
+            '.ai/rules/',
+        ])) {
+            return true;
+        }
+
+        return preg_match(
+            '/^(?:roadmap|spec|specification|requirements?|architecture|adr|decision)(?:[-_. ].*)?\.(?:md|rst|adoc)$/',
+            basename($normalized),
+        ) === 1;
     }
 
     /** @return list<string> */
