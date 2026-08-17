@@ -20,6 +20,7 @@ use App\Services\StaleWorkerRecovery;
 use App\Services\TaskCommitter;
 use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskValidator;
+use App\Services\WorkerHeartbeat;
 use App\TaskStatus;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
@@ -747,4 +748,38 @@ test('the core roadmap workflow survives a reviewer rejection and completes the 
         ->and($project->auditEvents()->where('event_type', 'roadmap.processed')->exists())->toBeTrue()
         ->and($task->auditEvents()->where('event_type', 'task.rejected')->exists())->toBeTrue()
         ->and($task->auditEvents()->where('event_type', 'task.approved')->exists())->toBeTrue();
+});
+
+test('a Project Manager run renews its worker lease outside the harness execution window', function () {
+    $project = Project::create(['name' => 'Lease PM', 'path' => '/tmp/lease-pm-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    AgentWorker::create(['project_id' => $project->id, 'role' => AgentRole::ProjectManager, 'status' => 'idle']);
+    $roadmap = Roadmap::create(['project_id' => $project->id, 'original_filename' => 'roadmap.md', 'storage_path' => 'roadmaps/lease-pm.md', 'status' => 'uploaded', 'content' => 'Implement a focused task.']);
+    $plan = ['project_knowledge' => ['overview' => 'A lease renewal proof.'], 'phases' => [[
+        'title' => 'Foundation',
+        'objective' => 'Deliver the task.',
+        'tasks' => [[
+            'title' => 'Implement the focused task',
+            'objective' => 'Write the verified feature file.',
+            'acceptance_criteria' => ['The feature file contains the approved implementation.'],
+            'implementation_prompt' => 'Create feature.txt with the correct implementation.',
+            'completion_status' => 'queued',
+            'completion_evidence' => null,
+        ]],
+    ]]];
+    mock(CodexCliRunner::class)
+        ->shouldReceive('run')
+        ->once()
+        ->andReturn(['exit_code' => 0, 'output' => json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => json_encode($plan, JSON_THROW_ON_ERROR)]], JSON_THROW_ON_ERROR), 'error_output' => '']);
+
+    $lease = app(WorkerHeartbeat::class)->acquire($project, AgentRole::ProjectManager, fake()->uuid());
+    $heartbeatSpy = Mockery::mock(WorkerHeartbeat::class)->makePartial();
+    // Claim, pre-harness, post-harness, once per task written by ApplyRoadmapPlan's onProgress
+    // callback, and post-persistence: the plan-persistence loop is the slowest, unbounded part of
+    // a run (one note file write per task) and must renew per task, not just once around it.
+    $heartbeatSpy->shouldReceive('renew')->times(5)->andReturn(true);
+    app()->instance(WorkerHeartbeat::class, $heartbeatSpy);
+
+    app(RunProjectManager::class)->handle($roadmap, $lease);
+
+    expect($roadmap->refresh()->status)->toBe('processed');
 });

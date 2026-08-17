@@ -19,8 +19,9 @@ class ApplyRoadmapPlan
     /**
      * @param  array<int, array{title: string, objective: string, tasks: array<int, array{title: string, objective: string, acceptance_criteria: array<int, string>, scope?: array<int, string>, constraints?: array<int, string>, relevant_paths?: array<int, string>, verification_commands?: array<int, string>, implementation_prompt: string, obsidian_notes?: array<int, string>, depends_on?: array<int, int>, completion_status?: 'done'|'queued', completion_evidence?: string|null}>}>  $phases
      * @param  ?array<string, mixed>  $structuredOutput
+     * @param  ?callable(): void  $onProgress  Invoked after each per-task note write so a caller holding a worker lease can renew it; a large plan's note-writing loop can otherwise outrun the lease TTL with no other renewal point.
      */
-    public function handle(Project $project, array $phases, ?Roadmap $roadmap = null, ?RoadmapAttempt $attempt = null, ?array $structuredOutput = null): void
+    public function handle(Project $project, array $phases, ?Roadmap $roadmap = null, ?RoadmapAttempt $attempt = null, ?array $structuredOutput = null, ?callable $onProgress = null): void
     {
         $result = DB::transaction(function () use ($project, $phases, $roadmap, $attempt, $structuredOutput): array {
             if ($roadmap !== null && $attempt !== null) {
@@ -83,10 +84,16 @@ class ApplyRoadmapPlan
 
         foreach ($result['tasks'] as $task) {
             $this->notes->writeTaskBrief($task);
+            if ($onProgress !== null) {
+                $onProgress();
+            }
         }
 
         foreach ($result['completed'] as [$task, $completionEvidence]) {
             $this->notes->writeTaskCompletion($task, $completionEvidence);
+            if ($onProgress !== null) {
+                $onProgress();
+            }
         }
     }
 

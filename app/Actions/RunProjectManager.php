@@ -37,6 +37,7 @@ class RunProjectManager
         if ($attempt === null) {
             return ['exit_code' => 0, 'output' => '', 'error_output' => ''];
         }
+        $this->renewLease($lease);
 
         $roadmap = $attempt->roadmap;
 
@@ -64,6 +65,7 @@ class RunProjectManager
         $prompt = "You are the Project Manager. Read AGENTS.md, repository documentation, Git history, the current implementation, and the provided targeted Obsidian project knowledge before planning. Treat Obsidian notes as context, but verify the repository before marking a task complete. Treat project_runtime_capabilities as authoritative environment-topology evidence: host-only tool or PHP-extension absence does not mean a project capability is unavailable when the repository configures it in Docker Compose. For container-managed projects, prefer the repository's existing Docker Compose service conventions when generating verification_commands. Produce only JSON: {project_knowledge:{overview,architecture_decisions:[{title,rationale}],constraints,handoff},phases:[{title,objective,tasks:[{title,objective,acceptance_criteria,scope,constraints,relevant_paths,verification_commands,implementation_prompt,obsidian_notes,depends_on,completion_status,completion_evidence}]}]}. Keep tasks ordered and implementation-ready. obsidian_notes is an optional list of intentionally relevant project-local Markdown paths; never include absolute paths, traversal, or non-Markdown files. depends_on is an array of one-based positions of earlier tasks in the complete plan; declare only real dependencies. If a task has no additional dependency, use an empty array. In project_knowledge, record only concise, verified facts that will be useful to fresh agents; do not include secrets or raw repository dumps. Use concise arrays for scope, constraints, relevant_paths, and verification_commands. Verification commands must be safe, simple commands from the approved project toolchain, with no shell operators or redirects. For Docker Compose projects, prefer safe `docker compose exec -T <service> ...` verification against the detected repository-defined application service when appropriate. For every task, set completion_status to done only when the current repository already satisfies its acceptance criteria; provide concise, concrete completion_evidence with paths, commands, or commits. Otherwise set completion_status to queued and completion_evidence to null. Do not infer completion from intent or documentation alone.\n\n".json_encode($assembled?->toArray() ?? $roadmapContext, JSON_THROW_ON_ERROR);
         $run = $this->runs->start($roadmap->project, AgentRole::ProjectManager, $prompt, lease: $lease, retrievalManifest: $retrieval['manifest'], agent: $agent, context: $assembled);
         $attempt->update(['agent_run_id' => $run->id, 'status' => 'running']);
+        $this->renewLease($lease);
         try {
             $onOutput = function (string $type, string $output) use ($run, $roadmap, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
@@ -78,6 +80,7 @@ class RunProjectManager
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
         }
+        $this->renewLease($lease);
         $this->runs->complete($run, $execution);
         if ($execution['exit_code'] === 0) {
             $pendingMessages->each->update(['delivered_at' => now()]);
@@ -99,17 +102,32 @@ class RunProjectManager
         }
 
         try {
-            $this->plans->handle($roadmap->project, $plan['phases'], $roadmap, $attempt, $plan);
+            $this->plans->handle($roadmap->project, $plan['phases'], $roadmap, $attempt, $plan, fn () => $this->renewLease($lease));
         } catch (Throwable) {
             $this->failAttempt($attempt, $execution['exit_code'], 'persistence_failed');
 
             return $execution;
         }
+        $this->renewLease($lease);
 
         $this->notes->writeRoadmapPlan($roadmap->project, $plan);
         $this->notes->writeProjectManagerKnowledge($roadmap->project, $plan['project_knowledge'] ?? [], $plan['phases']);
 
         return $execution;
+    }
+
+    /**
+     * The harness's own onHeartbeat callback only renews the lease while the CLI subprocess is
+     * running. Plan parsing/validation/persistence (ApplyRoadmapPlan, which writes a note file
+     * per task) happens outside that window and can outlast the lease TTL for large plans,
+     * letting the stale-worker recovery scan steal the lease mid-run and re-open the roadmap for
+     * a second, concurrent claim. Renew at each non-harness checkpoint to close that gap.
+     */
+    private function renewLease(?WorkerLease $lease): void
+    {
+        if ($lease !== null) {
+            $this->heartbeat->renew($lease);
+        }
     }
 
     /** @return array{0: ?Agent, 1: ?AgentHarness} */
