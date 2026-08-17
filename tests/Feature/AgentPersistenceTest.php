@@ -33,13 +33,16 @@ test('project agents persist independently from agent worker runtime state', fun
         ->and(Schema::hasColumn('agents', 'token'))->toBeFalse();
 });
 
-test('agent rows cannot exist without an owning project', function () {
+test('project workflow roles cannot be created as global agents', function () {
     expect(fn () => Agent::query()->create([
         'name' => 'Global Coder',
         'role' => AgentRole::Coder,
         'harness' => AgentHarness::Codex,
         'enabled' => true,
-    ]))->toThrow(QueryException::class);
+    ]))->toThrow(
+        LogicException::class,
+        'A global Agent role must be a supported AIOS system role.',
+    );
 });
 
 test('agent names are unique only within their owning project', function () {

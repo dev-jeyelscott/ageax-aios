@@ -133,6 +133,8 @@ test('default agent provisioning participates in the project creation transactio
         Process::result(exitCode: 1),
     ])]);
 
+    $existingAgentCount = Agent::query()->count();
+
     mock(ProvisionDefaultProjectAgents::class)
         ->shouldReceive('handle')
         ->once()
@@ -143,7 +145,8 @@ test('default agent provisioning participates in the project creation transactio
             ->toThrow(RuntimeException::class, 'Provisioning failed.');
 
         expect(Project::query()->count())->toBe(0)
-            ->and(Agent::query()->count())->toBe(0)
+            ->and(Agent::query()->count())->toBe($existingAgentCount)
+            ->and(Agent::query()->whereNotNull('project_id')->count())->toBe(0)
             ->and(AgentWorker::query()->count())->toBe(0)
             ->and(AgentRun::query()->count())->toBe(0);
     } finally {
