@@ -95,10 +95,12 @@ final readonly class TaskContractGuard
         $validation = $this->decodedObject($attempt->getRawOriginal('validation_results'));
         $evidence = $validation['task_contract'] ?? null;
 
-        if (! is_array($evidence)
+        if (
+            ! is_array($evidence)
             || ! is_int($evidence['schema_version'] ?? null)
             || ! is_string($evidence['fingerprint'] ?? null)
-            || ! is_array($evidence['input_hashes'] ?? null)) {
+            || ! is_array($evidence['input_hashes'] ?? null)
+        ) {
             return null;
         }
 
@@ -263,19 +265,23 @@ final readonly class TaskContractGuard
     {
         $relativePath = str_replace('\\', '/', trim($relativePath));
 
-        if ($relativePath === ''
+        if (
+            $relativePath === ''
             || Str::contains($relativePath, ['..', "\0"])
-            || Str::startsWith($relativePath, '/')) {
+            || Str::startsWith($relativePath, '/')
+        ) {
             return null;
         }
 
         $resolvedProjectPath = realpath($projectPath);
         $resolved = realpath($projectPath.'/'.$relativePath);
 
-        if ($resolvedProjectPath === false
+        if (
+            $resolvedProjectPath === false
             || $resolved === false
             || ! Str::startsWith($resolved, $resolvedProjectPath.DIRECTORY_SEPARATOR)
-            || ! $this->files->isFile($resolved)) {
+            || ! $this->files->isFile($resolved)
+        ) {
             return null;
         }
 
@@ -362,7 +368,7 @@ final readonly class TaskContractGuard
             }
         }
 
-        return array_values($changed);
+        return $changed;
     }
 
     private function hashValue(mixed $value): string
