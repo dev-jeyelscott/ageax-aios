@@ -39,7 +39,7 @@ class RunAiosWorkers extends Command
                 // Stale worker/lease and workflow-failure recovery is owned by the Workflow
                 // Recovery Engineer's five-minute scheduled scan (aios:recover-workflows), not
                 // this loop; see App\Services\WorkflowRecoveryScanner/WorkflowRecoveryEngine.
-                $roadmap = Roadmap::query()->whereBelongsTo($project)->whereIn('status', ['uploaded', 'failed'])->oldest()->first();
+                $roadmap = $this->onRoadmapCooldown($project) ? null : Roadmap::query()->whereBelongsTo($project)->whereIn('status', ['uploaded', 'failed'])->oldest()->first();
                 if ($roadmap !== null) {
                     $lease = $heartbeat->acquire($project, AgentRole::ProjectManager, $workerInstanceId);
                     if ($lease !== null) {
@@ -48,6 +48,8 @@ class RunAiosWorkers extends Command
                         } finally {
                             $heartbeat->release($lease);
                         }
+
+                        AgentWorker::query()->whereBelongsTo($project)->where('role', AgentRole::ProjectManager)->update(['task_completed_at' => now()]);
                     }
 
                     if ($this->stopRequested($project, $setProjectStatus)) {
@@ -102,7 +104,22 @@ class RunAiosWorkers extends Command
 
     private function onTaskCooldown(Project $project, AgentRole $role): bool
     {
-        $cooldownSeconds = max(0, (int) config('aios.worker_task_cooldown_seconds'));
+        return $this->onCooldown($project, $role, (int) config('aios.worker_task_cooldown_seconds'));
+    }
+
+    /**
+     * PM retriggering deliberately uses its own, much longer timer (roadmap_retry_cooldown_seconds,
+     * default 1 hour) instead of worker_task_cooldown_seconds, since a failed roadmap otherwise has
+     * no attempt cap or backoff and would be re-claimed the instant it's marked failed again.
+     */
+    private function onRoadmapCooldown(Project $project): bool
+    {
+        return $this->onCooldown($project, AgentRole::ProjectManager, (int) config('aios.roadmap_retry_cooldown_seconds'));
+    }
+
+    private function onCooldown(Project $project, AgentRole $role, int $cooldownSeconds): bool
+    {
+        $cooldownSeconds = max(0, $cooldownSeconds);
         if ($cooldownSeconds === 0) {
             return false;
         }

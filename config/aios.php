@@ -17,6 +17,10 @@ return [
     'worker_lease_seconds' => (int) env('AIOS_WORKER_LEASE_SECONDS', 60),
     'worker_heartbeat_interval_seconds' => (int) env('AIOS_WORKER_HEARTBEAT_INTERVAL_SECONDS', 5),
     'worker_task_cooldown_seconds' => (int) env('AIOS_WORKER_TASK_COOLDOWN_SECONDS', 300),
+    // Project Manager retrigger cadence is deliberately separate from the Coder/Reviewer task
+    // cooldown above: PM (re-)claims a roadmap far less often, so it gets its own, much longer,
+    // independently configurable timer instead of sharing worker_task_cooldown_seconds.
+    'roadmap_retry_cooldown_seconds' => (int) env('AIOS_ROADMAP_RETRY_COOLDOWN_SECONDS', 3600),
     'max_coder_attempts' => (int) env('AIOS_MAX_CODER_ATTEMPTS', 3),
     'max_reviewer_attempts' => (int) env('AIOS_MAX_REVIEWER_ATTEMPTS', 3),
     'no_progress_repeat_threshold' => (int) env('AIOS_NO_PROGRESS_REPEAT_THRESHOLD', 1),
