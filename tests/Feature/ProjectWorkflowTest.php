@@ -284,11 +284,20 @@ test('Project Manager roadmap retry cooldown prevents immediate failed roadmap r
         'status' => ProjectStatus::Running,
         'git_status' => 'clean',
     ]);
-    $worker = AgentWorker::create([
-        'project_id' => $project->id,
-        'role' => AgentRole::ProjectManager,
-        'status' => 'idle',
-    ]);
+
+    foreach ([AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer] as $role) {
+        AgentWorker::create([
+            'project_id' => $project->id,
+            'role' => $role,
+            'status' => 'idle',
+        ]);
+    }
+
+    $worker = AgentWorker::query()
+        ->whereBelongsTo($project)
+        ->where('role', AgentRole::ProjectManager)
+        ->firstOrFail();
+
     $roadmap = Roadmap::create([
         'project_id' => $project->id,
         'original_filename' => 'roadmap.md',
@@ -336,11 +345,15 @@ test('Project Manager roadmap retries become blocked at the configured attempt l
         'status' => ProjectStatus::Running,
         'git_status' => 'clean',
     ]);
-    AgentWorker::create([
-        'project_id' => $project->id,
-        'role' => AgentRole::ProjectManager,
-        'status' => 'idle',
-    ]);
+
+    foreach ([AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer] as $role) {
+        AgentWorker::create([
+            'project_id' => $project->id,
+            'role' => $role,
+            'status' => 'idle',
+        ]);
+    }
+
     $roadmap = Roadmap::create([
         'project_id' => $project->id,
         'original_filename' => 'roadmap.md',
@@ -385,11 +398,15 @@ test('an already exhausted failed roadmap is blocked before another Project Mana
         'status' => ProjectStatus::Running,
         'git_status' => 'clean',
     ]);
-    AgentWorker::create([
-        'project_id' => $project->id,
-        'role' => AgentRole::ProjectManager,
-        'status' => 'idle',
-    ]);
+
+    foreach ([AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer] as $role) {
+        AgentWorker::create([
+            'project_id' => $project->id,
+            'role' => $role,
+            'status' => 'idle',
+        ]);
+    }
+
     $roadmap = Roadmap::create([
         'project_id' => $project->id,
         'original_filename' => 'roadmap.md',
