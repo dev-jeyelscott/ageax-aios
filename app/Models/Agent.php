@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Collection;
 use LogicException;
 
@@ -84,6 +85,12 @@ class Agent extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /** @return HasMany<AgentRun, $this> */
+    public function runs(): HasMany
+    {
+        return $this->hasMany(AgentRun::class);
     }
 
     /** @return BelongsToMany<Skill, $this, AgentSkill> */

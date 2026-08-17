@@ -66,11 +66,11 @@ function statusVariant(status: string): 'default' | 'secondary' | 'outline' {
 export default function AgentShow({
     agent,
     incidents,
-    harnessCapabilities,
+    harness_capabilities: harnessCapabilities,
 }: {
     agent: Agent;
     incidents: IncidentPage;
-    harnessCapabilities: HarnessCapabilities;
+    harness_capabilities: HarnessCapabilities;
 }) {
     return (
         <>

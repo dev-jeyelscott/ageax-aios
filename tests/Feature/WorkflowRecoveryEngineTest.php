@@ -3,6 +3,7 @@
 use App\Actions\ClaimTask;
 use App\AgentRole;
 use App\AgentRunStatus;
+use App\Models\Agent;
 use App\Models\AgentRun;
 use App\Models\AgentWorker;
 use App\Models\Project;
@@ -154,6 +155,22 @@ test('a deterministically classified unsafe repository state escalates without i
         ->and($processed->recoverable)->toBeFalse()
         ->and($task->refresh()->status)->toBe(TaskStatus::Blocked)
         ->and($project->auditEvents()->where('event_type', 'recovery.escalated')->exists())->toBeTrue();
+});
+
+test('a disabled global Recovery Engineer agent blocks diagnosis cleanly instead of attempting a run', function () {
+    Agent::query()->whereNull('project_id')->where('role', AgentRole::RecoveryEngineer)->update(['enabled' => false]);
+    $project = recoveryProject();
+    $task = recoveryTask($project, 'TASK-001', 1, TaskStatus::Blocked);
+    $incident = RecoveryIncident::create(['project_id' => $project->id, 'task_id' => $task->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Detected, 'detected_at' => now()]);
+    recoveryMock(RecoveryEngineerRunner::class)->shouldNotReceive('run');
+
+    $processed = app(WorkflowRecoveryEngine::class)->process($incident);
+
+    expect($processed->status)->toBe(RecoveryIncidentStatus::Escalated)
+        ->and($processed->root_cause_category)->toBe('configuration_environment')
+        ->and($processed->recoverable)->toBeFalse()
+        ->and($task->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($project->auditEvents()->where('event_type', 'recovery.blocked_agent_misconfigured')->exists())->toBeTrue();
 });
 
 test('a diagnosed managed-project defect is requeued without editing the AIOS repository', function () {

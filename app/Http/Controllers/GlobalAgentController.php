@@ -7,9 +7,11 @@ use App\Models\Agent;
 use App\Models\AgentRun;
 use App\Models\RecoveryIncident;
 use App\RecoveryIncidentStatus;
+use App\Services\AgentHarnessResolver;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -34,7 +36,7 @@ class GlobalAgentController extends Controller
         return Inertia::render('agents/index', ['agents' => $agents]);
     }
 
-    public function show(Agent $agent): Response
+    public function show(Agent $agent, AgentHarnessResolver $harnesses): Response
     {
         abort_unless($agent->project_id === null, 404);
 
@@ -43,7 +45,7 @@ class GlobalAgentController extends Controller
             ->with([
                 'project:id,name',
                 'task:id,key,title,project_id',
-                'recoveryRuns' => fn (Builder $query) => $query->where('agent_id', $agent->id)->latest('started_at'),
+                'recoveryRuns' => fn (HasMany $query) => $query->where('agent_id', $agent->id)->latest('started_at'),
             ])
             ->latest('detected_at')
             ->paginate(20)
@@ -63,6 +65,7 @@ class GlobalAgentController extends Controller
         return Inertia::render('agents/show', [
             'agent' => $agent,
             'incidents' => $incidents,
+            'harness_capabilities' => fn (): array => $harnesses->capabilities(),
         ]);
     }
 
