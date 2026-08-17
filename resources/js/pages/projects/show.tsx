@@ -3,11 +3,15 @@ import {
     Activity,
     ArrowLeft,
     CheckCircle2,
+    CircleDot,
+    Clock,
+    Cpu,
     FileUp,
     GitCommitHorizontal,
     Pause,
     Play,
     RotateCcw,
+    ShieldCheck,
 } from 'lucide-react';
 import { lazy, Suspense, useState, useSyncExternalStore } from 'react';
 import {
@@ -63,6 +67,7 @@ type AgentRun = {
     token_usage: number | null;
     exit_code: number | null;
     started_at: string;
+    finished_at: string | null;
     failure_reason: string | null;
 };
 
@@ -148,6 +153,90 @@ function harnessLabel(harness: string | null): string {
             return 'Legacy';
         default:
             return harness.replaceAll('_', ' ');
+    }
+}
+
+function humanize(value: string): string {
+    return value
+        .replaceAll('_', ' ')
+        .replaceAll('.', ' ')
+        .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatRunDuration(
+    startedAt: string,
+    finishedAt: string | null,
+): string {
+    if (finishedAt === null) {
+        return 'In progress';
+    }
+
+    const started = new Date(startedAt).getTime();
+    const finished = new Date(finishedAt).getTime();
+
+    if (!Number.isFinite(started) || !Number.isFinite(finished)) {
+        return '—';
+    }
+
+    const totalSeconds = Math.max(
+        0,
+        Math.round((finished - started) / 1_000),
+    );
+
+    if (totalSeconds < 60) {
+        return `${totalSeconds}s`;
+    }
+
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    if (totalMinutes < 60) {
+        return `${totalMinutes}m ${seconds.toString().padStart(2, '0')}s`;
+    }
+
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
+}
+
+function isFailedRun(run: AgentRun): boolean {
+    return (
+        run.status === 'failed' ||
+        (run.exit_code !== null && run.exit_code !== 0)
+    );
+}
+
+function roleVisual(role: string): {
+    icon: string;
+    rail: string;
+    badge: string;
+} {
+    switch (role) {
+        case 'coder':
+            return {
+                icon: 'border-success/25 bg-success/10 text-success-foreground',
+                rail: 'bg-success',
+                badge: 'border-success/20 bg-success/5 text-success-foreground',
+            };
+        case 'reviewer':
+            return {
+                icon: 'border-secondary/60 bg-secondary/20 text-secondary-foreground',
+                rail: 'bg-secondary-foreground',
+                badge: 'border-secondary/60 bg-secondary/15 text-secondary-foreground',
+            };
+        case 'project_manager':
+            return {
+                icon: 'border-primary/25 bg-primary/10 text-primary',
+                rail: 'bg-primary',
+                badge: 'border-primary/20 bg-primary/5 text-primary',
+            };
+        default:
+            return {
+                icon: 'border-border bg-card text-muted-foreground',
+                rail: 'bg-muted-foreground',
+                badge: 'border-border bg-card text-muted-foreground',
+            };
     }
 }
 
@@ -244,8 +333,7 @@ function RoadmapPanel({
                         {progress}%
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                        {completedTasks} of {project.tasks.length} tasks
-                        complete
+                        {completedTasks} of {project.tasks.length} tasks complete
                     </p>
                 </div>
                 {latestRoadmap && (
@@ -682,107 +770,439 @@ function TasksPanel({ project }: { project: Project }) {
     );
 }
 
-function RecentActivityPanel({ project }: { project: Project }) {
+function ActivityMetric({
+    icon,
+    label,
+    value,
+    detail,
+}: {
+    icon: React.ReactNode;
+    label: string;
+    value: string;
+    detail: string;
+}) {
     return (
-        <div className="grid gap-3 xl:grid-cols-2">
-            <Card className="border-border/70 bg-background/75 text-foreground">
-                <CardHeader>
-                    <CardTitle>Agent executions</CardTitle>
-                    <CardDescription>
-                        Latest persisted execution and token evidence.
-                    </CardDescription>
-                </CardHeader>
+        <div className="tile-inset relative overflow-hidden px-3 py-2.5">
+            <div className="glow-line-accent opacity-40" />
+            <div className="flex items-start gap-2.5">
+                <div className="grid size-8 shrink-0 place-items-center rounded-lg border border-primary/15 bg-primary/5 text-primary">
+                    {icon}
+                </div>
+                <div className="min-w-0">
+                    <p className="font-mono text-2xs tracking-[0.12em] text-muted-foreground uppercase">
+                        {label}
+                    </p>
+                    <p className="mt-0.5 truncate text-base font-semibold text-foreground capitalize">
+                        {value}
+                    </p>
+                    <p className="mt-0.5 truncate text-2xs text-muted-foreground">
+                        {detail}
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+}
 
-                <CardContent className="grid gap-2">
-                    {project.recent_agent_runs.map((run) => {
-                        const failed =
-                            run.status === 'failed' ||
-                            (run.exit_code !== null && run.exit_code !== 0);
+function RecentActivityPanel({ project }: { project: Project }) {
+    const [runRoleFilter, setRunRoleFilter] = useState('all');
+    const [auditScopeFilter, setAuditScopeFilter] = useState('all');
 
-                        return (
-                            <Link
-                                key={run.id}
-                                href={
-                                    showAgentRun({
-                                        project: project.id,
-                                        run: run.id,
-                                    }).url
-                                }
-                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/45 p-3 transition hover:border-primary/20"
-                            >
-                                <div>
-                                    <p className="text-sm font-medium text-foreground capitalize">
-                                        {run.role.replaceAll('_', ' ')}
-                                    </p>
-                                    <p className="mt-1 text-xs text-muted-foreground">
-                                        {harnessLabel(run.harness)} · Attempt{' '}
-                                        {run.attempt_number ?? '—'} ·{' '}
-                                        {run.token_usage === null
-                                            ? 'Token usage unavailable'
-                                            : `${formatTokens(run.token_usage)} tokens`}
-                                    </p>
-                                </div>
+    const recentRunRoles = Array.from(
+        new Set(project.recent_agent_runs.map((run) => run.role)),
+    );
 
-                                <Badge
-                                    variant={
-                                        failed ? 'destructive' : 'secondary'
-                                    }
-                                >
-                                    {failed
-                                        ? `error${run.exit_code === null ? '' : ` · exit ${run.exit_code}`}`
-                                        : run.status}
-                                </Badge>
+    const auditScopes = Array.from(
+        new Set(
+            project.audit_events.map(
+                (event) => event.event_type.split('.')[0] ?? event.event_type,
+            ),
+        ),
+    );
 
-                                {run.failure_reason && (
-                                    <p className="w-full text-xs text-destructive-foreground">
-                                        {run.failure_reason}
-                                    </p>
-                                )}
-                            </Link>
-                        );
-                    })}
+    const visibleRuns =
+        runRoleFilter === 'all'
+            ? project.recent_agent_runs
+            : project.recent_agent_runs.filter(
+                  (run) => run.role === runRoleFilter,
+              );
 
-                    {project.recent_agent_runs.length === 0 && (
-                        <p className="py-6 text-center text-sm text-muted-foreground">
-                            No agent executions recorded yet.
-                        </p>
-                    )}
-                </CardContent>
-            </Card>
+    const visibleAuditEvents =
+        auditScopeFilter === 'all'
+            ? project.audit_events
+            : project.audit_events.filter(
+                  (event) =>
+                      (event.event_type.split('.')[0] ?? event.event_type) ===
+                      auditScopeFilter,
+              );
 
-            <Card className="border-border/70 bg-background/75 text-foreground">
-                <CardHeader>
-                    <CardTitle>Audit trail</CardTitle>
-                    <CardDescription>
-                        Recent durable project activity recorded by AIOS.
-                    </CardDescription>
-                </CardHeader>
+    const failedRunCount = project.recent_agent_runs.filter(isFailedRun).length;
 
-                <CardContent className="grid gap-1.5">
-                    {project.audit_events.map((event) => (
-                        <div
-                            key={event.id}
-                            className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card/45 px-3 py-2.5"
-                        >
-                            <div className="flex min-w-0 items-center gap-2">
-                                <CheckCircle2 className="size-3.5 shrink-0 text-success-foreground" />
-                                <span className="truncate text-xs text-muted-foreground">
-                                    {event.event_type}
-                                </span>
-                            </div>
-                            <time className="shrink-0 font-mono text-2xs text-muted-foreground">
-                                {new Date(event.occurred_at).toLocaleString()}
-                            </time>
+    const activeWorkerCount = project.office_workers.filter((worker) =>
+        ['working', 'recovering'].includes(worker.status),
+    ).length;
+
+    return (
+        <div className="grid gap-3">
+            <section className="panel-elevated relative overflow-hidden p-3">
+                <div className="glow-edge glow-line-accent" />
+                <div className="pointer-events-none absolute -top-20 right-0 size-52 rounded-full bg-primary/5 blur-3xl" />
+                <div className="pointer-events-none absolute -bottom-24 left-1/3 size-44 rounded-full bg-secondary/15 blur-3xl" />
+
+                <div className="relative flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <Activity className="size-4 text-primary" />
+                            <p className="font-mono text-2xs tracking-[0.16em] text-primary uppercase">
+                                Activity intelligence
+                            </p>
                         </div>
-                    ))}
-
-                    {project.audit_events.length === 0 && (
-                        <p className="py-6 text-center text-sm text-muted-foreground">
-                            No audit activity recorded.
+                        <h2 className="mt-1 text-base font-semibold text-foreground">
+                            Execution & audit command center
+                        </h2>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                            Live project state backed by persisted AIOS execution
+                            and audit evidence.
                         </p>
-                    )}
-                </CardContent>
-            </Card>
+                    </div>
+
+                    <div
+                        className={`flex items-center gap-2 rounded-full border px-3 py-1.5 font-mono text-2xs ${
+                            project.status === 'running'
+                                ? 'border-success/20 bg-success/5 text-success-foreground'
+                                : 'border-warning/20 bg-warning/5 text-warning-foreground'
+                        }`}
+                    >
+                        <span
+                            className={`size-1.5 rounded-full ${
+                                project.status === 'running'
+                                    ? 'status-glow-pulse bg-success'
+                                    : 'bg-warning'
+                            }`}
+                        />
+                        {project.status === 'running'
+                            ? 'System operational'
+                            : humanize(project.status)}
+                    </div>
+                </div>
+
+                <div className="relative mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    <ActivityMetric
+                        icon={<ShieldCheck className="size-4" />}
+                        label="Project state"
+                        value={humanize(project.status)}
+                        detail={`Repository ${humanize(project.git_status)}`}
+                    />
+                    <ActivityMetric
+                        icon={<Cpu className="size-4" />}
+                        label="Active workers"
+                        value={`${activeWorkerCount} / ${project.office_workers.length}`}
+                        detail="Working or recovering"
+                    />
+                    <ActivityMetric
+                        icon={<CircleDot className="size-4" />}
+                        label="Recent executions"
+                        value={project.recent_agent_runs.length.toString()}
+                        detail={
+                            failedRunCount === 0
+                                ? 'No recent failures'
+                                : `${failedRunCount} require attention`
+                        }
+                    />
+                    <ActivityMetric
+                        icon={<Activity className="size-4" />}
+                        label="Observed tokens"
+                        value={formatTokens(project.token_usage_total)}
+                        detail="Persisted execution usage"
+                    />
+                </div>
+            </section>
+
+            <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
+                <section className="panel-elevated relative min-w-0 overflow-hidden">
+                    <div className="glow-line-accent" />
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle px-3 py-3">
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <Cpu className="size-4 text-primary" />
+                                <h3 className="text-sm font-semibold text-foreground">
+                                    Agent executions
+                                </h3>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                Latest persisted runs across configured workflow
+                                roles.
+                            </p>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <label
+                                htmlFor="activity-role-filter"
+                                className="sr-only"
+                            >
+                                Filter executions by role
+                            </label>
+                            <select
+                                id="activity-role-filter"
+                                value={runRoleFilter}
+                                onChange={(event) =>
+                                    setRunRoleFilter(event.target.value)
+                                }
+                                className="h-8 rounded-lg border border-border bg-surface-recessed px-2.5 font-mono text-2xs text-muted-foreground outline-none transition focus:border-primary/40 focus:ring-1 focus:ring-primary/20"
+                            >
+                                <option value="all">All agents</option>
+                                {recentRunRoles.map((role) => (
+                                    <option key={role} value={role}>
+                                        {humanize(role)}
+                                    </option>
+                                ))}
+                            </select>
+
+                            <span className="rounded-lg border border-border-subtle bg-foreground/2 px-2 py-1.5 font-mono text-2xs text-muted-foreground">
+                                {visibleRuns.length} shown
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="grid gap-2 p-3">
+                        {visibleRuns.map((run) => {
+                            const failed = isFailedRun(run);
+                            const visual = roleVisual(run.role);
+
+                            return (
+                                <Link
+                                    key={run.id}
+                                    href={
+                                        showAgentRun({
+                                            project: project.id,
+                                            run: run.id,
+                                        }).url
+                                    }
+                                    className="group relative overflow-hidden rounded-xl border border-border-subtle bg-surface-recessed p-3 transition hover:border-primary/25 hover:bg-card/70"
+                                >
+                                    <div
+                                        className={`absolute inset-y-2 left-0 w-px rounded-full ${visual.rail}`}
+                                    />
+
+                                    <div className="flex min-w-0 items-start gap-3">
+                                        <div
+                                            className={`grid size-9 shrink-0 place-items-center rounded-lg border ${visual.icon}`}
+                                        >
+                                            <Cpu className="size-4" />
+                                        </div>
+
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex flex-wrap items-start justify-between gap-2">
+                                                <div className="min-w-0">
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <p className="text-sm font-semibold text-foreground transition group-hover:text-primary">
+                                                            {humanize(run.role)}
+                                                        </p>
+                                                        <Badge
+                                                            variant="outline"
+                                                            className={`font-mono text-2xs ${visual.badge}`}
+                                                        >
+                                                            {harnessLabel(
+                                                                run.harness,
+                                                            )}
+                                                        </Badge>
+                                                    </div>
+
+                                                    <p className="mt-1 font-mono text-2xs text-muted-foreground">
+                                                        Attempt{' '}
+                                                        {run.attempt_number ??
+                                                            '—'}{' '}
+                                                        · Run #{run.id}
+                                                    </p>
+                                                </div>
+
+                                                <Badge
+                                                    variant="outline"
+                                                    className={`shrink-0 font-mono text-2xs ${
+                                                        failed
+                                                            ? 'border-destructive/25 bg-destructive/10 text-destructive-foreground'
+                                                            : run.status ===
+                                                                'completed'
+                                                              ? 'border-success/25 bg-success/10 text-success-foreground'
+                                                              : run.status ===
+                                                                  'running'
+                                                                ? 'border-primary/25 bg-primary/10 text-primary'
+                                                                : 'border-border bg-card text-muted-foreground'
+                                                    }`}
+                                                >
+                                                    {failed
+                                                        ? 'Error'
+                                                        : humanize(run.status)}
+                                                </Badge>
+                                            </div>
+
+                                            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                                <span className="flex items-center gap-1.5 rounded-md border border-border-subtle bg-foreground/2 px-2 py-1 font-mono text-2xs text-muted-foreground">
+                                                    <Activity className="size-3 text-primary" />
+                                                    {run.token_usage === null
+                                                        ? 'Tokens unavailable'
+                                                        : `${formatTokens(run.token_usage)} tokens`}
+                                                </span>
+
+                                                <span className="flex items-center gap-1.5 rounded-md border border-border-subtle bg-foreground/2 px-2 py-1 font-mono text-2xs text-muted-foreground">
+                                                    <Clock className="size-3 text-secondary-foreground" />
+                                                    {formatRunDuration(
+                                                        run.started_at,
+                                                        run.finished_at,
+                                                    )}
+                                                </span>
+
+                                                <time
+                                                    className="rounded-md border border-border-subtle bg-foreground/2 px-2 py-1 font-mono text-2xs text-muted-foreground"
+                                                    dateTime={run.started_at}
+                                                >
+                                                    {new Date(
+                                                        run.started_at,
+                                                    ).toLocaleString()}
+                                                </time>
+                                            </div>
+
+                                            {run.failure_reason && (
+                                                <div className="mt-2 rounded-lg border border-destructive/20 bg-destructive/5 px-2.5 py-2 text-xs text-destructive-foreground">
+                                                    {run.failure_reason}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </Link>
+                            );
+                        })}
+
+                        {visibleRuns.length === 0 && (
+                            <div className="rounded-xl border border-dashed border-border p-8 text-center">
+                                <Cpu className="mx-auto size-5 text-muted-foreground" />
+                                <p className="mt-2 text-sm text-muted-foreground">
+                                    No executions match this filter.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="border-t border-border-subtle px-3 py-2">
+                        <p className="font-mono text-2xs text-muted-foreground">
+                            Persisted execution history · newest first
+                        </p>
+                    </div>
+                </section>
+
+                <section className="panel-elevated relative min-w-0 overflow-hidden">
+                    <div className="glow-line-secondary" />
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle px-3 py-3">
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <ShieldCheck className="size-4 text-secondary-foreground" />
+                                <h3 className="text-sm font-semibold text-foreground">
+                                    Audit trail
+                                </h3>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                Recent durable system activity recorded by AIOS.
+                            </p>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <label
+                                htmlFor="audit-scope-filter"
+                                className="sr-only"
+                            >
+                                Filter audit events by scope
+                            </label>
+                            <select
+                                id="audit-scope-filter"
+                                value={auditScopeFilter}
+                                onChange={(event) =>
+                                    setAuditScopeFilter(event.target.value)
+                                }
+                                className="h-8 rounded-lg border border-border bg-surface-recessed px-2.5 font-mono text-2xs text-muted-foreground outline-none transition focus:border-secondary-foreground/40 focus:ring-1 focus:ring-secondary-foreground/20"
+                            >
+                                <option value="all">All events</option>
+                                {auditScopes.map((scope) => (
+                                    <option key={scope} value={scope}>
+                                        {humanize(scope)}
+                                    </option>
+                                ))}
+                            </select>
+
+                            <span className="rounded-lg border border-border-subtle bg-foreground/2 px-2 py-1.5 font-mono text-2xs text-muted-foreground">
+                                {visibleAuditEvents.length} shown
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="p-3">
+                        {visibleAuditEvents.length > 0 ? (
+                            <div className="grid">
+                                {visibleAuditEvents.map((event, index) => (
+                                    <div
+                                        key={event.id}
+                                        className="relative grid grid-cols-[2rem_minmax(0,1fr)] gap-2.5 pb-2 last:pb-0"
+                                    >
+                                        <div className="relative flex justify-center">
+                                            <div className="z-10 grid size-7 place-items-center rounded-lg border border-primary/20 bg-primary/5 text-primary shadow-glow-sm">
+                                                <CheckCircle2 className="size-3.5" />
+                                            </div>
+
+                                            {index <
+                                                visibleAuditEvents.length - 1 && (
+                                                <div className="absolute top-7 bottom-0 w-px bg-gradient-to-b from-primary/40 via-border to-transparent" />
+                                            )}
+                                        </div>
+
+                                        <div className="panel-recessed min-w-0 px-3 py-2.5 transition hover:border-primary/20">
+                                            <div className="flex flex-wrap items-start justify-between gap-2">
+                                                <div className="min-w-0">
+                                                    <p
+                                                        className="truncate font-mono text-xs text-foreground"
+                                                        title={event.event_type}
+                                                    >
+                                                        {event.event_type}
+                                                    </p>
+                                                    <p className="mt-1 text-2xs text-muted-foreground">
+                                                        {humanize(
+                                                            event.event_type,
+                                                        )}
+                                                    </p>
+                                                </div>
+
+                                                <time
+                                                    dateTime={
+                                                        event.occurred_at
+                                                    }
+                                                    className="shrink-0 font-mono text-2xs text-muted-foreground"
+                                                >
+                                                    {new Date(
+                                                        event.occurred_at,
+                                                    ).toLocaleString()}
+                                                </time>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="rounded-xl border border-dashed border-border p-8 text-center">
+                                <ShieldCheck className="mx-auto size-5 text-muted-foreground" />
+                                <p className="mt-2 text-sm text-muted-foreground">
+                                    No audit events match this filter.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="border-t border-border-subtle px-3 py-2">
+                        <p className="font-mono text-2xs text-muted-foreground">
+                            Append-only operational evidence · newest first
+                        </p>
+                    </div>
+                </section>
+            </div>
         </div>
     );
 }
