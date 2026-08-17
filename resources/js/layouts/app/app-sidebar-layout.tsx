@@ -10,9 +10,14 @@ export default function AppSidebarLayout({ children }: AppLayoutProps) {
         <AppHeaderProvider>
             <AppShell variant="sidebar">
                 <AppSidebar />
-                <AppContent variant="sidebar" className="overflow-x-hidden">
+                <AppContent
+                    variant="sidebar"
+                    className="min-w-0 overflow-x-hidden"
+                >
                     <AppSidebarHeader />
-                    {children}
+                    <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col [&>*]:min-h-0 [&>*]:min-w-0 [&>*]:w-full [&>*]:max-w-none [&>*]:flex-auto">
+                        {children}
+                    </div>
                 </AppContent>
             </AppShell>
         </AppHeaderProvider>
