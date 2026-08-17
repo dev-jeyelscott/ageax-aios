@@ -33,11 +33,67 @@ Operational Reviewer failures must not be treated as implementation rejection an
 
 ## Workflow Actions preserve AIOS orchestration ownership
 
-Project Agent configuration is project-scoped execution configuration and must remain separate from `AgentWorker`, which is authoritative durable workflow-slot, lease, heartbeat, and runtime state. Actions may resolve the Agent bound to a core workflow role and select its persisted Codex or Claude Code harness, but the Agent or harness must never own task transitions, task ordering, phase review barriers, worker task cooldowns, Git lifecycle, deterministic validation, persistence, recovery, auditing, context assembly, or worker leases.
+Project Agent configuration is project-scoped execution configuration and must remain separate from `AgentWorker`, which is authoritative durable workflow-slot, lease, heartbeat, and runtime state. Actions may resolve the Agent bound to a core workflow role and select its persisted Codex or Claude Code harness, but the Agent or harness must never own task transitions, task ordering, phase review barriers, worker task cooldowns, Git lifecycle, deterministic validation, persistence, recovery, auditing, context assembly, context budgeting, score calculation, recommendation eligibility, or worker leases.
 
 Project Manager, Coder, and Reviewer remain the executable core workflow roles. Task execution remains serial and dependency ordered under AIOS control; same-phase implementation may accumulate validated `ready_for_review` tasks before phase review begins, but additional configured Agents must not create worker lanes, self-schedule, or bypass persisted workflow ordering.
 
-Every new roadmap-analysis, implementation, fix/retry, or review attempt must start a fresh harness execution context and capture a new immutable effective configuration snapshot before execution. Recovery of the same interrupted attempt must continue from its persisted snapshot, Git state, run evidence, and audit evidence rather than resolving mutable current Agent, Skill, or harness configuration into that existing attempt.
+Every new roadmap-analysis, Project Manager `ticket_triage`, implementation, fix/retry, or review attempt must start a fresh harness execution context and capture a new immutable effective configuration snapshot before execution. Recovery of the same interrupted attempt must continue from its persisted snapshot, Git state, run evidence, and audit evidence rather than resolving mutable current Agent, Skill, or harness configuration into that existing attempt.
+
+## Ticket triage and conversion remain AIOS-owned Actions
+
+`Ticket != Task`. A Ticket is durable project intake, conversation, triage, and escalation state. A Task is executable implementation work and enters the existing Coder, validation, Git, phase-review, and Reviewer workflow only after an AIOS-controlled conversion.
+
+Project Manager roadmap analysis and `ticket_triage` share the existing Project Manager worker/lease boundary. Pending roadmap analysis has deterministic precedence over Ticket triage. Ticket triage claims exactly one eligible Ticket at a time using application/database serialization; Phase 3 must not introduce a Ticket Reviewer role, another Project Manager worker lane, or parallel PM execution.
+
+The Project Manager Agent/harness may return structured triage output only. It must never directly claim or transition Tickets, persist Ticket replies, create Tasks, assign phase positions or dependencies, reorder roadmap work, resolve operator escalation, or mutate durable Ticket/Task workflow state.
+
+Automatic Ticket-to-Task conversion is limited to exactly one clear, safe, bounded implementation-required Task and requires the approved eligibility rules, including confidence of at least `0.80` and no mandatory escalation condition.
+
+Conversion must be transactional and idempotent. Under locking, AIOS must re-check that the Ticket has not already converted, the target project/phase still matches, the phase review barrier has not invalidated placement, dependencies remain valid, and the generated Task position/key cannot collide before committing Ticket linkage, Task creation, dependencies, audit evidence, and Ticket state.
+
+A Ticket-created Task receives no special workflow permissions. It must not bypass dependency ordering, Coder repository preflight, deterministic validation, task-only commit rules, phase review barriers, Reviewer review, or normal Task transitions.
+
+## Operator escalation gates are deterministic
+
+Confidence must never suppress a mandatory escalation condition.
+
+Operator judgment is required for the locked high-risk or ambiguous conditions, including low confidence, unclear or contradictory requirements, architectural decisions, breaking contracts, destructive or materially risky data migration, security/privacy/auth judgment, approved-documentation conflict, unclear business priority, high or multi-Task scope, roadmap interruption/reordering, critical work that would preempt queued work, or non-deterministic phase/dependency placement.
+
+Critical or emergency roadmap interruption/reordering always requires explicit operator approval. No Action may infer approval from PM output, Ticket priority, UI state, or confidence.
+
+Once phase review has begun, Ticket conversion must not mutate that phase's required composition. Eligible work that cannot safely join the current phase follows the approved append-only future intake/backlog placement; non-deterministic placement escalates.
+
+## Ticket waiting, closure, and reopen operations are idempotent
+
+`needs_information` and `self_service` requester-dependent outcomes may enter the approved requester-waiting state with a 72-hour deadline only through AIOS-controlled transitions.
+
+Inactivity closure must be deterministic and idempotent and must persist system/audit evidence. A later requester reply may automatically reopen only an eligible inactivity-closed Ticket and must queue a fresh Project Manager triage attempt with a fresh execution context.
+
+Explicit rejection, duplicate resolution, or operator closure must not be silently reopened through the inactivity rule.
+
+## Context Budget failures never fake execution progress
+
+AIOS must complete Context Budget evaluation after deterministic context assembly and before provider execution.
+
+If permitted deterministic reduction cannot bring required context below the system hard ceiling, the Action must block/fail according to the owning workflow's approved semantics, persist actionable budget evidence, and must not call the harness or transition workflow state as though an Agent executed successfully.
+
+Agents and harnesses cannot override the Context Budget result. Retry loops must not bypass a budget block.
+
+## Scorecards never route work automatically
+
+Harness scorecards and recommendations are advisory evidence only.
+
+No Action may automatically change Agent bindings, harnesses, models, reasoning settings, task placement, task ordering, or execution routing because one scorecard configuration ranks above another.
+
+Phase 3 remains:
+
+```text
+observe
+→ score
+→ recommend
+```
+
+Manual operator configuration changes continue through the existing validated Agent configuration/binding workflow.
 
 ## Unbound vs. broken Agent bindings are not the same failure
 
