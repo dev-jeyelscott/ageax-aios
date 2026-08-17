@@ -38,7 +38,7 @@ final readonly class TaskContractGuard
                 'drifted' => true,
                 'baseline' => null,
                 'current' => $current,
-                'baseline_attempt_number' => $requiredBaselineAttempt->number,
+                'baseline_attempt_number' => (int) $requiredBaselineAttempt->number,
                 'changed_inputs' => ['contract_baseline_missing'],
                 'recovery_pinned' => true,
             ];
@@ -52,7 +52,7 @@ final readonly class TaskContractGuard
             'drifted' => $baseline !== null && ! hash_equals($baseline['fingerprint'], $current['fingerprint']),
             'baseline' => $baseline,
             'current' => $current,
-            'baseline_attempt_number' => $baselineAttempt?->number,
+            'baseline_attempt_number' => $baselineAttempt === null ? null : (int) $baselineAttempt->number,
             'changed_inputs' => $changedInputs,
             'recovery_pinned' => $requiredBaselineAttempt !== null,
         ];
@@ -172,7 +172,10 @@ final readonly class TaskContractGuard
         return $hashes;
     }
 
-    /** @return array<string, string> */
+    /**
+     * @param  array<string, mixed>  $context
+     * @return array<string, string>
+     */
     private function obsidianNoteHashes(array $context): array
     {
         $notes = is_array($context['obsidian_project_knowledge'] ?? null)
@@ -193,7 +196,10 @@ final readonly class TaskContractGuard
         return $hashes;
     }
 
-    /** @return list<string> */
+    /**
+     * @param  array<string, mixed>  $context
+     * @return list<string>
+     */
     private function selectedObsidianPaths(array $context): array
     {
         $manifest = is_array($context['retrieval_manifest'] ?? null) ? $context['retrieval_manifest'] : [];
@@ -212,7 +218,10 @@ final readonly class TaskContractGuard
         return $selected;
     }
 
-    /** @return list<string> */
+    /**
+     * @param  list<string>  $relevantPaths
+     * @return list<string>
+     */
     private function applicableRulePaths(string $indexContent, array $relevantPaths): array
     {
         $rules = [];
@@ -318,7 +327,11 @@ final readonly class TaskContractGuard
         return trim(str_replace(["\r\n", "\r"], "\n", $content));
     }
 
-    /** @param array<string, mixed> $baseline @param array<string, mixed> $current @return list<string> */
+    /**
+     * @param  array<string, mixed>  $baseline
+     * @param  array<string, mixed>  $current
+     * @return list<string>
+     */
     private function changedInputs(array $baseline, array $current): array
     {
         $changed = [];
@@ -349,7 +362,7 @@ final readonly class TaskContractGuard
             }
         }
 
-        return $changed;
+        return array_values($changed);
     }
 
     private function hashValue(mixed $value): string

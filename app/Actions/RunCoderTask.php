@@ -238,15 +238,21 @@ class RunCoderTask
             ->orderByDesc('id')
             ->first();
 
-        if ($run === null || ($run->agent_id === null && $run->configuration_snapshot === null)) {
+        if ($run === null) {
             return [null, null, null];
         }
 
-        if (! is_array($run->configuration_snapshot)) {
+        $snapshot = $run->getAttribute('configuration_snapshot');
+
+        if ($run->agent_id === null && $snapshot === null) {
+            return [null, null, null];
+        }
+
+        if (! is_array($snapshot)) {
             throw new LogicException('The interrupted Coder run is missing its immutable configuration snapshot; explicitly requeue/rebase the task instead of adopting current Agent configuration.');
         }
 
-        $agent = $this->contextAssembler->agentFromSnapshot($run->configuration_snapshot, $task->project->id);
+        $agent = $this->contextAssembler->agentFromSnapshot($snapshot, $task->project->id);
 
         if (! Agent::query()->whereKey($agent->id)->where('project_id', $task->project->id)->exists()) {
             throw new LogicException('The Agent referenced by the interrupted Coder configuration snapshot no longer exists in this project.');
@@ -255,7 +261,7 @@ class RunCoderTask
         return [
             $agent,
             $this->harnesses->resolve($agent),
-            $this->contextAssembler->restore($run->configuration_snapshot, $context),
+            $this->contextAssembler->restore($snapshot, $context),
         ];
     }
 
