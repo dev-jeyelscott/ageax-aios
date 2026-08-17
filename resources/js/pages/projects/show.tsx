@@ -178,10 +178,7 @@ function formatRunDuration(
         return '—';
     }
 
-    const totalSeconds = Math.max(
-        0,
-        Math.round((finished - started) / 1_000),
-    );
+    const totalSeconds = Math.max(0, Math.round((finished - started) / 1_000));
 
     if (totalSeconds < 60) {
         return `${totalSeconds}s`;
@@ -333,7 +330,8 @@ function RoadmapPanel({
                         {progress}%
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                        {completedTasks} of {project.tasks.length} tasks complete
+                        {completedTasks} of {project.tasks.length} tasks
+                        complete
                     </p>
                 </div>
                 {latestRoadmap && (
@@ -402,6 +400,11 @@ function RoadmapPanel({
                                 required
                                 disabled={processing}
                                 className="sr-only"
+                                onChange={(event) => {
+                                    if (event.currentTarget.files?.length) {
+                                        event.currentTarget.form?.requestSubmit();
+                                    }
+                                }}
                             />
                             <FileUp className="size-3.5" />
                             {processing ? 'Uploading…' : 'Upload roadmap'}
@@ -861,8 +864,8 @@ function RecentActivityPanel({ project }: { project: Project }) {
                             Execution & audit command center
                         </h2>
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                            Live project state backed by persisted AIOS execution
-                            and audit evidence.
+                            Live project state backed by persisted AIOS
+                            execution and audit evidence.
                         </p>
                     </div>
 
@@ -949,7 +952,7 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                 onChange={(event) =>
                                     setRunRoleFilter(event.target.value)
                                 }
-                                className="h-8 rounded-lg border border-border bg-surface-recessed px-2.5 font-mono text-2xs text-muted-foreground outline-none transition focus:border-primary/40 focus:ring-1 focus:ring-primary/20"
+                                className="h-8 rounded-lg border border-border bg-surface-recessed px-2.5 font-mono text-2xs text-muted-foreground transition outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20"
                             >
                                 <option value="all">All agents</option>
                                 {recentRunRoles.map((role) => (
@@ -1120,7 +1123,7 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                 onChange={(event) =>
                                     setAuditScopeFilter(event.target.value)
                                 }
-                                className="h-8 rounded-lg border border-border bg-surface-recessed px-2.5 font-mono text-2xs text-muted-foreground outline-none transition focus:border-secondary-foreground/40 focus:ring-1 focus:ring-secondary-foreground/20"
+                                className="h-8 rounded-lg border border-border bg-surface-recessed px-2.5 font-mono text-2xs text-muted-foreground transition outline-none focus:border-secondary-foreground/40 focus:ring-1 focus:ring-secondary-foreground/20"
                             >
                                 <option value="all">All events</option>
                                 {auditScopes.map((scope) => (
@@ -1150,7 +1153,8 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                             </div>
 
                                             {index <
-                                                visibleAuditEvents.length - 1 && (
+                                                visibleAuditEvents.length -
+                                                    1 && (
                                                 <div className="absolute top-7 bottom-0 w-px bg-gradient-to-b from-primary/40 via-border to-transparent" />
                                             )}
                                         </div>
@@ -1172,9 +1176,7 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                                 </div>
 
                                                 <time
-                                                    dateTime={
-                                                        event.occurred_at
-                                                    }
+                                                    dateTime={event.occurred_at}
                                                     className="shrink-0 font-mono text-2xs text-muted-foreground"
                                                 >
                                                     {new Date(

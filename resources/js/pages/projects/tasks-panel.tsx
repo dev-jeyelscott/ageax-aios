@@ -41,7 +41,8 @@ type Props = {
     tasks: ProjectTaskSummary[];
 };
 
-type FilterGroup = 'all' | 'queued' | 'active' | 'review' | 'done' | 'attention';
+type FilterGroup =
+    'all' | 'queued' | 'active' | 'review' | 'done' | 'attention';
 type OwnerFilter = 'all' | 'aios' | 'coder' | 'reviewer';
 
 type DecoratedTask = {
@@ -189,7 +190,8 @@ export function TasksPanel({ projectId, tasks }: Props) {
         () =>
             [...tasks].sort(
                 (left, right) =>
-                    Number(left.status === 'done') - Number(right.status === 'done'),
+                    Number(left.status === 'done') -
+                    Number(right.status === 'done'),
             ),
         [tasks],
     );
@@ -215,8 +217,12 @@ export function TasksPanel({ projectId, tasks }: Props) {
                     ownerLabel: owner.label,
                     urgencyLabel: getUrgency(group),
                     subtitle: [
-                        latestAttempt === null ? 'No attempts yet' : `Attempt ${latestAttempt}`,
-                        latestReview ? `Review ${normalizeStatus(latestReview)}` : 'Review pending',
+                        latestAttempt === null
+                            ? 'No attempts yet'
+                            : `Attempt ${latestAttempt}`,
+                        latestReview
+                            ? `Review ${normalizeStatus(latestReview)}`
+                            : 'Review pending',
                     ].join(' · '),
                 };
             }),
@@ -294,14 +300,20 @@ export function TasksPanel({ projectId, tasks }: Props) {
                     const Icon =
                         card.group === 'all'
                             ? ListFilter
-                            : iconForGroup(card.group === 'attention' ? 'attention' : card.group);
+                            : iconForGroup(
+                                  card.group === 'attention'
+                                      ? 'attention'
+                                      : card.group,
+                              );
 
                     return (
                         <button
                             key={card.label}
                             type="button"
                             onClick={() =>
-                                setGroupFilter(card.group === 'all' ? 'all' : card.group)
+                                setGroupFilter(
+                                    card.group === 'all' ? 'all' : card.group,
+                                )
                             }
                             className={`panel-elevated relative overflow-hidden p-4 text-left transition hover:border-primary/25 ${card.className}`}
                         >
@@ -340,8 +352,8 @@ export function TasksPanel({ projectId, tasks }: Props) {
                             </CardTitle>
                             <CardDescription className="mt-1 text-sm">
                                 Serial task ordering remains controlled by AIOS.
-                                This view only enhances visibility, filtering, and
-                                execution context.
+                                This view only enhances visibility, filtering,
+                                and execution context.
                             </CardDescription>
                         </div>
 
@@ -350,7 +362,9 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                 <Search className="size-4 text-muted-foreground" />
                                 <input
                                     value={query}
-                                    onChange={(event) => setQuery(event.target.value)}
+                                    onChange={(event) =>
+                                        setQuery(event.target.value)
+                                    }
                                     placeholder="Search by task key, title, or status…"
                                     className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
                                 />
@@ -361,7 +375,9 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                 <select
                                     value={groupFilter}
                                     onChange={(event) =>
-                                        setGroupFilter(event.target.value as FilterGroup)
+                                        setGroupFilter(
+                                            event.target.value as FilterGroup,
+                                        )
                                     }
                                     className="w-full bg-transparent text-sm text-foreground outline-none"
                                 >
@@ -369,7 +385,9 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                     <option value="queued">Queued</option>
                                     <option value="active">Active</option>
                                     <option value="review">Review</option>
-                                    <option value="attention">Needs attention</option>
+                                    <option value="attention">
+                                        Needs attention
+                                    </option>
                                     <option value="done">Completed</option>
                                 </select>
                             </label>
@@ -379,14 +397,18 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                 <select
                                     value={ownerFilter}
                                     onChange={(event) =>
-                                        setOwnerFilter(event.target.value as OwnerFilter)
+                                        setOwnerFilter(
+                                            event.target.value as OwnerFilter,
+                                        )
                                     }
                                     className="w-full bg-transparent text-sm text-foreground outline-none"
                                 >
                                     <option value="all">All lanes</option>
                                     <option value="aios">AIOS queue</option>
                                     <option value="coder">Coder lane</option>
-                                    <option value="reviewer">Reviewer lane</option>
+                                    <option value="reviewer">
+                                        Reviewer lane
+                                    </option>
                                 </select>
                             </label>
                         </div>
@@ -394,7 +416,7 @@ export function TasksPanel({ projectId, tasks }: Props) {
                 </CardHeader>
 
                 <CardContent className="p-0">
-                    <div className="hidden grid-cols-[5rem_minmax(0,2.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] gap-3 border-b border-border-subtle px-5 py-3 text-2xs font-mono tracking-[0.16em] text-muted-foreground uppercase lg:grid">
+                    <div className="hidden grid-cols-[5rem_minmax(0,2.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] gap-3 border-b border-border-subtle px-5 py-3 font-mono text-2xs tracking-[0.16em] text-muted-foreground uppercase lg:grid">
                         <span>Order</span>
                         <span>Task</span>
                         <span>State</span>
@@ -460,7 +482,9 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                     <div className="flex flex-wrap gap-2">
                                         <Badge
                                             variant="outline"
-                                            className={badgeClassForGroup(task.group)}
+                                            className={badgeClassForGroup(
+                                                task.group,
+                                            )}
                                         >
                                             {normalizeStatus(task.status)}
                                         </Badge>
@@ -469,7 +493,9 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                     <div className="flex flex-wrap gap-2">
                                         <Badge
                                             variant="outline"
-                                            className={badgeClassForOwner(task.owner)}
+                                            className={badgeClassForOwner(
+                                                task.owner,
+                                            )}
                                         >
                                             {task.ownerLabel}
                                         </Badge>
@@ -478,7 +504,9 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                     <div className="flex flex-wrap gap-2">
                                         <Badge
                                             variant="outline"
-                                            className={badgeClassForUrgency(task.urgencyLabel)}
+                                            className={badgeClassForUrgency(
+                                                task.urgencyLabel,
+                                            )}
                                         >
                                             {task.urgencyLabel}
                                         </Badge>
@@ -552,8 +580,8 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                     No tasks matched the current filters
                                 </h3>
                                 <p className="mt-1 text-sm text-muted-foreground">
-                                    Adjust the search term or lane/state filters to
-                                    view more roadmap work.
+                                    Adjust the search term or lane/state filters
+                                    to view more roadmap work.
                                 </p>
                             </div>
                         )}
