@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AppBackground } from '@/components/app-background';
 import { SidebarInset } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
 import type { AppVariant } from '@/types';
@@ -15,8 +16,15 @@ export function AppContent({
 }: Props) {
     if (variant === 'sidebar') {
         return (
-            <SidebarInset className={className} {...props}>
-                {children}
+            <SidebarInset
+                className={cn('isolate min-h-0 min-w-0', className)}
+                {...props}
+            >
+                <AppBackground contained />
+
+                <div className="relative z-10 flex min-h-0 min-w-0 w-full flex-1 flex-col">
+                    {children}
+                </div>
             </SidebarInset>
         );
     }
