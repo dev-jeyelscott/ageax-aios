@@ -21,6 +21,7 @@ return [
     // cooldown above: PM (re-)claims a roadmap far less often, so it gets its own, much longer,
     // independently configurable timer instead of sharing worker_task_cooldown_seconds.
     'roadmap_retry_cooldown_seconds' => (int) env('AIOS_ROADMAP_RETRY_COOLDOWN_SECONDS', 3600),
+    'max_roadmap_attempts' => (int) env('AIOS_MAX_ROADMAP_ATTEMPTS', 3),
     'max_coder_attempts' => (int) env('AIOS_MAX_CODER_ATTEMPTS', 3),
     'max_reviewer_attempts' => (int) env('AIOS_MAX_REVIEWER_ATTEMPTS', 3),
     'no_progress_repeat_threshold' => (int) env('AIOS_NO_PROGRESS_REPEAT_THRESHOLD', 1),

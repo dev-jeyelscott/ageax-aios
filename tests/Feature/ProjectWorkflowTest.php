@@ -7,12 +7,17 @@ use App\AgentRole;
 use App\Models\AgentWorker;
 use App\Models\Phase;
 use App\Models\Project;
+use App\Models\Roadmap;
+use App\Models\RoadmapAttempt;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use App\ProjectStatus;
+use App\Services\CodexCliRunner;
 use App\Services\TaskWorkflow;
 use App\TaskStatus;
 use Illuminate\Support\Facades\Process;
+
+use function Pest\Laravel\mock;
 
 function createWorkflowTask(Project $project, int $position): Task
 {
@@ -266,4 +271,148 @@ test('reviewer worker cooldown blocks the next phase review claim for 300 second
     $this->artisan('aios:work --once')->assertExitCode(0);
 
     expect($secondTask->refresh()->status)->toBe(TaskStatus::Done);
+});
+
+test('Project Manager roadmap retry cooldown prevents immediate failed roadmap reclaim', function () {
+    config()->set('aios.roadmap_retry_cooldown_seconds', 3600);
+    config()->set('aios.max_roadmap_attempts', 3);
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+
+    $project = Project::create([
+        'name' => 'Roadmap cooldown',
+        'path' => '/tmp/roadmap-cooldown-'.fake()->uuid(),
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+    $worker = AgentWorker::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::ProjectManager,
+        'status' => 'idle',
+    ]);
+    $roadmap = Roadmap::create([
+        'project_id' => $project->id,
+        'original_filename' => 'roadmap.md',
+        'storage_path' => 'roadmaps/cooldown.md',
+        'status' => 'uploaded',
+        'content' => 'Produce a valid implementation roadmap.',
+    ]);
+
+    mock(CodexCliRunner::class)
+        ->shouldReceive('run')
+        ->twice()
+        ->andReturn([
+            'exit_code' => 0,
+            'output' => 'This is not valid structured roadmap output.',
+            'error_output' => '',
+        ]);
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($roadmap->refresh()->status)->toBe('failed')
+        ->and($roadmap->attempts()->count())->toBe(1)
+        ->and($worker->refresh()->task_completed_at)->not->toBeNull();
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($roadmap->refresh()->status)->toBe('failed')
+        ->and($roadmap->attempts()->count())->toBe(1);
+
+    $this->travel(3601)->seconds();
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($roadmap->refresh()->status)->toBe('failed')
+        ->and($roadmap->attempts()->count())->toBe(2);
+});
+
+test('Project Manager roadmap retries become blocked at the configured attempt limit', function () {
+    config()->set('aios.roadmap_retry_cooldown_seconds', 0);
+    config()->set('aios.max_roadmap_attempts', 2);
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+
+    $project = Project::create([
+        'name' => 'Roadmap retry limit',
+        'path' => '/tmp/roadmap-retry-limit-'.fake()->uuid(),
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+    AgentWorker::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::ProjectManager,
+        'status' => 'idle',
+    ]);
+    $roadmap = Roadmap::create([
+        'project_id' => $project->id,
+        'original_filename' => 'roadmap.md',
+        'storage_path' => 'roadmaps/retry-limit.md',
+        'status' => 'uploaded',
+        'content' => 'Produce a valid implementation roadmap.',
+    ]);
+
+    mock(CodexCliRunner::class)
+        ->shouldReceive('run')
+        ->twice()
+        ->andReturn([
+            'exit_code' => 0,
+            'output' => 'This is not valid structured roadmap output.',
+            'error_output' => '',
+        ]);
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($roadmap->refresh()->status)->toBe('failed')
+        ->and($roadmap->attempts()->count())->toBe(1);
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($roadmap->refresh()->status)->toBe('blocked')
+        ->and($roadmap->attempts()->count())->toBe(2)
+        ->and($project->auditEvents()->where('event_type', 'roadmap.retry_exhausted')->exists())->toBeTrue();
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($roadmap->refresh()->status)->toBe('blocked')
+        ->and($roadmap->attempts()->count())->toBe(2);
+});
+
+test('an already exhausted failed roadmap is blocked before another Project Manager execution', function () {
+    config()->set('aios.roadmap_retry_cooldown_seconds', 0);
+    config()->set('aios.max_roadmap_attempts', 2);
+
+    $project = Project::create([
+        'name' => 'Existing exhausted roadmap',
+        'path' => '/tmp/exhausted-roadmap-'.fake()->uuid(),
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+    AgentWorker::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::ProjectManager,
+        'status' => 'idle',
+    ]);
+    $roadmap = Roadmap::create([
+        'project_id' => $project->id,
+        'original_filename' => 'roadmap.md',
+        'storage_path' => 'roadmaps/exhausted.md',
+        'status' => 'failed',
+        'content' => 'Produce a valid implementation roadmap.',
+    ]);
+
+    foreach ([1, 2] as $number) {
+        RoadmapAttempt::create([
+            'roadmap_id' => $roadmap->id,
+            'number' => $number,
+            'status' => 'failed',
+            'claimed_at' => now()->subMinutes(10 - $number),
+            'finished_at' => now()->subMinutes(9 - $number),
+        ]);
+    }
+
+    mock(CodexCliRunner::class)->shouldNotReceive('run');
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($roadmap->refresh()->status)->toBe('blocked')
+        ->and($roadmap->attempts()->count())->toBe(2)
+        ->and($project->auditEvents()->where('event_type', 'roadmap.retry_exhausted')->exists())->toBeTrue();
 });

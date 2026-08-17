@@ -108,9 +108,9 @@ class RunAiosWorkers extends Command
     }
 
     /**
-     * PM retriggering deliberately uses its own, much longer timer (roadmap_retry_cooldown_seconds,
-     * default 1 hour) instead of worker_task_cooldown_seconds, since a failed roadmap otherwise has
-     * no attempt cap or backoff and would be re-claimed the instant it's marked failed again.
+     * PM roadmap retries deliberately use their own, much longer timer. RunProjectManager also
+     * enforces a bounded roadmap-attempt limit; this cooldown controls the cadence between the
+     * automatic retries that are still allowed before terminal operator intervention.
      */
     private function onRoadmapCooldown(Project $project): bool
     {

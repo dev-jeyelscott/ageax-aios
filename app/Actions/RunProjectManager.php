@@ -66,6 +66,7 @@ class RunProjectManager
         $run = $this->runs->start($roadmap->project, AgentRole::ProjectManager, $prompt, lease: $lease, retrievalManifest: $retrieval['manifest'], agent: $agent, context: $assembled);
         $attempt->update(['agent_run_id' => $run->id, 'status' => 'running']);
         $this->renewLease($lease);
+
         try {
             $onOutput = function (string $type, string $output) use ($run, $roadmap, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
@@ -80,11 +81,14 @@ class RunProjectManager
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
         }
+
         $this->renewLease($lease);
         $this->runs->complete($run, $execution);
+
         if ($execution['exit_code'] === 0) {
             $pendingMessages->each->update(['delivered_at' => now()]);
         }
+
         $plan = $this->parser->parse($execution['output']);
 
         if ($execution['exit_code'] !== 0 || $plan === null) {
@@ -108,6 +112,7 @@ class RunProjectManager
 
             return $execution;
         }
+
         $this->renewLease($lease);
 
         $this->notes->writeRoadmapPlan($roadmap->project, $plan);
@@ -154,13 +159,26 @@ class RunProjectManager
             }
 
             $lockedAttempt->update(['status' => 'failed', 'finished_at' => now()]);
-            $roadmap->update(['status' => 'failed']);
+
+            $retry = $this->roadmapRetryPolicy($roadmap);
+            $roadmapStatus = $retry['exhausted'] ? 'blocked' : 'failed';
+            $roadmap->update(['status' => $roadmapStatus]);
+
             $this->audit->record('roadmap.blocked_agent_misconfigured', [
                 'roadmap_id' => $roadmap->id,
                 'roadmap_attempt_id' => $lockedAttempt->id,
                 'reason' => $exception->getMessage(),
-                'action' => 'Resolve the bound Project Manager Agent configuration, then it will be retried automatically.',
+                'retry_count' => $retry['retry_count'],
+                'retry_limit' => $retry['retry_limit'],
+                'roadmap_status' => $roadmapStatus,
+                'action' => $retry['exhausted']
+                    ? 'Resolve the bound Project Manager Agent configuration. This roadmap is blocked and requires operator intervention before another attempt.'
+                    : 'Resolve the bound Project Manager Agent configuration before the next automatic retry.',
             ], $roadmap->project);
+
+            if ($retry['exhausted']) {
+                $this->recordRoadmapRetryExhausted($roadmap, $lockedAttempt, $retry, 'agent_misconfigured', -1);
+            }
         }, attempts: 3);
 
         return ['exit_code' => -1, 'output' => '', 'error_output' => $exception->getMessage()];
@@ -170,9 +188,22 @@ class RunProjectManager
     {
         return DB::transaction(function () use ($roadmap): ?RoadmapAttempt {
             $lockedRoadmap = Roadmap::query()->lockForUpdate()->findOrFail($roadmap->id);
+            $status = (string) $lockedRoadmap->getRawOriginal('status');
 
-            if (! in_array($lockedRoadmap->getRawOriginal('status'), ['uploaded', 'failed'], true)) {
+            if (! in_array($status, ['uploaded', 'failed'], true)) {
                 return null;
+            }
+
+            if ($status === 'failed') {
+                $retry = $this->roadmapRetryPolicy($lockedRoadmap);
+
+                if ($retry['exhausted']) {
+                    $latestAttempt = $lockedRoadmap->attempts()->latest('number')->first();
+                    $lockedRoadmap->update(['status' => 'blocked']);
+                    $this->recordRoadmapRetryExhausted($lockedRoadmap, $latestAttempt, $retry, 'retry_limit_already_reached');
+
+                    return null;
+                }
             }
 
             $lockedRoadmap->update(['status' => 'processing']);
@@ -183,7 +214,12 @@ class RunProjectManager
                 'status' => 'claimed',
                 'claimed_at' => now(),
             ]);
-            $this->audit->record('roadmap.claimed', ['roadmap_id' => $lockedRoadmap->id, 'roadmap_attempt_id' => $attempt->id, 'attempt_number' => $attempt->number], $lockedRoadmap->project);
+
+            $this->audit->record('roadmap.claimed', [
+                'roadmap_id' => $lockedRoadmap->id,
+                'roadmap_attempt_id' => $attempt->id,
+                'attempt_number' => $attempt->number,
+            ], $lockedRoadmap->project);
 
             return $attempt->refresh()->load('roadmap.project');
         }, attempts: 3);
@@ -200,9 +236,55 @@ class RunProjectManager
             }
 
             $lockedAttempt->update(['status' => 'failed', 'finished_at' => now()]);
-            $roadmap->update(['status' => 'failed']);
-            $this->audit->record('roadmap.processing_failed', ['roadmap_id' => $roadmap->id, 'roadmap_attempt_id' => $lockedAttempt->id, 'exit_code' => $exitCode, 'reason' => $reason], $roadmap->project);
+
+            $retry = $this->roadmapRetryPolicy($roadmap);
+            $roadmapStatus = $retry['exhausted'] ? 'blocked' : 'failed';
+            $roadmap->update(['status' => $roadmapStatus]);
+
+            $this->audit->record('roadmap.processing_failed', [
+                'roadmap_id' => $roadmap->id,
+                'roadmap_attempt_id' => $lockedAttempt->id,
+                'exit_code' => $exitCode,
+                'reason' => $reason,
+                'retry_count' => $retry['retry_count'],
+                'retry_limit' => $retry['retry_limit'],
+                'roadmap_status' => $roadmapStatus,
+            ], $roadmap->project);
+
+            if ($retry['exhausted']) {
+                $this->recordRoadmapRetryExhausted($roadmap, $lockedAttempt, $retry, $reason, $exitCode);
+            }
         }, attempts: 3);
+    }
+
+    /** @return array{retry_count: int, retry_limit: int, exhausted: bool} */
+    private function roadmapRetryPolicy(Roadmap $roadmap): array
+    {
+        $retryCount = $roadmap->attempts()->count();
+        $retryLimit = max(1, (int) config('aios.max_roadmap_attempts'));
+
+        return [
+            'retry_count' => $retryCount,
+            'retry_limit' => $retryLimit,
+            'exhausted' => $retryCount >= $retryLimit,
+        ];
+    }
+
+    /**
+     * @param  array{retry_count: int, retry_limit: int, exhausted: bool}  $retry
+     */
+    private function recordRoadmapRetryExhausted(Roadmap $roadmap, ?RoadmapAttempt $attempt, array $retry, string $reason, ?int $exitCode = null): void
+    {
+        $this->audit->record('roadmap.retry_exhausted', [
+            'roadmap_id' => $roadmap->id,
+            'roadmap_attempt_id' => $attempt?->id,
+            'attempt_number' => $attempt->number ?? $roadmap->attempts()->max('number'),
+            'retry_count' => $retry['retry_count'],
+            'retry_limit' => $retry['retry_limit'],
+            'exit_code' => $exitCode,
+            'reason' => $reason,
+            'action' => 'Inspect the latest Project Manager attempt/run evidence and correct the roadmap or Project Manager configuration before retrying.',
+        ], $roadmap->project);
     }
 
     /** @param array<string, mixed> $plan */
@@ -235,7 +317,7 @@ class RunProjectManager
             'phases.*.tasks.*.verification_commands.*' => ['string'],
             'phases.*.tasks.*.implementation_prompt' => ['required', 'string'],
             'phases.*.tasks.*.obsidian_notes' => ['nullable', 'array'],
-            'phases.*.tasks.*.obsidian_notes.*' => ['required', 'string', 'max:255', 'regex:/^(?!\\/)(?!.*(?:\\\\|\\.\\.))[A-Za-z0-9 _.\\/-]+\\.md$/'],
+            'phases.*.tasks.*.obsidian_notes.*' => ['required', 'string', 'max:255', 'regex:/^(?!\/)(?!.*(?:\\\\|\.\.))[A-Za-z0-9 _.\/-]+\.md$/'],
             'phases.*.tasks.*.depends_on' => ['nullable', 'array'],
             'phases.*.tasks.*.depends_on.*' => ['integer', 'min:1'],
             'phases.*.tasks.*.completion_status' => ['nullable', 'in:done,queued'],
@@ -244,9 +326,11 @@ class RunProjectManager
 
         $validator->after(function (Validator $validator) use ($plan): void {
             $position = 0;
+
             foreach ($plan['phases'] as $phaseIndex => $phase) {
                 foreach ($phase['tasks'] as $taskIndex => $task) {
                     $position++;
+
                     if (($task['completion_status'] ?? 'queued') === 'done' && blank($task['completion_evidence'] ?? null)) {
                         $validator->errors()->add("phases.{$phaseIndex}.tasks.{$taskIndex}.completion_evidence", 'Completion evidence is required before an existing task can be marked done.');
                     }
