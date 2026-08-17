@@ -9,6 +9,7 @@ export type HarnessCapability = {
     reasoning_settings_by_model: Record<string, string[]>;
     execution_options: string[];
 };
+
 export type HarnessCapabilities = Record<string, HarnessCapability>;
 
 export type AgentFieldsInitial = {
@@ -21,8 +22,14 @@ export type AgentFieldsInitial = {
     enabled?: boolean;
 };
 
-export function selectClassName(hasError?: boolean): string {
+function inputClassName(hasError?: boolean): string {
     return `border-input flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] ${
+        hasError ? 'border-destructive' : ''
+    }`;
+}
+
+export function selectClassName(hasError?: boolean): string {
+    return `h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] ${
         hasError ? 'border-destructive' : ''
     }`;
 }
@@ -65,14 +72,16 @@ export function AgentFields({
                     name="name"
                     defaultValue={initial.name ?? ''}
                     required
-                    className={selectClassName(Boolean(errors.name))}
+                    className={inputClassName(Boolean(errors.name))}
                 />
                 <InputError message={errors.name} />
             </div>
+
             <div className="grid gap-1.5">
                 <Label htmlFor="role">
                     {roleField.editable ? 'Workflow role' : 'System role'}
                 </Label>
+
                 {roleField.editable ? (
                     <>
                         <select
@@ -89,6 +98,7 @@ export function AgentFields({
                                 </option>
                             ))}
                         </select>
+
                         <InputError message={errors.role} />
                     </>
                 ) : (
@@ -97,8 +107,10 @@ export function AgentFields({
                     </p>
                 )}
             </div>
+
             <div className="grid gap-1.5">
                 <Label htmlFor="harness">Harness</Label>
+
                 <select
                     id="harness"
                     name="harness"
@@ -116,10 +128,13 @@ export function AgentFields({
                         </option>
                     ))}
                 </select>
+
                 <InputError message={errors.harness} />
             </div>
+
             <div className="grid gap-1.5">
                 <Label htmlFor="model">Model</Label>
+
                 <select
                     id="model"
                     name="model"
@@ -131,16 +146,20 @@ export function AgentFields({
                     className={selectClassName(Boolean(errors.model))}
                 >
                     <option value="">Harness default</option>
+
                     {models.map((option) => (
                         <option key={option} value={option}>
                             {option}
                         </option>
                     ))}
                 </select>
+
                 <InputError message={errors.model} />
             </div>
+
             <div className="grid gap-1.5">
                 <Label htmlFor="reasoning_setting">Reasoning / effort</Label>
+
                 <select
                     id="reasoning_setting"
                     name="reasoning_setting"
@@ -152,16 +171,20 @@ export function AgentFields({
                     )}
                 >
                     <option value="">Model default</option>
+
                     {reasoningOptions.map((option) => (
                         <option key={option} value={option}>
                             {option}
                         </option>
                     ))}
                 </select>
+
                 <InputError message={errors.reasoning_setting} />
             </div>
+
             <div className="grid gap-1.5 sm:col-span-2">
                 <Label htmlFor="default_context">Default context</Label>
+
                 <textarea
                     id="default_context"
                     name="default_context"
@@ -170,8 +193,10 @@ export function AgentFields({
                     className="w-full rounded-md border bg-background p-3 text-sm"
                     placeholder="Deterministic guidance provided to every run of this agent."
                 />
+
                 <InputError message={errors.default_context} />
             </div>
+
             <input
                 type="hidden"
                 name="enabled"
