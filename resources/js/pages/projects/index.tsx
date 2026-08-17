@@ -1,6 +1,10 @@
 import { Form, Head, Link } from '@inertiajs/react';
 import { FolderGit2, Plus, Trash2 } from 'lucide-react';
-import { destroy, show, store } from '@/actions/App/Http/Controllers/ProjectController';
+import {
+    destroy,
+    show,
+    store,
+} from '@/actions/App/Http/Controllers/ProjectController';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -143,11 +147,11 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                                                     Delete {project.name}?
                                                 </DialogTitle>
                                                 <DialogDescription>
-                                                    This permanently deletes
-                                                    the project and all of its
-                                                    roadmaps, tasks, agents,
-                                                    and run history. This
-                                                    cannot be undone.
+                                                    This permanently deletes the
+                                                    project and all of its
+                                                    roadmaps, tasks, agents, and
+                                                    run history. This cannot be
+                                                    undone.
                                                 </DialogDescription>
                                                 <Form
                                                     {...destroy.form(project)}

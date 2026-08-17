@@ -268,11 +268,7 @@ function InvokeNowForm({ agent }: { agent: Agent }) {
                         disabled={busy || !agent.enabled}
                         title={title}
                     >
-                        {busy ? (
-                            <Loader2 className="animate-spin" />
-                        ) : (
-                            <Play />
-                        )}
+                        {busy ? <Loader2 className="animate-spin" /> : <Play />}
                         {processing
                             ? 'Invoking…'
                             : agent.invoke_in_progress
