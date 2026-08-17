@@ -2,6 +2,7 @@
 
 use App\AgentRole;
 use App\AgentRunStatus;
+use App\Jobs\RunWorkflowRecoveryEngineerNow;
 use App\Models\Agent;
 use App\Models\AgentRun;
 use App\Models\Project;
@@ -9,6 +10,7 @@ use App\Models\RecoveryIncident;
 use App\Models\User;
 use App\ProjectStatus;
 use App\RecoveryIncidentStatus;
+use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('the agents index lists global agents with their open incident count', function () {
@@ -111,6 +113,58 @@ test('a global agent run console renders for its own run', function () {
             ->where('agent.id', $agent->id)
             ->where('agent_run.id', $run->id)
             ->where('agent_run.agent_messages', ['Diagnosed the incident.']));
+});
+
+test('invoking a global agent dispatches a manual recovery scan and records an audit event', function () {
+    Queue::fake();
+
+    $agent = Agent::query()->whereNull('project_id')->sole();
+
+    $this->actingAs(User::factory()->create())
+        ->post(route('agents.invoke', $agent))
+        ->assertRedirect(route('agents.show', $agent));
+
+    Queue::assertPushed(RunWorkflowRecoveryEngineerNow::class, fn (RunWorkflowRecoveryEngineerNow $job): bool => $job->agentId === $agent->id);
+    $this->assertDatabaseHas('audit_events', ['event_type' => 'agent.invoke_requested']);
+});
+
+test('a disabled global agent cannot be invoked', function () {
+    Queue::fake();
+
+    $agent = Agent::query()->whereNull('project_id')->sole();
+    $agent->update(['enabled' => false]);
+
+    $this->actingAs(User::factory()->create())
+        ->post(route('agents.invoke', $agent))
+        ->assertStatus(422);
+
+    Queue::assertNothingPushed();
+});
+
+test('a global agent already diagnosing an incident cannot be invoked again', function () {
+    Queue::fake();
+
+    $agent = Agent::query()->whereNull('project_id')->sole();
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    RecoveryIncident::create(['project_id' => $project->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Diagnosing, 'detected_at' => now()]);
+
+    $this->actingAs(User::factory()->create())
+        ->post(route('agents.invoke', $agent))
+        ->assertStatus(409);
+
+    Queue::assertNothingPushed();
+});
+
+test('a project agent cannot be invoked through the global agent invoke route', function () {
+    Queue::fake();
+
+    $agent = Agent::factory()->create();
+
+    $this->actingAs(User::factory()->create())
+        ->post(route('agents.invoke', $agent))
+        ->assertNotFound();
+
+    Queue::assertNothingPushed();
 });
 
 test('a run belonging to another agent cannot be viewed through this agent', function () {

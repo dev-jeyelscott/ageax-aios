@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\AgentRole;
 use App\Http\Requests\UpdateGlobalAgentRequest;
+use App\Jobs\RunWorkflowRecoveryEngineerNow;
 use App\Models\Agent;
 use App\Models\AgentRun;
 use App\Models\RecoveryIncident;
@@ -39,6 +41,8 @@ class GlobalAgentController extends Controller
     public function show(Agent $agent, AgentHarnessResolver $harnesses): Response
     {
         abort_unless($agent->project_id === null, 404);
+
+        $agent->setAttribute('invoke_in_progress', $this->invokeInProgress($agent));
 
         $incidents = RecoveryIncident::query()
             ->whereHas('recoveryRuns', fn (Builder $query) => $query->where('agent_id', $agent->id))
@@ -108,6 +112,23 @@ class GlobalAgentController extends Controller
         return to_route('agents.show', $agent);
     }
 
+    public function invoke(Agent $agent): RedirectResponse
+    {
+        abort_unless($agent->project_id === null, 404);
+        abort_unless($agent->role === AgentRole::RecoveryEngineer, 404);
+        abort_unless($agent->enabled, 422, 'A disabled Agent cannot be invoked.');
+        abort_if($this->invokeInProgress($agent), 409, 'The Workflow Recovery Engineer is already working.');
+
+        RunWorkflowRecoveryEngineerNow::dispatch($agent->id);
+
+        $this->audit->record('agent.invoke_requested', [
+            'agent_id' => $agent->id,
+            'role' => (string) $agent->getRawOriginal('role'),
+        ]);
+
+        return to_route('agents.show', $agent);
+    }
+
     public function showRun(Agent $agent, AgentRun $run, AgentRunRecorder $runs): Response
     {
         abort_unless($agent->project_id === null, 404);
@@ -121,5 +142,17 @@ class GlobalAgentController extends Controller
             'agent' => $agent->only(['id', 'name', 'role']),
             'agent_run' => $run,
         ]);
+    }
+
+    /** Whether the Workflow Recovery Engineer is actively diagnosing, repairing, or validating a recovery incident right now, whether from the scheduled scan or a manual invocation. */
+    private function invokeInProgress(Agent $agent): bool
+    {
+        if ($agent->role !== AgentRole::RecoveryEngineer) {
+            return false;
+        }
+
+        return RecoveryIncident::query()
+            ->whereIn('status', [RecoveryIncidentStatus::Diagnosing, RecoveryIncidentStatus::Repairing, RecoveryIncidentStatus::Validating])
+            ->exists();
     }
 }

@@ -2,10 +2,9 @@
 
 namespace App\Console\Commands;
 
+use App\Actions\RunWorkflowRecoveryScan;
 use App\Models\Project;
 use App\ProjectStatus;
-use App\Services\WorkflowRecoveryEngine;
-use App\Services\WorkflowRecoveryScanner;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
@@ -17,12 +16,10 @@ class RecoverWorkflows extends Command
     /**
      * Execute the console command.
      */
-    public function handle(WorkflowRecoveryScanner $scanner, WorkflowRecoveryEngine $engine): int
+    public function handle(RunWorkflowRecoveryScan $scan): int
     {
         foreach (Project::query()->whereIn('status', [ProjectStatus::Running, ProjectStatus::Stopping])->get() as $project) {
-            $engine->reclaimStaleClaims($project);
-            $scanner->scan($project);
-            $engine->processOpenIncidents($project);
+            $scan->handle($project);
         }
 
         return self::SUCCESS;

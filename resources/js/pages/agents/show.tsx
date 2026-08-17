@@ -1,7 +1,8 @@
-import { Form, Head, Link } from '@inertiajs/react';
-import { ArrowLeft, Ban, CheckCircle2 } from 'lucide-react';
+import { Form, Head, Link, usePoll } from '@inertiajs/react';
+import { ArrowLeft, Ban, CheckCircle2, Loader2, Play } from 'lucide-react';
 import {
     index as agentsIndex,
+    invoke as invokeAgent,
     showRun,
     update as updateAgent,
 } from '@/actions/App/Http/Controllers/GlobalAgentController';
@@ -27,6 +28,7 @@ type Agent = {
     default_context: string | null;
     enabled: boolean;
     configuration_version: number;
+    invoke_in_progress: boolean;
 };
 
 type Incident = {
@@ -72,6 +74,8 @@ export default function AgentShow({
     incidents: IncidentPage;
     harness_capabilities: HarnessCapabilities;
 }) {
+    usePoll(3_000, { only: ['agent'], preserveErrors: true }, { mode: 'rest' });
+
     return (
         <>
             <Head title={agent.name} />
@@ -108,7 +112,10 @@ export default function AgentShow({
                                 run.
                             </CardDescription>
                         </div>
-                        <ToggleEnabledForm agent={agent} />
+                        <div className="flex items-center gap-2">
+                            <InvokeNowForm agent={agent} />
+                            <ToggleEnabledForm agent={agent} />
+                        </div>
                     </CardHeader>
                     <CardContent>
                         <Form
@@ -239,6 +246,42 @@ export default function AgentShow({
                 </Card>
             </div>
         </>
+    );
+}
+
+function InvokeNowForm({ agent }: { agent: Agent }) {
+    return (
+        <Form {...invokeAgent.form(agent)} className="inline">
+            {({ processing }) => {
+                const busy = processing || agent.invoke_in_progress;
+                const title = !agent.enabled
+                    ? 'Enable this agent to invoke it'
+                    : agent.invoke_in_progress
+                      ? 'The Workflow Recovery Engineer is already working'
+                      : 'Run this agent now instead of waiting for its next scheduled run';
+
+                return (
+                    <Button
+                        type="submit"
+                        size="sm"
+                        variant="outline"
+                        disabled={busy || !agent.enabled}
+                        title={title}
+                    >
+                        {busy ? (
+                            <Loader2 className="animate-spin" />
+                        ) : (
+                            <Play />
+                        )}
+                        {processing
+                            ? 'Invoking…'
+                            : agent.invoke_in_progress
+                              ? 'Working…'
+                              : 'Invoke now'}
+                    </Button>
+                );
+            }}
+        </Form>
     );
 }
 

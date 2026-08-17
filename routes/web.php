@@ -15,6 +15,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('agents', [GlobalAgentController::class, 'index'])->name('agents.index');
     Route::get('agents/{agent}', [GlobalAgentController::class, 'show'])->name('agents.show');
     Route::patch('agents/{agent}', [GlobalAgentController::class, 'update'])->name('agents.update');
+    Route::post('agents/{agent}/invoke', [GlobalAgentController::class, 'invoke'])->name('agents.invoke');
     Route::get('agents/{agent}/runs/{run}', [GlobalAgentController::class, 'showRun'])->scopeBindings()->name('agents.runs.show');
     Route::patch('projects/{project}/status', [ProjectController::class, 'updateStatus'])->name('projects.status.update');
     Route::get('projects/{project}/tasks/{task}', [ProjectController::class, 'showTask'])->scopeBindings()->name('projects.tasks.show');
