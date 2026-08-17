@@ -122,7 +122,16 @@ class AgentRunRecorder
         return $run;
     }
 
-    /** @param array{exit_code: int, output: string, error_output: string, external_run_id?: string|null} $execution */
+    /**
+     * @param  array{
+     *     exit_code: int,
+     *     output: string,
+     *     error_output: string,
+     *     external_run_id?: string|null,
+     *     usage?: array<string, mixed>|null,
+     *     provider_metadata?: array<string, mixed>
+     * }  $execution
+     */
     public function complete(AgentRun $run, array $execution): AgentRun
     {
         $logPath = 'agent-runs/'.Str::uuid().'.jsonl';
@@ -130,6 +139,12 @@ class AgentRunRecorder
         $errorOutput = $this->redactSensitiveOutput($execution['error_output']);
         Storage::disk('local')->put($logPath, $output."\n".$errorOutput);
         $metadata = $this->metadata($output);
+        $normalizedUsage = is_array($execution['usage'] ?? null)
+            ? $execution['usage']
+            : null;
+        $tokenUsage = $normalizedUsage !== null
+            ? $this->tokenUsage($normalizedUsage)
+            : $metadata['token_usage'];
         $liveOutput = $run->fresh()->live_output;
 
         if (blank($liveOutput)) {
@@ -147,7 +162,7 @@ class AgentRunRecorder
             'result' => [...$existingResult, ...$metadata['result']],
             'commands' => $metadata['commands'],
             'file_modifications' => $metadata['file_modifications'],
-            'token_usage' => $metadata['token_usage'],
+            'token_usage' => $tokenUsage,
             'log_path' => $logPath,
             'live_output' => $liveOutput,
             'finished_at' => now(),
@@ -462,14 +477,6 @@ class AgentRunRecorder
             }
         }
 
-        $inputTokens = is_array($usage) && is_int($usage['input_tokens'] ?? null)
-            ? $usage['input_tokens']
-            : 0;
-
-        $outputTokens = is_array($usage) && is_int($usage['output_tokens'] ?? null)
-            ? $usage['output_tokens']
-            : 0;
-
         return [
             'codex_run_id' => $codexRunId,
             'result' => array_filter([
@@ -478,9 +485,27 @@ class AgentRunRecorder
             ]),
             'commands' => array_slice($commands, -self::MetadataItemLimit),
             'file_modifications' => array_slice($fileModifications, -self::MetadataItemLimit),
-            'token_usage' => $inputTokens + $outputTokens > 0
-                ? $inputTokens + $outputTokens
-                : null,
+            'token_usage' => $this->tokenUsage($usage),
         ];
+    }
+
+    /** @param array<string, mixed>|null $usage */
+    private function tokenUsage(?array $usage): ?int
+    {
+        if ($usage === null) {
+            return null;
+        }
+
+        $inputTokens = is_int($usage['input_tokens'] ?? null)
+            ? $usage['input_tokens']
+            : 0;
+
+        $outputTokens = is_int($usage['output_tokens'] ?? null)
+            ? $usage['output_tokens']
+            : 0;
+
+        $total = $inputTokens + $outputTokens;
+
+        return $total > 0 ? $total : null;
     }
 }

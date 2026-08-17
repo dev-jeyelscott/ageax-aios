@@ -13,6 +13,7 @@ use App\Models\User;
 use App\ProjectStatus;
 use App\Services\AgentRunRecorder;
 use App\TaskStatus;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('the project office includes persisted worker agent git and harness evidence', function () {
@@ -214,4 +215,183 @@ test('a blocked worker surfaces the harness failure reason for its latest run', 
                 'project.office_workers.0.run.failure_reason',
                 "You've hit your usage limit.",
             ));
+});
+
+test('normalized claude usage is persisted and aggregated by harness', function () {
+    Storage::fake('local');
+
+    $user = User::factory()->create();
+    $project = Project::create([
+        'name' => 'Claude Usage Example',
+        'path' => '/tmp/claude-usage-'.fake()->uuid(),
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+
+    $agent = Agent::create([
+        'project_id' => $project->id,
+        'name' => 'Claude Coder',
+        'role' => AgentRole::Coder,
+        'harness' => AgentHarness::ClaudeCode,
+        'model' => null,
+        'reasoning_setting' => null,
+        'default_context' => null,
+        'enabled' => true,
+    ]);
+
+    $recorder = app(AgentRunRecorder::class);
+    $run = $recorder->start(
+        $project,
+        AgentRole::Coder,
+        'Record Claude usage.',
+        agent: $agent,
+    );
+
+    $completed = $recorder->complete($run, [
+        'exit_code' => 0,
+        'output' => 'completed',
+        'error_output' => '',
+        'external_run_id' => 'claude-session-usage',
+        'usage' => [
+            'input_tokens' => 100,
+            'output_tokens' => 30,
+        ],
+    ]);
+
+    expect($completed->token_usage)
+        ->toBe(130)
+        ->and($completed->external_run_id)
+        ->toBe('claude-session-usage');
+
+    $this->actingAs($user)
+        ->get(route('projects.show', $project))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/show')
+            ->where('project.token_usage_total', 130)
+            ->where('project.harness_usage.claude_code.run_count', 1)
+            ->where('project.harness_usage.claude_code.token_usage', 130));
+});
+
+test('codex output usage remains the fallback when normalized usage is absent', function () {
+    Storage::fake('local');
+
+    $user = User::factory()->create();
+    $project = Project::create([
+        'name' => 'Codex Usage Example',
+        'path' => '/tmp/codex-usage-'.fake()->uuid(),
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+
+    $agent = Agent::create([
+        'project_id' => $project->id,
+        'name' => 'Codex Coder',
+        'role' => AgentRole::Coder,
+        'harness' => AgentHarness::Codex,
+        'model' => null,
+        'reasoning_setting' => null,
+        'default_context' => null,
+        'enabled' => true,
+    ]);
+
+    $output = implode("\n", [
+        json_encode([
+            'type' => 'thread.started',
+            'thread_id' => 'codex-thread-usage',
+        ], JSON_THROW_ON_ERROR),
+        json_encode([
+            'type' => 'turn.completed',
+            'usage' => [
+                'input_tokens' => 80,
+                'output_tokens' => 20,
+            ],
+        ], JSON_THROW_ON_ERROR),
+    ]);
+
+    $recorder = app(AgentRunRecorder::class);
+    $run = $recorder->start(
+        $project,
+        AgentRole::Coder,
+        'Record Codex usage.',
+        agent: $agent,
+    );
+
+    $completed = $recorder->complete($run, [
+        'exit_code' => 0,
+        'output' => $output,
+        'error_output' => '',
+    ]);
+
+    expect($completed->token_usage)
+        ->toBe(100)
+        ->and($completed->codex_run_id)
+        ->toBe('codex-thread-usage')
+        ->and($completed->external_run_id)
+        ->toBe('codex-thread-usage');
+
+    $this->actingAs($user)
+        ->get(route('projects.show', $project))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/show')
+            ->where('project.token_usage_total', 100)
+            ->where('project.harness_usage.codex.run_count', 1)
+            ->where('project.harness_usage.codex.token_usage', 100));
+});
+
+test('historical codex evidence is attributed to codex while unknown legacy runs remain separate', function () {
+    $user = User::factory()->create();
+    $project = Project::create([
+        'name' => 'Historical Harness Usage',
+        'path' => '/tmp/historical-usage-'.fake()->uuid(),
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+
+    AgentRun::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::Coder,
+        'harness' => null,
+        'status' => AgentRunStatus::Completed,
+        'codex_run_id' => 'historical-codex-thread',
+        'prompt_hash' => hash('sha256', 'historical-codex'),
+        'token_usage' => 200,
+        'started_at' => now()->subMinutes(3),
+        'finished_at' => now()->subMinutes(2),
+    ]);
+
+    AgentRun::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::Coder,
+        'harness' => AgentHarness::Codex->value,
+        'status' => AgentRunStatus::Completed,
+        'prompt_hash' => hash('sha256', 'explicit-codex'),
+        'token_usage' => 50,
+        'started_at' => now()->subMinutes(2),
+        'finished_at' => now()->subMinute(),
+    ]);
+
+    AgentRun::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::Reviewer,
+        'harness' => null,
+        'status' => AgentRunStatus::Completed,
+        'codex_run_id' => null,
+        'prompt_hash' => hash('sha256', 'unknown-legacy'),
+        'token_usage' => 30,
+        'started_at' => now()->subMinute(),
+        'finished_at' => now(),
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('projects.show', $project))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/show')
+            ->where('project.token_usage_total', 280)
+            ->where('project.harness_usage.codex.run_count', 2)
+            ->where('project.harness_usage.codex.token_usage', 250)
+            ->where('project.harness_usage.legacy.run_count', 1)
+            ->where('project.harness_usage.legacy.token_usage', 30));
 });

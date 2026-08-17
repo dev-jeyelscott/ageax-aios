@@ -10,6 +10,7 @@ use App\Actions\RecordTaskOperatorMessage;
 use App\Actions\RequeueBlockedTask;
 use App\Actions\SetProjectStatus;
 use App\Actions\StoreRoadmap;
+use App\AgentHarness;
 use App\AgentRole;
 use App\Http\Requests\StoreProjectManagerMessageRequest;
 use App\Http\Requests\StoreProjectRequest;
@@ -296,29 +297,45 @@ class ProjectController extends Controller
      */
     private function harnessUsage(Project $project): array
     {
+        $codexEvidenceExpression = <<<'SQL'
+CASE
+    WHEN codex_run_id IS NOT NULL AND codex_run_id <> '' THEN 1
+    ELSE 0
+END
+SQL;
+
         $rows = $project->runs()
             ->selectRaw(
-                'harness, COUNT(*) AS aggregate_run_count, COALESCE(SUM(token_usage), 0) AS aggregate_token_usage',
+                "harness, {$codexEvidenceExpression} AS has_codex_evidence, COUNT(*) AS aggregate_run_count, COALESCE(SUM(token_usage), 0) AS aggregate_token_usage",
             )
             ->groupBy('harness')
+            ->groupByRaw($codexEvidenceExpression)
             ->get();
 
         $usage = [];
 
         foreach ($rows as $row) {
             $harness = $row->getRawOriginal('harness');
+            $hasCodexEvidence = (int) $row->getAttribute(
+                'has_codex_evidence',
+            ) === 1;
             $key = is_string($harness) && $harness !== ''
                 ? $harness
-                : 'legacy';
+                : ($hasCodexEvidence
+                    ? AgentHarness::Codex->value
+                    : 'legacy');
 
-            $usage[$key] = [
-                'run_count' => (int) $row->getAttribute(
-                    'aggregate_run_count',
-                ),
-                'token_usage' => (int) $row->getAttribute(
-                    'aggregate_token_usage',
-                ),
+            $usage[$key] ??= [
+                'run_count' => 0,
+                'token_usage' => 0,
             ];
+
+            $usage[$key]['run_count'] += (int) $row->getAttribute(
+                'aggregate_run_count',
+            );
+            $usage[$key]['token_usage'] += (int) $row->getAttribute(
+                'aggregate_token_usage',
+            );
         }
 
         return $usage;
@@ -443,10 +460,10 @@ class ProjectController extends Controller
                         'failure_reason' => $run->getRawOriginal(
                             'status',
                         ) === 'failed'
-                                ? $runs->failureReason(
-                                    $run,
-                                )
-                                : null,
+                            ? $runs->failureReason(
+                                $run,
+                            )
+                            : null,
                     ],
                 'task' => $task === null
                     ? null
