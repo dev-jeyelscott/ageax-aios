@@ -7,6 +7,7 @@ use App\Models\Skill;
 use App\Models\User;
 use App\ProjectStatus;
 use Illuminate\Support\Str;
+use Inertia\Testing\AssertableInertia as Assert;
 
 function agentUiProject(string $name, ProjectStatus $status = ProjectStatus::Paused): Project
 {
@@ -162,4 +163,64 @@ test('binding a worker to a compatible agent succeeds', function () {
         ->assertRedirect(route('projects.show', $project));
 
     expect($worker->refresh()->agent_id)->toBe($agent->id);
+});
+
+test('project agent management payload exposes ordered skills and worker evidence used by the agents console', function () {
+    $user = User::factory()->create();
+    $project = agentUiProject('Agent command console project', ProjectStatus::Running);
+
+    $agent = Agent::factory()->for($project)->create([
+        'name' => 'Forge',
+        'role' => 'coder',
+        'harness' => 'claude_code',
+        'model' => 'claude-sonnet-5',
+        'reasoning_setting' => 'medium',
+        'enabled' => true,
+    ]);
+
+    $architecture = Skill::factory()->for($project)->create([
+        'name' => 'Architecture',
+        'slug' => 'architecture',
+        'version' => 2,
+    ]);
+
+    $testing = Skill::factory()->for($project)->create([
+        'name' => 'Testing',
+        'slug' => 'testing',
+        'version' => 3,
+    ]);
+
+    $agent->skills()->attach($architecture->id, ['position' => 1]);
+    $agent->skills()->attach($testing->id, ['position' => 2]);
+
+    AgentWorker::create([
+        'project_id' => $project->id,
+        'role' => 'coder',
+        'agent_id' => $agent->id,
+        'status' => 'working',
+        'last_heartbeat_at' => now(),
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('projects.show', $project))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/show')
+            ->has('project.agents', 1)
+            ->where('project.agents.0.name', 'Forge')
+            ->where('project.agents.0.role', 'coder')
+            ->where('project.agents.0.harness', 'claude_code')
+            ->where('project.agents.0.model', 'claude-sonnet-5')
+            ->where('project.agents.0.reasoning_setting', 'medium')
+            ->where('project.agents.0.enabled', true)
+            ->where('project.agents.0.configuration_version', 1)
+            ->has('project.agents.0.skills', 2)
+            ->where('project.agents.0.skills.0.name', 'Architecture')
+            ->where('project.agents.0.skills.0.version', 2)
+            ->where('project.agents.0.skills.1.name', 'Testing')
+            ->where('project.agents.0.skills.1.version', 3)
+            ->has('project.workers', 1)
+            ->where('project.workers.0.role', 'coder')
+            ->where('project.workers.0.agent_id', $agent->id)
+            ->where('project.workers.0.status', 'working'));
 });
