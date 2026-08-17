@@ -14,6 +14,7 @@ import {
     Trash2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useState } from 'react';
 import {
     destroy,
     show,
@@ -176,130 +177,166 @@ function ProjectSignal({
     );
 }
 
-function AddProjectPanel() {
+function AddProjectDialog() {
+    const [open, setOpen] = useState(false);
+
     return (
-        <section className="panel-elevated relative overflow-hidden">
-            <div className="glow-line-accent" />
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button
+                    type="button"
+                    className="h-10 gap-2 px-4 shadow-glow-sm"
+                >
+                    <Plus className="size-4" aria-hidden="true" />
+                    Add project
+                </Button>
+            </DialogTrigger>
 
-            <div className="border-b border-border-subtle px-5 py-4">
-                <div className="flex items-center gap-2">
-                    <FolderPlus
-                        className="size-4 text-primary"
-                        aria-hidden="true"
-                    />
+            <DialogContent className="overflow-hidden border-primary/20 bg-card/95 p-0 shadow-panel-lifted sm:max-w-2xl">
+                <div className="glow-line-accent" />
 
-                    <h2 className="font-mono text-xs font-semibold tracking-[0.12em] text-primary uppercase">
-                        Add project
-                    </h2>
+                <div className="border-b border-border-subtle px-6 py-5">
+                    <div className="flex items-center gap-3">
+                        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary shadow-glow-sm">
+                            <FolderPlus className="size-5" aria-hidden="true" />
+                        </div>
+
+                        <div>
+                            <DialogTitle className="text-lg font-semibold tracking-tight">
+                                Add project
+                            </DialogTitle>
+
+                            <DialogDescription className="mt-1 text-sm">
+                                Create a new Git project or register an existing
+                                repository inside the configured workspace.
+                            </DialogDescription>
+                        </div>
+                    </div>
                 </div>
 
-                <p className="mt-2 text-sm text-muted-foreground">
-                    Create a new Git project or register an existing repository
-                    inside the configured workspace.
-                </p>
-            </div>
+                <Form
+                    {...store.form()}
+                    onError={() => setOpen(true)}
+                    onSuccess={() => setOpen(false)}
+                    className="p-6"
+                >
+                    {({ errors, processing }) => (
+                        <>
+                            <div className="grid gap-5">
+                                <div className="grid gap-2">
+                                    <label
+                                        htmlFor="mode"
+                                        className="text-xs font-medium text-foreground"
+                                    >
+                                        Project type
+                                    </label>
 
-            <Form
-                {...store.form()}
-                className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,0.8fr)_minmax(14rem,1fr)_minmax(16rem,1.2fr)_auto]"
-            >
-                {({ errors, processing }) => (
-                    <>
-                        <div className="grid gap-2">
-                            <label
-                                htmlFor="mode"
-                                className="text-xs font-medium text-foreground"
-                            >
-                                Project type
-                            </label>
+                                    <Select
+                                        name="mode"
+                                        defaultValue="create"
+                                        required
+                                        disabled={processing}
+                                    >
+                                        <SelectTrigger
+                                            id="mode"
+                                            className="h-11 w-full border-primary/15 bg-surface-sunken/70"
+                                        >
+                                            <SelectValue placeholder="Select project type" />
+                                        </SelectTrigger>
 
-                            <Select
-                                name="mode"
-                                defaultValue="create"
-                                required
-                                disabled={processing}
-                            >
-                                <SelectTrigger
-                                    id="mode"
-                                    className="h-11 w-full border-primary/15 bg-surface-sunken/70"
+                                        <SelectContent align="start">
+                                            <SelectItem value="create">
+                                                <FolderPlus
+                                                    className="size-4"
+                                                    aria-hidden="true"
+                                                />
+                                                Create new
+                                            </SelectItem>
+
+                                            <SelectItem value="existing">
+                                                <FolderGit2
+                                                    className="size-4"
+                                                    aria-hidden="true"
+                                                />
+                                                Add existing
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+
+                                    <InputError message={errors.mode} />
+                                </div>
+
+                                <div className="grid gap-2">
+                                    <label
+                                        htmlFor="name"
+                                        className="text-xs font-medium text-foreground"
+                                    >
+                                        Name
+                                    </label>
+
+                                    <Input
+                                        id="name"
+                                        name="name"
+                                        placeholder="e.g. my-awesome-project"
+                                        required
+                                        disabled={processing}
+                                        className="h-11 border-primary/15 bg-surface-sunken/70"
+                                    />
+
+                                    <InputError message={errors.name} />
+                                </div>
+
+                                <div className="grid gap-2">
+                                    <label
+                                        htmlFor="path"
+                                        className="text-xs font-medium text-foreground"
+                                    >
+                                        Workspace path
+                                    </label>
+
+                                    <Input
+                                        id="path"
+                                        name="path"
+                                        placeholder="e.g. my-project"
+                                        required
+                                        disabled={processing}
+                                        className="h-11 border-primary/15 bg-surface-sunken/70 font-mono"
+                                    />
+
+                                    <InputError message={errors.path} />
+                                </div>
+                            </div>
+
+                            <DialogFooter className="mt-6 border-t border-border-subtle pt-5">
+                                <DialogClose asChild>
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        disabled={processing}
+                                    >
+                                        Cancel
+                                    </Button>
+                                </DialogClose>
+
+                                <Button
+                                    type="submit"
+                                    disabled={processing}
+                                    className="shadow-glow-sm"
                                 >
-                                    <SelectValue placeholder="Select project type" />
-                                </SelectTrigger>
-
-                                <SelectContent align="start">
-                                    <SelectItem value="create">
-                                        <FolderPlus
-                                            className="size-4"
-                                            aria-hidden="true"
-                                        />
-                                        Create new
-                                    </SelectItem>
-
-                                    <SelectItem value="existing">
-                                        <FolderGit2
-                                            className="size-4"
-                                            aria-hidden="true"
-                                        />
-                                        Add existing
-                                    </SelectItem>
-                                </SelectContent>
-                            </Select>
-
-                            <InputError message={errors.mode} />
-                        </div>
-
-                        <div className="grid gap-2">
-                            <label
-                                htmlFor="name"
-                                className="text-xs font-medium text-foreground"
-                            >
-                                Name
-                            </label>
-
-                            <Input
-                                id="name"
-                                name="name"
-                                placeholder="e.g. my-awesome-project"
-                                required
-                                disabled={processing}
-                                className="h-11 border-primary/15 bg-surface-sunken/70"
-                            />
-
-                            <InputError message={errors.name} />
-                        </div>
-
-                        <div className="grid gap-2">
-                            <label
-                                htmlFor="path"
-                                className="text-xs font-medium text-foreground"
-                            >
-                                Workspace path
-                            </label>
-
-                            <Input
-                                id="path"
-                                name="path"
-                                placeholder="e.g. my-project"
-                                required
-                                disabled={processing}
-                                className="h-11 border-primary/15 bg-surface-sunken/70 font-mono"
-                            />
-
-                            <InputError message={errors.path} />
-                        </div>
-
-                        <Button
-                            type="submit"
-                            className="h-11 self-end px-6 shadow-glow-sm"
-                            disabled={processing}
-                        >
-                            <Plus className="size-4" aria-hidden="true" />
-                            {processing ? 'Adding…' : 'Add project'}
-                        </Button>
-                    </>
-                )}
-            </Form>
-        </section>
+                                    <Plus
+                                        className="size-4"
+                                        aria-hidden="true"
+                                    />
+                                    {processing
+                                        ? 'Adding project…'
+                                        : 'Add project'}
+                                </Button>
+                            </DialogFooter>
+                        </>
+                    )}
+                </Form>
+            </DialogContent>
+        </Dialog>
     );
 }
 
@@ -532,9 +569,13 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                             </p>
                         </div>
 
-                        <div className="inline-flex items-center gap-2 self-start rounded-md border border-primary/15 bg-primary/5 px-3 py-2 font-mono text-2xs text-muted-foreground">
-                            <span className="size-2 rounded-full bg-primary shadow-glow-sm" />
-                            Durable project registry
+                        <div className="flex flex-wrap items-center gap-2 self-start">
+                            <div className="inline-flex h-10 items-center gap-2 rounded-md border border-primary/15 bg-primary/5 px-3 font-mono text-2xs text-muted-foreground">
+                                <span className="size-2 rounded-full bg-primary shadow-glow-sm" />
+                                Durable project registry
+                            </div>
+
+                            <AddProjectDialog />
                         </div>
                     </header>
 
@@ -571,8 +612,6 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                         />
                     </section>
 
-                    <AddProjectPanel />
-
                     <section
                         className="grid min-w-0 gap-4 xl:grid-cols-2"
                         aria-label="Registered projects"
@@ -595,9 +634,9 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                                 </h2>
 
                                 <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
-                                    Add a new Git-backed project or register an
-                                    existing repository inside the configured
-                                    AIOS workspace.
+                                    Use the Add project button above to create a
+                                    new Git-backed project or register an
+                                    existing repository.
                                 </p>
                             </div>
                         )}
