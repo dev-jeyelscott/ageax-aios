@@ -119,7 +119,8 @@ class TaskWorkflow
                     'base_sha' => $attempt?->base_sha,
                     'head_sha' => $attempt?->head_sha,
                     'commit_sha' => $attempt?->commit_sha,
-                    'changed_files' => $attempt?->changed_files ?? [],
+                    'changed_files' => $attempt === null ? [] : ($attempt->changed_files ?? []),
+                    'repository_fingerprint' => $noProgress['repository_fingerprint'],
                 ], $lockedTask->project, $lockedTask);
             } else {
                 $this->audit->record('review.retry_scheduled', $payload, $lockedTask->project, $lockedTask);

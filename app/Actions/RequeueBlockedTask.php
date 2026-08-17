@@ -20,9 +20,15 @@ class RequeueBlockedTask
             ->orderByDesc('occurred_at')
             ->orderByDesc('id')
             ->first();
+        $latestPayload = $latestBlockDecision === null
+            ? []
+            : json_decode((string) $latestBlockDecision->getRawOriginal('payload'), true);
+        $operation = is_array($latestPayload) && is_string($latestPayload['operation'] ?? null)
+            ? $latestPayload['operation']
+            : null;
         $status = match ($latestBlockDecision?->event_type) {
             'review.retry_exhausted' => TaskStatus::ReadyForReview,
-            'task.no_progress_detected' => ($latestBlockDecision->payload['operation'] ?? null) === 'reviewer'
+            'task.no_progress_detected' => $operation === 'reviewer'
                 ? TaskStatus::ReadyForReview
                 : TaskStatus::ChangesRequired,
             default => TaskStatus::ChangesRequired,

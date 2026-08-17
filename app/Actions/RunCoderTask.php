@@ -234,8 +234,10 @@ class RunCoderTask
 
     private function retryStatus(Task $task, TaskAttempt $attempt): TaskStatus
     {
-        $noProgress = $this->noProgress->coderFailure($task, $attempt->refresh());
-        $validationResults = is_array($attempt->validation_results) ? $attempt->validation_results : [];
+        $attempt = $attempt->refresh();
+        $noProgress = $this->noProgress->coderFailure($task, $attempt);
+        $validationResults = json_decode((string) $attempt->getRawOriginal('validation_results'), true);
+        $validationResults = is_array($validationResults) ? $validationResults : [];
         $attempt->update(['validation_results' => [...$validationResults, 'no_progress' => $noProgress]]);
 
         $limit = max(1, (int) config('aios.max_coder_attempts'));
@@ -244,7 +246,7 @@ class RunCoderTask
             ->latest('occurred_at')
             ->first();
         $attemptsSinceRecovery = $task->attempts()
-            ->when($lastRecovery !== null, fn ($query) => $query->where('created_at', '>=', $lastRecovery->occurred_at))
+            ->when($lastRecovery !== null, fn ($query) => $query->where('created_at', '>=', $lastRecovery->getRawOriginal('occurred_at')))
             ->count();
 
         if ($attemptsSinceRecovery >= $limit) {

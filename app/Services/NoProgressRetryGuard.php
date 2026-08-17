@@ -38,7 +38,7 @@ class NoProgressRetryGuard
             return $this->unavailable($repositoryFingerprint);
         }
 
-        $validation = is_array($attempt->validation_results) ? $attempt->validation_results : [];
+        $validation = $this->decodedObject($attempt->getRawOriginal('validation_results'));
         $runEvidence = $this->runEvidence($task, AgentRole::Coder, $attempt->number, false);
         $fingerprint = $this->fingerprint([
             'operation' => 'coder',
@@ -52,9 +52,10 @@ class NoProgressRetryGuard
             'execution' => $runEvidence,
         ]);
         $previous = $this->previousCoderAttempt($task, $attempt);
-        $previousNoProgress = $previous === null || ! is_array($previous->validation_results)
-            ? null
-            : ($previous->validation_results['no_progress'] ?? null);
+        $previousValidation = $previous === null
+            ? []
+            : $this->decodedObject($previous->getRawOriginal('validation_results'));
+        $previousNoProgress = $previousValidation['no_progress'] ?? null;
         $repeatCount = is_array($previousNoProgress)
             && ($previousNoProgress['failure_fingerprint'] ?? null) === $fingerprint
             ? max(0, (int) ($previousNoProgress['consecutive_repeat_count'] ?? 0)) + 1
@@ -72,12 +73,22 @@ class NoProgressRetryGuard
      *     consecutive_repeat_count: int,
      *     threshold: int,
      *     detected: bool,
-     *     repository_fingerprint: null
+     *     repository_fingerprint: ?string
      * }
      */
     public function reviewerFailure(Task $task, ?TaskAttempt $attempt, array $failure): array
     {
         if ($attempt === null) {
+            return $this->unavailable(null);
+        }
+
+        $task->loadMissing('project');
+        $baseSha = filled($attempt->base_sha) ? (string) $attempt->base_sha : null;
+        $repositoryFingerprint = $baseSha === null
+            ? null
+            : $this->git->workingTreeFingerprintFromBase($task->project->path, $baseSha);
+
+        if ($repositoryFingerprint === null) {
             return $this->unavailable(null);
         }
 
@@ -95,19 +106,23 @@ class NoProgressRetryGuard
             'head_sha' => $attempt->head_sha,
             'commit_sha' => $attempt->commit_sha,
             'changed_files' => $this->normalizeFiles($attempt->changed_files),
+            'repository_fingerprint' => $repositoryFingerprint,
             'reason' => $reason,
             'exit_code' => is_int($failure['exit_code'] ?? null) ? $failure['exit_code'] : null,
             'error' => $this->normalizedSummary(is_string($failure['error'] ?? null) ? $failure['error'] : null),
             'execution' => $runEvidence,
         ]);
         $previousFailure = $this->previousReviewerFailure($task, $attempt);
-        $previousNoProgress = $previousFailure?->payload['no_progress'] ?? null;
+        $previousPayload = $previousFailure === null
+            ? []
+            : $this->decodedObject($previousFailure->getRawOriginal('payload'));
+        $previousNoProgress = $previousPayload['no_progress'] ?? null;
         $repeatCount = is_array($previousNoProgress)
             && ($previousNoProgress['failure_fingerprint'] ?? null) === $fingerprint
             ? max(0, (int) ($previousNoProgress['consecutive_repeat_count'] ?? 0)) + 1
             : 0;
 
-        return $this->result($fingerprint, $repeatCount, null);
+        return $this->result($fingerprint, $repeatCount, $repositoryFingerprint);
     }
 
     private function previousCoderAttempt(Task $task, TaskAttempt $attempt): ?TaskAttempt
@@ -121,12 +136,12 @@ class NoProgressRetryGuard
             return null;
         }
 
-        $lastRequeue = $task->auditEvents()
-            ->where('event_type', 'task.requeued')
-            ->orderByDesc('id')
-            ->first();
+        $finishedAt = $previous->getRawOriginal('finished_at');
 
-        if ($lastRequeue !== null && $previous->finished_at !== null && $lastRequeue->occurred_at->greaterThanOrEqualTo($previous->finished_at)) {
+        if ($finishedAt !== null && $task->auditEvents()
+            ->where('event_type', 'task.requeued')
+            ->where('occurred_at', '>=', $finishedAt)
+            ->exists()) {
             return null;
         }
 
@@ -145,7 +160,9 @@ class NoProgressRetryGuard
             ->get();
 
         return $events->first(function (AuditEvent $event) use ($attempt): bool {
-            return ($event->payload['attempt_number'] ?? null) === $attempt->number;
+            $payload = $this->decodedObject($event->getRawOriginal('payload'));
+
+            return ($payload['attempt_number'] ?? null) === $attempt->number;
         });
     }
 
@@ -176,7 +193,10 @@ class NoProgressRetryGuard
         ];
     }
 
-    /** @param array<string, mixed> $validation */
+    /**
+     * @param  array<string, mixed>  $validation
+     * @return list<string>
+     */
     private function failedChecks(array $validation): array
     {
         $checks = [];
@@ -193,7 +213,10 @@ class NoProgressRetryGuard
         return $checks;
     }
 
-    /** @param array<string, mixed> $validation */
+    /**
+     * @param  array<string, mixed>  $validation
+     * @return list<array<string, mixed>>
+     */
     private function failedValidationEvidence(array $validation): array
     {
         $items = [];
@@ -241,6 +264,23 @@ class NoProgressRetryGuard
         sort($normalized, SORT_STRING);
 
         return $normalized;
+    }
+
+    /** @return array<string, mixed> */
+    private function decodedObject(mixed $raw): array
+    {
+        if (! is_string($raw) || $raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+
+        if (! is_array($decoded)) {
+            return [];
+        }
+
+        /** @var array<string, mixed> $decoded */
+        return $decoded;
     }
 
     private function normalizedSummary(?string $summary): ?string
