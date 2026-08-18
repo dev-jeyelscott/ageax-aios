@@ -18,6 +18,14 @@ return Application::configure(basePath: dirname(__DIR__))
         // AIOS-owned Workflow Recovery Engineer detection/repair scan. Every five minutes,
         // per AGENTS.md; withoutOverlapping guards against a slow scan cycle running twice.
         $schedule->command('aios:recover-workflows')->everyFiveMinutes()->withoutOverlapping();
+
+        // Independent disaster-recovery backup, deliberately unconditional and not gated on any
+        // AIOS agent execution: DatabaseProtectionGuard only creates a backup immediately before a
+        // protected AIOS-orchestrated execution, so a destructive action taken outside AIOS's own
+        // orchestration (a manual command, another tool, a misconfigured external process) would
+        // otherwise go uncovered. This keeps a recovery point no more than 15 minutes stale
+        // regardless of what caused the need to restore.
+        $schedule->command('aios:database-backup:create', ['--reason' => 'scheduled'])->everyFifteenMinutes()->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->encryptCookies(except: ['sidebar_state']);
