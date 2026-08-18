@@ -12,15 +12,32 @@ class TaskValidator
 {
     private const int EvidenceSummaryLimit = 4000;
 
-    public function __construct(private WorkspacePathResolver $paths, private AgentRunRecorder $runs) {}
+    /** @var list<string> */
+    private const array ForbiddenArtisanCommands = [
+        'db:seed',
+        'db:wipe',
+        'migrate',
+        'migrate:fresh',
+        'migrate:install',
+        'migrate:refresh',
+        'migrate:reset',
+        'migrate:rollback',
+        'model:prune',
+        'schema:dump',
+    ];
+
+    public function __construct(
+        private WorkspacePathResolver $paths,
+        private AgentRunRecorder $runs,
+        private SanitizedExecutionEnvironment $environment,
+    ) {}
 
     /** @return array{passed: bool, checks: array<string, bool>, evidence: array<string, array<string, mixed>>} */
     public function validate(Task $task): array
     {
-        $path = $this->paths->assertProjectPath($task->project->path);
-        $diff = Process::path($path)->run(['git', 'diff', '--check']);
-        $secrets = Process::path($path)->run(['rg', '--hidden', '--glob', '!.git/**', '--glob', '!node_modules/**', '(AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36})']);
-        $status = Process::path($path)->run(['git', 'status', '--porcelain']);
+        $diff = $this->runManagedProjectProcess($task, ['git', 'diff', '--check']);
+        $secrets = $this->runManagedProjectProcess($task, ['rg', '--hidden', '--glob', '!.git/**', '--glob', '!node_modules/**', '(AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36})']);
+        $status = $this->runManagedProjectProcess($task, ['git', 'status', '--porcelain']);
         $changedFiles = collect(preg_split('/\R/', $status->output()) ?: [])
             ->filter(fn (string $line): bool => $line !== '')
             ->map(fn (string $line): string => trim(substr($line, 3)))
@@ -77,9 +94,11 @@ class TaskValidator
                 return ['passed' => false, 'evidence' => ['name' => 'task_verification', 'passed' => false, 'verification_identifier' => 'configured_verification_commands', 'exit_code' => null, 'commands' => $evidence, 'summary' => 'A configured verification command is not allowed.']];
             }
 
-            $result = Process::path($this->paths->assertProjectPath($task->project->path))
-                ->timeout((int) config('aios.execution_timeout'))
-                ->run(preg_split('/\s+/', trim($command)) ?: []);
+            $result = $this->runManagedProjectProcess(
+                $task,
+                preg_split('/\s+/', trim($command)) ?: [],
+                (int) config('aios.execution_timeout'),
+            );
 
             $commandEvidence = $this->processEvidence('task_verification_command', $result->successful(), $command, $result);
             $evidence[] = $commandEvidence;
@@ -89,6 +108,24 @@ class TaskValidator
         }
 
         return ['passed' => true, 'evidence' => ['name' => 'task_verification', 'passed' => true, 'verification_identifier' => 'task_verification_commands', 'exit_code' => 0, 'commands' => $evidence, 'summary' => null]];
+    }
+
+    /**
+     * Every TaskValidator subprocess crosses into a managed project. Keep execution centralized
+     * here so no validation check can silently inherit AIOS database credentials or application
+     * secrets from the worker process.
+     *
+     * @param  list<string>  $command
+     */
+    private function runManagedProjectProcess(Task $task, array $command, ?int $timeout = null): ProcessResult
+    {
+        $pending = Process::path($this->paths->assertProjectPath($task->project->path));
+
+        if ($timeout !== null) {
+            $pending = $pending->timeout($timeout);
+        }
+
+        return $pending->run($this->environment->wrap($command));
     }
 
     /** @return array{name: string, passed: bool, verification_identifier: string, exit_code: ?int, summary: ?string} */
@@ -161,7 +198,11 @@ class TaskValidator
             return $this->isSafeDockerComposeVerificationCommand($tokens);
         }
 
-        return in_array($executable, $this->verificationExecutables(), true);
+        if (! in_array($executable, $this->verificationExecutables(), true)) {
+            return false;
+        }
+
+        return ! $this->isForbiddenArtisanInvocation($tokens);
     }
 
     /** @param list<string> $tokens */
@@ -205,7 +246,35 @@ class TaskValidator
             return true;
         }
 
-        return in_array($innerExecutable, $this->verificationExecutables(), true);
+        if (! in_array($innerExecutable, $this->verificationExecutables(), true)) {
+            return false;
+        }
+
+        return ! $this->isForbiddenArtisanInvocation(array_slice($tokens, $index + 1));
+    }
+
+    /** @param list<string> $tokens */
+    private function isForbiddenArtisanInvocation(array $tokens): bool
+    {
+        if (($tokens[0] ?? null) !== 'php') {
+            return false;
+        }
+
+        $artisanIndex = null;
+        foreach ($tokens as $index => $token) {
+            if (in_array($token, ['artisan', './artisan'], true)) {
+                $artisanIndex = $index;
+                break;
+            }
+        }
+
+        if ($artisanIndex === null) {
+            return false;
+        }
+
+        return collect(array_slice($tokens, $artisanIndex + 1))
+            ->map(fn (string $token): string => strtolower($token))
+            ->contains(fn (string $token): bool => in_array($token, self::ForbiddenArtisanCommands, true));
     }
 
     /** @return list<string> */
