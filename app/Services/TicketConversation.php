@@ -4,9 +4,9 @@ namespace App\Services;
 
 use App\Models\Ticket;
 use App\Models\TicketAttachment;
-use App\Models\TicketMessage;
 use App\TicketMessageAuthorType;
 use App\TicketMessageType;
+use LogicException;
 
 class TicketConversation
 {
@@ -37,47 +37,54 @@ class TicketConversation
     public function clientSafePayload(
         Ticket $ticket,
     ): array {
-        return $ticket->messages()
+        $messages = $ticket->messages()
             ->clientVisible()
             ->with('attachments')
             ->oldest('id')
-            ->get()
-            ->map(
-                fn (TicketMessage $message): array => [
-                    'id' => $message->id,
-                    'message_type' => $message->message_type->value,
-                    'author_type' => $message->author_type->value,
-                    'body' => $message->body,
-                    'ai_generated' => $message->ai_generated,
-                    'ai_badge' => (
-                        $message->author_type
-                            === TicketMessageAuthorType::Ai
-                        && $message->message_type
-                            === TicketMessageType::PublicReply
-                        && $message->ai_generated
-                    )
-                        ? 'AI-generated response'
-                        : null,
-                    'agent_run_id' => $message->agent_run_id,
-                    'created_at' => $message
-                        ->created_at
-                        ?->toISOString(),
-                    'attachments' => $message
-                        ->attachments
-                        ->map(
-                            fn (
-                                TicketAttachment $attachment,
-                            ): array => $this
-                                ->attachmentPayload(
-                                    $attachment,
-                                ),
-                        )
-                        ->values()
-                        ->all(),
-                ],
-            )
-            ->values()
-            ->all();
+            ->get();
+
+        $payload = [];
+
+        foreach ($messages as $message) {
+            $authorType = $message->getAttribute('author_type');
+            $messageType = $message->getAttribute('message_type');
+
+            if (! $authorType instanceof TicketMessageAuthorType) {
+                throw new LogicException('Ticket message author type is invalid.');
+            }
+
+            if (! $messageType instanceof TicketMessageType) {
+                throw new LogicException('Ticket message type is invalid.');
+            }
+
+            $attachmentPayloads = [];
+
+            foreach ($message->attachments as $attachment) {
+                $attachmentPayloads[] = $this->attachmentPayload(
+                    $attachment,
+                );
+            }
+
+            $payload[] = [
+                'id' => $message->id,
+                'message_type' => $messageType->value,
+                'author_type' => $authorType->value,
+                'body' => $message->body,
+                'ai_generated' => $message->ai_generated,
+                'ai_badge' => (
+                    $authorType === TicketMessageAuthorType::Ai
+                    && $messageType === TicketMessageType::PublicReply
+                    && $message->ai_generated
+                )
+                    ? 'AI-generated response'
+                    : null,
+                'agent_run_id' => $message->agent_run_id,
+                'created_at' => $message->created_at?->toISOString(),
+                'attachments' => $attachmentPayloads,
+            ];
+        }
+
+        return $payload;
     }
 
     /**

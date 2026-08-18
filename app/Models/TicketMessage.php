@@ -41,8 +41,16 @@ class TicketMessage extends Model
     protected static function booted(): void
     {
         static::saving(function (TicketMessage $message): void {
-            $authorType = $message->author_type;
-            $messageType = $message->message_type;
+            $authorType = $message->getAttribute('author_type');
+            $messageType = $message->getAttribute('message_type');
+
+            if (! $authorType instanceof TicketMessageAuthorType) {
+                throw new LogicException('Ticket message author type is invalid.');
+            }
+
+            if (! $messageType instanceof TicketMessageType) {
+                throw new LogicException('Ticket message type is invalid.');
+            }
 
             if (($authorType === TicketMessageAuthorType::User) !== ($message->user_id !== null)) {
                 throw new LogicException('User-authored Ticket messages require exactly one user attribution.');
