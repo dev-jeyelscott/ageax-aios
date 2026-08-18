@@ -30,7 +30,7 @@ class ProcessRoadmap implements ShouldBeUnique, ShouldQueue
     public function handle(RunProjectManager $projectManager, WorkerHeartbeat $heartbeat): void
     {
         $roadmap = Roadmap::query()->with('project')->find($this->roadmapId);
-        if ($roadmap === null || ! in_array($roadmap->getRawOriginal('status'), ['uploaded', 'failed'], true)) {
+        if ($roadmap === null || ! in_array($roadmap->getRawOriginal('status'), ['uploaded', 'failed', 'in_progress'], true)) {
             return;
         }
 

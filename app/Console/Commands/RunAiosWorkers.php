@@ -39,7 +39,12 @@ class RunAiosWorkers extends Command
                 // Stale worker/lease and workflow-failure recovery is owned by the Workflow
                 // Recovery Engineer's five-minute scheduled scan (aios:recover-workflows), not
                 // this loop; see App\Services\WorkflowRecoveryScanner/WorkflowRecoveryEngine.
-                $roadmap = $this->onRoadmapCooldown($project) ? null : Roadmap::query()->whereBelongsTo($project)->whereIn('status', ['uploaded', 'failed'])->oldest()->first();
+                $dueRoadmap = Roadmap::query()->whereBelongsTo($project)->whereIn('status', ['uploaded', 'failed', 'in_progress'])->oldest()->first();
+                // 'in_progress' roadmaps are mid multi-batch decomposition (see
+                // ApplyRoadmapPlan's per-batch phase cap): the cooldown throttles new/retry PM
+                // invocations, not a continuation AIOS has already committed to completing.
+                $roadmapOnCooldown = $dueRoadmap !== null && $dueRoadmap->getRawOriginal('status') !== 'in_progress' && $this->onRoadmapCooldown($project);
+                $roadmap = $roadmapOnCooldown ? null : $dueRoadmap;
                 if ($roadmap !== null) {
                     $lease = $heartbeat->acquire($project, AgentRole::ProjectManager, $workerInstanceId);
                     if ($lease !== null) {

@@ -20,15 +20,22 @@ class ApplyRoadmapPlan
      * @param  array<int, array{title: string, objective: string, tasks: array<int, array{title: string, objective: string, acceptance_criteria: array<int, string>, scope?: array<int, string>, constraints?: array<int, string>, relevant_paths?: array<int, string>, verification_commands?: array<int, string>, implementation_prompt: string, obsidian_notes?: array<int, string>, depends_on?: array<int, int>, completion_status?: 'done'|'queued', completion_evidence?: string|null}>}>  $phases
      * @param  ?array<string, mixed>  $structuredOutput
      * @param  ?callable(): void  $onProgress  Invoked after each per-task note write so a caller holding a worker lease can renew it; a large plan's note-writing loop can otherwise outrun the lease TTL with no other renewal point.
+     * @param  bool  $moreWorkRemains  Whether the Project Manager signaled that phases beyond this batch remain to be planned.
+     * @return bool Whether this batch completed the roadmap (false if more phases remain, either because the batch was truncated to the per-batch cap or because the caller signaled more work remains).
      */
-    public function handle(Project $project, array $phases, ?Roadmap $roadmap = null, ?RoadmapAttempt $attempt = null, ?array $structuredOutput = null, ?callable $onProgress = null): void
+    public function handle(Project $project, array $phases, ?Roadmap $roadmap = null, ?RoadmapAttempt $attempt = null, ?array $structuredOutput = null, ?callable $onProgress = null, bool $moreWorkRemains = false): bool
     {
-        $result = DB::transaction(function () use ($project, $phases, $roadmap, $attempt, $structuredOutput): array {
+        $batchCap = max(1, (int) config('aios.roadmap_max_phases_per_batch'));
+        $truncated = count($phases) > $batchCap;
+        $phases = array_slice($phases, 0, $batchCap);
+        $isFinalBatch = ! $truncated && ! $moreWorkRemains;
+
+        $result = DB::transaction(function () use ($project, $phases, $roadmap, $attempt, $structuredOutput, $isFinalBatch): array {
             if ($roadmap !== null && $attempt !== null) {
                 $lockedRoadmap = Roadmap::query()->lockForUpdate()->findOrFail($roadmap->id);
                 $lockedAttempt = RoadmapAttempt::query()->lockForUpdate()->findOrFail($attempt->id);
 
-                if ($lockedAttempt->getRawOriginal('status') === 'persisted') {
+                if (in_array($lockedAttempt->getRawOriginal('status'), ['persisted', 'persisted_partial'], true)) {
                     return ['completed' => [], 'tasks' => []];
                 }
 
@@ -37,12 +44,13 @@ class ApplyRoadmapPlan
                 }
             }
 
-            $position = 0;
+            $phasePositionOffset = $project->phases()->count();
+            $position = (int) $project->tasks()->max('position');
             $createdTasks = [];
             $taskDependencies = [];
             $completedTasks = [];
             foreach ($phases as $phasePosition => $phaseData) {
-                $phase = Phase::create(['project_id' => $project->id, 'position' => $phasePosition + 1, 'title' => $phaseData['title'], 'objective' => $phaseData['objective']]);
+                $phase = Phase::create(['project_id' => $project->id, 'position' => $phasePositionOffset + $phasePosition + 1, 'title' => $phaseData['title'], 'objective' => $phaseData['objective']]);
                 $this->audit->record('phase.created', ['phase_id' => $phase->id, 'position' => $phase->position, 'title' => $phase->title], $project);
                 foreach ($phaseData['tasks'] as $taskData) {
                     $position++;
@@ -60,9 +68,19 @@ class ApplyRoadmapPlan
                 }
             }
 
+            // depends_on positions may reference tasks created in an earlier batch of the same
+            // roadmap (not present in $createdTasks, which only holds this batch's tasks), so
+            // fall back to a project-scoped lookup by position for cross-batch dependencies.
             foreach ($taskDependencies as $taskPosition => $dependencyPositions) {
                 $dependencyIds = collect($dependencyPositions)
-                    ->map(fn (int $dependencyPosition): int => $createdTasks[$dependencyPosition]->id)
+                    ->map(function (int $dependencyPosition) use ($createdTasks, $project): ?int {
+                        if (isset($createdTasks[$dependencyPosition])) {
+                            return $createdTasks[$dependencyPosition]->id;
+                        }
+
+                        return Task::query()->whereBelongsTo($project)->where('position', $dependencyPosition)->value('id');
+                    })
+                    ->filter()
                     ->all();
 
                 if ($dependencyIds !== []) {
@@ -73,10 +91,16 @@ class ApplyRoadmapPlan
             if ($roadmap !== null && $attempt !== null && $structuredOutput !== null) {
                 $lockedRoadmap = Roadmap::query()->lockForUpdate()->findOrFail($roadmap->id);
                 $lockedAttempt = RoadmapAttempt::query()->lockForUpdate()->findOrFail($attempt->id);
-                $lockedAttempt->update(['status' => 'persisted', 'structured_output' => $structuredOutput, 'finished_at' => now()]);
-                $lockedRoadmap->update(['status' => 'processed', 'structured_output' => $structuredOutput, 'processed_at' => now()]);
-                $this->audit->record('roadmap.persistence_completed', ['roadmap_id' => $lockedRoadmap->id, 'roadmap_attempt_id' => $lockedAttempt->id, 'phase_count' => count($phases)], $project);
-                $this->audit->record('roadmap.processed', ['roadmap_id' => $lockedRoadmap->id, 'roadmap_attempt_id' => $lockedAttempt->id, 'phase_count' => count($phases)], $project);
+                $lockedAttempt->update(['status' => $isFinalBatch ? 'persisted' : 'persisted_partial', 'structured_output' => $structuredOutput, 'finished_at' => now()]);
+                $roadmapUpdate = ['status' => $isFinalBatch ? 'processed' : 'in_progress', 'structured_output' => $structuredOutput];
+                if ($isFinalBatch) {
+                    $roadmapUpdate['processed_at'] = now();
+                }
+                $lockedRoadmap->update($roadmapUpdate);
+                $this->audit->record('roadmap.persistence_completed', ['roadmap_id' => $lockedRoadmap->id, 'roadmap_attempt_id' => $lockedAttempt->id, 'phase_count' => count($phases), 'final_batch' => $isFinalBatch], $project);
+                if ($isFinalBatch) {
+                    $this->audit->record('roadmap.processed', ['roadmap_id' => $lockedRoadmap->id, 'roadmap_attempt_id' => $lockedAttempt->id, 'phase_count' => count($phases)], $project);
+                }
             }
 
             return ['completed' => $completedTasks, 'tasks' => array_values($createdTasks)];
@@ -95,6 +119,8 @@ class ApplyRoadmapPlan
                 $onProgress();
             }
         }
+
+        return $isFinalBatch;
     }
 
     /** @param array<int, mixed>|mixed $paths

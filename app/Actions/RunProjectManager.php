@@ -4,7 +4,9 @@ namespace App\Actions;
 
 use App\AgentRole;
 use App\Exceptions\AgentNotBoundToRole;
+use App\Jobs\ProcessRoadmap;
 use App\Models\Agent;
+use App\Models\Phase;
 use App\Models\Project;
 use App\Models\Roadmap;
 use App\Models\RoadmapAttempt;
@@ -48,6 +50,13 @@ class RunProjectManager
             ->get(['id', 'body', 'created_at']);
         $retrieval = $this->notes->roadmapRetrieval($roadmap->project);
         $runtimeCapabilities = $this->runtime->detect($roadmap->project);
+        // Large roadmaps are decomposed across multiple bounded Project Manager executions
+        // (see ApplyRoadmapPlan's per-batch phase cap) instead of demanding the entire plan as
+        // one JSON response. Tell the PM what's already committed so it continues numbering and
+        // dependencies correctly rather than re-planning from scratch each batch.
+        $alreadyPlannedPhases = $roadmap->project->phases()->withCount('tasks')->orderBy('position')->get()
+            ->map(fn (Phase $phase): array => ['title' => $phase->title, 'objective' => $phase->objective, 'task_count' => $phase->tasks_count])
+            ->all();
 
         // AIOS resolves the Agent bound to this workflow role for the deterministic context
         // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
@@ -60,9 +69,10 @@ class RunProjectManager
             return $this->blockMisconfiguredAgent($attempt, $exception);
         }
 
-        $roadmapContext = ['roadmap' => $roadmap->content, 'project_runtime_capabilities' => $runtimeCapabilities, 'obsidian_project_knowledge' => $retrieval['notes'], 'operator_messages' => $pendingMessages->map(fn ($message): array => ['id' => $message->id, 'body' => $message->body, 'created_at' => $message->created_at?->toIso8601String()])->all()];
+        $roadmapContext = ['roadmap' => $roadmap->content, 'project_runtime_capabilities' => $runtimeCapabilities, 'obsidian_project_knowledge' => $retrieval['notes'], 'operator_messages' => $pendingMessages->map(fn ($message): array => ['id' => $message->id, 'body' => $message->body, 'created_at' => $message->created_at?->toIso8601String()])->all(), 'already_planned_phases' => $alreadyPlannedPhases];
         $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::ProjectManager, $roadmapContext);
-        $prompt = "You are the Project Manager. Read AGENTS.md, repository documentation, Git history, the current implementation, and the provided targeted Obsidian project knowledge before planning. Treat Obsidian notes as context, but verify the repository before marking a task complete. Treat project_runtime_capabilities as authoritative environment-topology evidence: host-only tool or PHP-extension absence does not mean a project capability is unavailable when the repository configures it in Docker Compose. For container-managed projects, prefer the repository's existing Docker Compose service conventions when generating verification_commands. Produce only JSON: {project_knowledge:{overview,architecture_decisions:[{title,rationale}],constraints,handoff},phases:[{title,objective,tasks:[{title,objective,acceptance_criteria,scope,constraints,relevant_paths,verification_commands,implementation_prompt,obsidian_notes,depends_on,completion_status,completion_evidence}]}]}. Keep tasks ordered and implementation-ready. obsidian_notes is an optional list of intentionally relevant project-local Markdown paths; never include absolute paths, traversal, or non-Markdown files. depends_on is an array of one-based positions of earlier tasks in the complete plan; declare only real dependencies. If a task has no additional dependency, use an empty array. In project_knowledge, record only concise, verified facts that will be useful to fresh agents; do not include secrets or raw repository dumps. Use concise arrays for scope, constraints, relevant_paths, and verification_commands. Verification commands must be safe, simple commands from the approved project toolchain, with no shell operators or redirects. For Docker Compose projects, prefer safe `docker compose exec -T <service> ...` verification against the detected repository-defined application service when appropriate. For every task, set completion_status to done only when the current repository already satisfies its acceptance criteria; provide concise, concrete completion_evidence with paths, commands, or commits. Otherwise set completion_status to queued and completion_evidence to null. Do not infer completion from intent or documentation alone.\n\n".json_encode($assembled?->toArray() ?? $roadmapContext, JSON_THROW_ON_ERROR);
+        $maxPhasesPerBatch = max(1, (int) config('aios.roadmap_max_phases_per_batch'));
+        $prompt = "You are the Project Manager. Read AGENTS.md, repository documentation, Git history, the current implementation, and the provided targeted Obsidian project knowledge before planning. Treat Obsidian notes as context, but verify the repository before marking a task complete. Treat project_runtime_capabilities as authoritative environment-topology evidence: host-only tool or PHP-extension absence does not mean a project capability is unavailable when the repository configures it in Docker Compose. For container-managed projects, prefer the repository's existing Docker Compose service conventions when generating verification_commands. already_planned_phases lists phases already committed for this project, in order; do not re-plan them. Plan only the next contiguous phases continuing immediately after already_planned_phases, up to a maximum of {$maxPhasesPerBatch} phases in this response, even if the roadmap describes more; a large roadmap is decomposed across multiple responses like this one. Produce only JSON: {project_knowledge:{overview,architecture_decisions:[{title,rationale}],constraints,handoff},phases:[{title,objective,tasks:[{title,objective,acceptance_criteria,scope,constraints,relevant_paths,verification_commands,implementation_prompt,obsidian_notes,depends_on,completion_status,completion_evidence}]}],remaining_work:boolean}. Set remaining_work to true if the roadmap still describes phases beyond the ones in this response, or false if this response's phases are the last of the roadmap. Keep tasks ordered and implementation-ready. obsidian_notes is an optional list of intentionally relevant project-local Markdown paths; never include absolute paths, traversal, or non-Markdown files. depends_on is an array of one-based task positions counting from the first task of the very first phase of the whole roadmap (i.e. continuing the numbering of already_planned_phases's tasks, not restarting at 1 for this response); declare only real dependencies, which may reference tasks from already_planned_phases. If a task has no additional dependency, use an empty array. In project_knowledge, record only concise, verified facts that will be useful to fresh agents; do not include secrets or raw repository dumps. Use concise arrays for scope, constraints, relevant_paths, and verification_commands. Verification commands must be safe, simple commands from the approved project toolchain, with no shell operators or redirects. For Docker Compose projects, prefer safe `docker compose exec -T <service> ...` verification against the detected repository-defined application service when appropriate. For every task, set completion_status to done only when the current repository already satisfies its acceptance criteria; provide concise, concrete completion_evidence with paths, commands, or commits. Otherwise set completion_status to queued and completion_evidence to null. Do not infer completion from intent or documentation alone.\n\n".json_encode($assembled?->toArray() ?? $roadmapContext, JSON_THROW_ON_ERROR);
         $run = $this->runs->start($roadmap->project, AgentRole::ProjectManager, $prompt, lease: $lease, retrievalManifest: $retrieval['manifest'], agent: $agent, context: $assembled);
         $attempt->update(['agent_run_id' => $run->id, 'status' => 'running']);
         $this->renewLease($lease);
@@ -106,7 +116,7 @@ class RunProjectManager
         }
 
         try {
-            $this->plans->handle($roadmap->project, $plan['phases'], $roadmap, $attempt, $plan, fn () => $this->renewLease($lease));
+            $isFinalBatch = $this->plans->handle($roadmap->project, $plan['phases'], $roadmap, $attempt, $plan, fn () => $this->renewLease($lease), (bool) ($plan['remaining_work'] ?? false));
         } catch (Throwable) {
             $this->failAttempt($attempt, $execution['exit_code'], 'persistence_failed');
 
@@ -114,6 +124,15 @@ class RunProjectManager
         }
 
         $this->renewLease($lease);
+
+        if (! $isFinalBatch) {
+            // More phases remain for this roadmap; requeue immediately so the next batch runs
+            // without waiting for the hourly roadmap retry cooldown, which throttles new/retry
+            // invocations rather than an already-accepted multi-batch decomposition in progress.
+            ProcessRoadmap::dispatch($roadmap->id);
+
+            return $execution;
+        }
 
         $this->notes->writeRoadmapPlan($roadmap->project, $plan);
         $this->notes->writeProjectManagerKnowledge($roadmap->project, $plan['project_knowledge'] ?? [], $plan['phases']);
@@ -190,7 +209,7 @@ class RunProjectManager
             $lockedRoadmap = Roadmap::query()->lockForUpdate()->findOrFail($roadmap->id);
             $status = (string) $lockedRoadmap->getRawOriginal('status');
 
-            if (! in_array($status, ['uploaded', 'failed'], true)) {
+            if (! in_array($status, ['uploaded', 'failed', 'in_progress'], true)) {
                 return null;
             }
 
@@ -260,7 +279,10 @@ class RunProjectManager
     /** @return array{retry_count: int, retry_limit: int, exhausted: bool} */
     private function roadmapRetryPolicy(Roadmap $roadmap): array
     {
-        $retryCount = $roadmap->attempts()->count();
+        // Only failed/interrupted attempts consume the retry budget; a large roadmap's own
+        // successful batches (status 'persisted_partial') must not erode the budget available
+        // for genuine failures on a later batch.
+        $retryCount = $roadmap->attempts()->whereIn('status', ['failed', 'interrupted'])->count();
         $retryLimit = max(1, (int) config('aios.max_roadmap_attempts'));
 
         return [
