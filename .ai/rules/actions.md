@@ -95,6 +95,12 @@ observe
 
 Manual operator configuration changes continue through the existing validated Agent configuration/binding workflow.
 
+## Project creation/linking always seeds the dedicated default Skill set
+
+`CreateProject::handle()` provisions the three core Agents (`ProvisionDefaultProjectAgents`), binds their `AgentWorker`s, then calls `ProvisionDedicatedAgentSkills::handle($project)` before recording the `project.created`/`project.registered` audit event — for both brand-new and linked-existing projects. This must run after the `AgentWorker` bindings exist, because skill auto-assignment resolves the bound Agent per role from `project->workers()->with('agent')`, not from Agent name/role alone.
+
+`ProvisionDedicatedAgentSkills` is the single source of truth for the dedicated per-role Skill catalogue (8 Skills per core role: Project Manager, Coder, Reviewer; 5 of each auto-assigned). `database/seeders/DedicatedAgentSkillsSeeder` is a thin backfill wrapper that loops existing projects and delegates to this same Action — it must not duplicate the catalogue. Both paths are idempotent (skip by existing slug/name) and non-destructive (never overwrite operator edits, re-enable a disabled Skill, or re-attach a Skill an operator intentionally detached); adding a new default Skill to the catalogue only affects projects that don't already have a Skill of that slug/name.
+
 ## Database protection guards every protected execution the same way
 
 `RunProjectManager`, `RunCoderTask`, and `RunReviewerTask` each call `DatabaseProtectionGuard::guard($project)` as the very first statement inside the existing try-block that wraps the harness call, after `AgentRunRecorder::start()` has already persisted the `AgentRun`. A guard failure (`DatabaseProtectionFailed`/`UnsafeProjectPath`) is caught by that same block's existing `catch (Throwable)` and follows the role's normal bounded-retry-then-block failure path; do not special-case it into a different transition. This applies identically regardless of the resolved Agent's harness (Codex or Claude Code) — switching harness configuration must never bypass it.

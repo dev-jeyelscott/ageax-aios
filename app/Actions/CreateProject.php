@@ -20,6 +20,7 @@ class CreateProject
         private AuditLogger $audit,
         private ObsidianProjectNotes $notes,
         private ProvisionDefaultProjectAgents $agentProvisioner,
+        private ProvisionDedicatedAgentSkills $skillProvisioner,
     ) {}
 
     public function handle(string $name, string $path, bool $existing = false): Project
@@ -64,6 +65,8 @@ class CreateProject
 
                 AgentWorker::create(['project_id' => $project->id, 'role' => $role, 'agent_id' => $agent->id, 'status' => 'idle']);
             }
+
+            $this->skillProvisioner->handle($project);
 
             $this->audit->record($existing ? 'project.registered' : 'project.created', ['path' => $projectPath], $project);
 

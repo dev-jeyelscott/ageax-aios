@@ -122,6 +122,61 @@ test('the backfill safely provisions existing projects without changing workers 
         ->and(AgentRun::query()->count())->toBe(1);
 });
 
+test('creating a new project also seeds the dedicated default skill set for each core agent', function () {
+    $workspace = sys_get_temp_dir().'/aios-default-skills-workspace-'.Str::uuid();
+    $vault = sys_get_temp_dir().'/aios-default-skills-vault-'.Str::uuid();
+    config()->set('aios.workspace_root', $workspace);
+    config()->set('aios.obsidian_vault_path', $vault);
+    Process::fake(['*' => Process::sequence([
+        Process::result(),
+        Process::result(),
+        Process::result(exitCode: 1),
+    ])]);
+
+    try {
+        $project = app(CreateProject::class)->handle('Default Skills Project', 'skills-example');
+
+        expect($project->skills()->count())->toBe(24);
+
+        foreach ([AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer] as $role) {
+            $agent = $project->agents()->where('role', $role)->sole();
+
+            expect($agent->skills()->count())->toBe(5);
+        }
+    } finally {
+        File::deleteDirectory($workspace);
+        File::deleteDirectory($vault);
+    }
+});
+
+test('linking an existing project also seeds the dedicated default skill set for each core agent', function () {
+    $workspace = sys_get_temp_dir().'/aios-default-skills-existing-'.Str::uuid();
+    $vault = sys_get_temp_dir().'/aios-default-skills-existing-vault-'.Str::uuid();
+    config()->set('aios.workspace_root', $workspace);
+    config()->set('aios.obsidian_vault_path', $vault);
+    mkdir($workspace.'/linked-project', 0755, true);
+    Process::fake(['*' => Process::sequence([
+        Process::result('true'),
+        Process::result(),
+        Process::result(exitCode: 1),
+    ])]);
+
+    try {
+        $project = app(CreateProject::class)->handle('Linked Skills Project', 'linked-project', true);
+
+        expect($project->skills()->count())->toBe(24);
+
+        foreach ([AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer] as $role) {
+            $agent = $project->agents()->where('role', $role)->sole();
+
+            expect($agent->skills()->count())->toBe(5);
+        }
+    } finally {
+        File::deleteDirectory($workspace);
+        File::deleteDirectory($vault);
+    }
+});
+
 test('default agent provisioning participates in the project creation transaction', function () {
     $workspace = sys_get_temp_dir().'/aios-default-agent-rollback-workspace-'.Str::uuid();
     $vault = sys_get_temp_dir().'/aios-default-agent-rollback-vault-'.Str::uuid();
