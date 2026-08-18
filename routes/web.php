@@ -4,6 +4,7 @@ use App\Http\Controllers\AgentController;
 use App\Http\Controllers\GlobalAgentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\SkillController;
+use App\Http\Controllers\TicketController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'welcome')->name('home');
@@ -25,6 +26,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('projects/{project}/tasks/{task}/requeue', [ProjectController::class, 'requeueTask'])->scopeBindings()->name('projects.tasks.requeue');
     Route::post('projects/{project}/roadmaps', [ProjectController::class, 'storeRoadmap'])->name('projects.roadmaps.store');
     Route::post('projects/{project}/roadmaps/{roadmap}/requeue', [ProjectController::class, 'requeueRoadmap'])->scopeBindings()->name('projects.roadmaps.requeue');
+
+    Route::get('projects/{project}/tickets', [TicketController::class, 'index'])->name('projects.tickets.index');
+    Route::post('projects/{project}/tickets', [TicketController::class, 'store'])->name('projects.tickets.store');
+    Route::get('projects/{project}/tickets/{ticket}', [TicketController::class, 'show'])->scopeBindings()->name('projects.tickets.show');
+    Route::post('projects/{project}/tickets/{ticket}/messages', [TicketController::class, 'storeMessage'])->scopeBindings()->name('projects.tickets.messages.store');
 
     Route::post('projects/{project}/agents', [AgentController::class, 'store'])->name('projects.agents.store');
     Route::patch('projects/{project}/agents/{agent}', [AgentController::class, 'update'])->scopeBindings()->name('projects.agents.update');

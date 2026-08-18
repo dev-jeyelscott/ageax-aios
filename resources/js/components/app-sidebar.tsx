@@ -1,7 +1,8 @@
-import { Link } from '@inertiajs/react';
-import { Bot, FolderKanban, LayoutGrid } from 'lucide-react';
+import { Link, usePage } from '@inertiajs/react';
+import { Bot, FolderKanban, LayoutGrid, Ticket } from 'lucide-react';
 import { index as agentsIndex } from '@/actions/App/Http/Controllers/GlobalAgentController';
 import { index as projectsIndex } from '@/actions/App/Http/Controllers/ProjectController';
+import { index as ticketsIndex } from '@/actions/App/Http/Controllers/TicketController';
 import AppLogo from '@/components/app-logo';
 import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
@@ -17,7 +18,7 @@ import {
 import { dashboard } from '@/routes';
 import type { NavItem } from '@/types';
 
-const mainNavItems: NavItem[] = [
+const baseNavItems: NavItem[] = [
     {
         title: 'Dashboard',
         href: dashboard(),
@@ -36,6 +37,18 @@ const mainNavItems: NavItem[] = [
 ];
 
 export function AppSidebar() {
+    const page = usePage();
+    const project = page.props.project as { id?: number } | undefined;
+    const mainNavItems = [...baseNavItems];
+
+    if (typeof project?.id === 'number') {
+        mainNavItems.splice(2, 0, {
+            title: 'Tickets',
+            href: ticketsIndex(project.id),
+            icon: Ticket,
+        });
+    }
+
     return (
         <Sidebar collapsible="icon" variant="inset">
             <SidebarHeader>
