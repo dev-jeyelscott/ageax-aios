@@ -34,6 +34,43 @@ test('it extracts a review decision from a pretty-printed fenced JSON block', fu
     ]);
 });
 
+test('it extracts a fenced plan even when a nested field contains a single-line JSON object', function () {
+    // Regression: project_knowledge.architecture_decisions entries are sometimes rendered as
+    // single-line {"title":...,"rationale":...} objects with no "type" key. Before the fenced
+    // block was checked first, the codex-style NDJSON line scan matched one of these nested
+    // lines as if it were the top-level event, returning that unrelated fragment instead of the
+    // real plan and causing roadmap decomposition to fail with an unparseable-output error.
+    $output = <<<'TEXT'
+    Now producing the plan.
+
+    ```json
+    {
+      "project_knowledge": {
+        "architecture_decisions": [
+          {"title": "Starter kit baseline", "rationale": "Nothing custom yet."}
+        ]
+      },
+      "phases": [{"title": "Foundation", "objective": "Set up the base.", "tasks": []}],
+      "remaining_work": false
+    }
+    ```
+    TEXT;
+
+    expect(app(StructuredResultParser::class)->parse($output))->toBe([
+        'project_knowledge' => [
+            'architecture_decisions' => [
+                ['title' => 'Starter kit baseline', 'rationale' => 'Nothing custom yet.'],
+            ],
+        ],
+        'phases' => [[
+            'title' => 'Foundation',
+            'objective' => 'Set up the base.',
+            'tasks' => [],
+        ]],
+        'remaining_work' => false,
+    ]);
+});
+
 test('it extracts a review decision from pretty-printed JSON with no fence', function () {
     $output = <<<'TEXT'
     {

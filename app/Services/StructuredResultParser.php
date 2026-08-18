@@ -19,6 +19,16 @@ class StructuredResultParser
     {
         $trimmed = trim($output);
 
+        // A genuine ```json fence is authoritative: harnesses such as Claude Code CLI wrap
+        // their complete structured answer in one. Checking it first avoids a pretty-printed
+        // object's own single-line nested values (e.g. a one-line {"title":...,"rationale":...}
+        // entry inside project_knowledge.architecture_decisions) being mistaken by the
+        // codex-style NDJSON line scan below for the top-level event line.
+        $fenced = $this->decodeFencedJsonObject($trimmed);
+        if ($fenced !== null) {
+            return $fenced;
+        }
+
         foreach (array_reverse(preg_split('/\R/', $trimmed) ?: []) as $line) {
             $decoded = $this->decodeJsonObject($line);
             if ($decoded !== null && ! isset($decoded['type'])) {
@@ -31,25 +41,30 @@ class StructuredResultParser
             }
         }
 
-        // Harnesses such as Claude Code may return a single pretty-printed JSON
-        // object (often inside a ```json fence) instead of the codex-style NDJSON
-        // envelope handled above. Fall back to extracting that object directly.
-        return $this->decodeFencedOrEmbeddedJsonObject($trimmed);
+        // Last resort: a single pretty-printed JSON object with no fence at all.
+        return $this->decodeEmbeddedJsonObject($trimmed);
     }
 
     /** @return array<string, mixed>|null */
-    private function decodeFencedOrEmbeddedJsonObject(string $output): ?array
+    private function decodeFencedJsonObject(string $output): ?array
     {
         $matchCount = preg_match_all('/```(?:json)?\s*(.*?)\s*```/s', $output, $matches);
+        if (! is_int($matchCount) || $matchCount === 0) {
+            return null;
+        }
 
-        if (is_int($matchCount) && $matchCount > 0) {
-            foreach (array_reverse($matches[1]) as $candidate) {
-                if (($decoded = $this->decodeJsonObject($candidate)) !== null) {
-                    return $decoded;
-                }
+        foreach (array_reverse($matches[1]) as $candidate) {
+            if (($decoded = $this->decodeJsonObject($candidate)) !== null) {
+                return $decoded;
             }
         }
 
+        return null;
+    }
+
+    /** @return array<string, mixed>|null */
+    private function decodeEmbeddedJsonObject(string $output): ?array
+    {
         $start = strpos($output, '{');
         $end = strrpos($output, '}');
         if ($start === false || $end === false || $end <= $start) {
