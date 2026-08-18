@@ -17,7 +17,6 @@ import { lazy, Suspense, useState, useSyncExternalStore } from 'react';
 import {
     index,
     requeueRoadmap,
-    requeueTask,
     showAgentRun,
     showTask,
     updateStatus,
@@ -42,6 +41,7 @@ import type {
 } from '@/pages/projects/agents-panel';
 import { SkillsPanel } from '@/pages/projects/skills-panel';
 import type { Skill } from '@/pages/projects/skills-panel';
+import { TasksPanel as ProjectTasksPanel } from '@/pages/projects/tasks-panel';
 import { store as storeRoadmap } from '@/routes/projects/roadmaps';
 
 const LazyAgentOffice = lazy(() =>
@@ -331,10 +331,10 @@ function RoadmapPanel({
                         {progress}%
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                        {completedTasks} of {project.tasks.length} tasks
-                        complete
+                        {completedTasks} of {project.tasks.length} tasks complete
                     </p>
                 </div>
+
                 {latestRoadmap && (
                     <Badge
                         variant="outline"
@@ -356,6 +356,7 @@ function RoadmapPanel({
                 <p className="font-mono text-2xs text-muted-foreground uppercase">
                     Next unfinished task
                 </p>
+
                 {roadmapTask ? (
                     <Link
                         href={
@@ -463,6 +464,7 @@ function GitEvidencePanel({ project }: { project: Project }) {
                         >
                             {evidence.task.key}
                         </Link>
+
                         <Badge
                             variant="outline"
                             className="border-border bg-card font-mono text-2xs text-muted-foreground"
@@ -514,11 +516,13 @@ function GitEvidencePanel({ project }: { project: Project }) {
                                     {file}
                                 </p>
                             ))}
+
                             {!evidence.changed_files?.length && (
                                 <p className="text-xs text-muted-foreground">
                                     No changed-file evidence recorded.
                                 </p>
                             )}
+
                             {(evidence.changed_files?.length ?? 0) > 2 && (
                                 <p className="text-2xs text-muted-foreground">
                                     +{(evidence.changed_files?.length ?? 0) - 2}{' '}
@@ -533,6 +537,7 @@ function GitEvidencePanel({ project }: { project: Project }) {
                             <p className="font-mono text-2xs text-muted-foreground uppercase">
                                 Validation
                             </p>
+
                             <span
                                 className={`text-xs ${
                                     evidence.validation_results?.passed === true
@@ -581,6 +586,7 @@ function GitEvidencePanel({ project }: { project: Project }) {
                     <p className="mt-1.5 text-xs text-muted-foreground">
                         No task-attempt Git evidence yet.
                     </p>
+
                     {project.git_head_sha && (
                         <p
                             className="mt-1 truncate font-mono text-2xs text-muted-foreground"
@@ -610,6 +616,7 @@ function ProviderUsage({
                     {usage.run_count} runs
                 </span>
             </div>
+
             <p className="mt-0.5 font-mono text-xs text-primary">
                 {formatTokens(usage.token_usage)} tokens
             </p>
@@ -636,6 +643,7 @@ function HarnessUsagePanel({ project }: { project: Project }) {
                         {formatTokens(project.token_usage_total)}
                     </p>
                 </div>
+
                 <Activity className="size-4 text-secondary-foreground" />
             </div>
 
@@ -648,6 +656,7 @@ function HarnessUsagePanel({ project }: { project: Project }) {
                     label="Claude Code"
                     usage={project.harness_usage.claude_code ?? zeroUsage}
                 />
+
                 {legacy && (
                     <ProviderUsage label="Legacy / unknown" usage={legacy} />
                 )}
@@ -657,6 +666,7 @@ function HarnessUsagePanel({ project }: { project: Project }) {
                 <p className="font-mono text-2xs text-muted-foreground uppercase">
                     Rolling role averages
                 </p>
+
                 <div className="mt-1 grid gap-1">
                     {Object.entries(project.token_observability)
                         .slice(0, 2)
@@ -671,7 +681,9 @@ function HarnessUsagePanel({ project }: { project: Project }) {
                                 <span className="shrink-0 font-mono text-2xs text-muted-foreground">
                                     {usage.rolling_average === null
                                         ? 'no runs'
-                                        : `${formatTokens(usage.rolling_average)} avg`}
+                                        : `${formatTokens(
+                                              usage.rolling_average,
+                                          )} avg`}
                                 </span>
                             </div>
                         ))}
@@ -714,86 +726,12 @@ function OverviewDashboard({
 
 function TasksPanel({ project }: { project: Project }) {
     return (
-        <Card className="border-border/70 bg-background/75 text-foreground">
-            <CardHeader>
-                <CardTitle>Ordered tasks</CardTitle>
-                <CardDescription>
-                    Serial task ordering remains controlled by AIOS.
-                </CardDescription>
-            </CardHeader>
-
-            <CardContent className="grid gap-2.5">
-                {[...project.tasks]
-                    .sort(
-                        (a, b) =>
-                            Number(a.status === 'done') -
-                            Number(b.status === 'done'),
-                    )
-                    .map((task) => (
-                        <div
-                            key={task.id}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/45 p-3"
-                        >
-                            <div className="min-w-0">
-                                <Link
-                                    href={
-                                        showTask({
-                                            project: project.id,
-                                            task: task.id,
-                                        }).url
-                                    }
-                                    className="font-medium text-foreground hover:text-primary"
-                                >
-                                    {task.key}: {task.title}
-                                </Link>
-                                <p className="mt-1 text-xs text-muted-foreground">
-                                    Attempt {task.attempts[0]?.number ?? '—'} ·
-                                    Review {task.reviews[0]?.status ?? '—'}
-                                </p>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                                <Badge
-                                    variant={
-                                        task.status === 'done'
-                                            ? 'default'
-                                            : 'secondary'
-                                    }
-                                >
-                                    {task.status}
-                                </Badge>
-
-                                {task.status === 'blocked' && (
-                                    <Form
-                                        {...requeueTask.form({
-                                            project: project.id,
-                                            task: task.id,
-                                        })}
-                                    >
-                                        {({ processing }) => (
-                                            <Button
-                                                size="sm"
-                                                type="submit"
-                                                variant="outline"
-                                                disabled={processing}
-                                            >
-                                                <RotateCcw />
-                                                Retry
-                                            </Button>
-                                        )}
-                                    </Form>
-                                )}
-                            </div>
-                        </div>
-                    ))}
-
-                {project.tasks.length === 0 && (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                        Upload a roadmap to generate implementation tasks.
-                    </p>
-                )}
-            </CardContent>
-        </Card>
+        <ProjectTasksPanel
+            projectId={project.id}
+            tasks={project.tasks}
+            gitEvidence={project.git_evidence}
+            repositoryHeadSha={project.git_head_sha}
+        />
     );
 }
 
@@ -815,6 +753,7 @@ function ActivityMetric({
                 <div className="grid size-8 shrink-0 place-items-center rounded-lg border border-primary/15 bg-primary/5 text-primary">
                     {icon}
                 </div>
+
                 <div className="min-w-0">
                     <p className="font-mono text-2xs tracking-[0.12em] text-muted-foreground uppercase">
                         {label}
@@ -884,12 +823,14 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                 Activity intelligence
                             </p>
                         </div>
+
                         <h2 className="mt-1 text-base font-semibold text-foreground">
                             Execution & audit command center
                         </h2>
+
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                            Live project state backed by persisted AIOS
-                            execution and audit evidence.
+                            Live project state backed by persisted AIOS execution
+                            and audit evidence.
                         </p>
                     </div>
 
@@ -1026,6 +967,7 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                                         <p className="text-sm font-semibold text-foreground transition group-hover:text-primary">
                                                             {humanize(run.role)}
                                                         </p>
+
                                                         <Badge
                                                             variant="outline"
                                                             className={`font-mono text-2xs ${visual.badge}`}
@@ -1069,7 +1011,9 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                                     <Activity className="size-3 text-primary" />
                                                     {run.token_usage === null
                                                         ? 'Tokens unavailable'
-                                                        : `${formatTokens(run.token_usage)} tokens`}
+                                                        : `${formatTokens(
+                                                              run.token_usage,
+                                                          )} tokens`}
                                                 </span>
 
                                                 <span className="flex items-center gap-1.5 rounded-md border border-border-subtle bg-foreground/2 px-2 py-1 font-mono text-2xs text-muted-foreground">
@@ -1192,6 +1136,7 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                                     >
                                                         {event.event_type}
                                                     </p>
+
                                                     <p className="mt-1 text-2xs text-muted-foreground">
                                                         {humanize(
                                                             event.event_type,
@@ -1200,7 +1145,9 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                                 </div>
 
                                                 <time
-                                                    dateTime={event.occurred_at}
+                                                    dateTime={
+                                                        event.occurred_at
+                                                    }
                                                     className="shrink-0 font-mono text-2xs text-muted-foreground"
                                                 >
                                                     {new Date(
@@ -1252,9 +1199,11 @@ export default function ProjectShow({
     const roadmapTask = project.tasks.find(
         (task) => !['done', 'cancelled'].includes(task.status),
     );
+
     const completedTasks = project.tasks.filter(
         (task) => task.status === 'done',
     ).length;
+
     const [tab, setTab] = useState<Tab>('overview');
 
     const tabs: { value: Tab; label: string }[] = [
@@ -1285,6 +1234,7 @@ export default function ProjectShow({
                             AIOS project
                         </span>
                     </div>
+
                     <p className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">
                         {project.path}
                     </p>
@@ -1304,12 +1254,14 @@ export default function ProjectShow({
                                         : 'running'
                                 }
                             />
+
                             <Button
                                 size="sm"
                                 type="submit"
                                 variant="outline"
                                 disabled={
-                                    processing || project.status === 'stopping'
+                                    processing ||
+                                    project.status === 'stopping'
                                 }
                                 className="h-7 border-border bg-card/50 px-2 text-xs"
                             >
@@ -1318,6 +1270,7 @@ export default function ProjectShow({
                                 ) : (
                                     <Play className="size-3" />
                                 )}
+
                                 {project.status === 'running'
                                     ? 'Pause'
                                     : project.status === 'stopping'

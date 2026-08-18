@@ -4,6 +4,8 @@ import {
     ArrowUpRight,
     CheckCircle2,
     CircleDashed,
+    GitBranch,
+    GitCommitHorizontal,
     ListFilter,
     RotateCcw,
     Search,
@@ -36,13 +38,35 @@ export type ProjectTaskSummary = {
     reviews: { status: string }[];
 };
 
+export type ProjectTaskGitEvidence = {
+    task: {
+        id: number;
+        key: string;
+        title: string;
+    };
+    attempt_number: number;
+    status: string;
+    base_sha: string | null;
+    head_sha: string | null;
+    commit_sha: string | null;
+};
+
 type Props = {
     projectId: number;
     tasks: ProjectTaskSummary[];
+    gitEvidence: ProjectTaskGitEvidence | null;
+    repositoryHeadSha: string | null;
 };
 
 type FilterGroup =
-    'all' | 'queued' | 'active' | 'review' | 'done' | 'attention';
+    | 'all'
+    | 'queued'
+    | 'active'
+    | 'review'
+    | 'done'
+    | 'attention'
+    | 'closed';
+
 type OwnerFilter = 'all' | 'aios' | 'coder' | 'reviewer';
 
 type DecoratedTask = {
@@ -56,7 +80,7 @@ type DecoratedTask = {
     latestReview: string | null;
     owner: 'aios' | 'coder' | 'reviewer';
     ownerLabel: string;
-    urgencyLabel: 'normal' | 'active' | 'attention' | 'resolved';
+    signalLabel: 'normal' | 'active' | 'attention' | 'resolved';
     subtitle: string;
 };
 
@@ -64,26 +88,32 @@ function normalizeStatus(status: string): string {
     return status.replaceAll('_', ' ');
 }
 
+function shortSha(value: string | null): string {
+    return value ? value.slice(0, 10) : '—';
+}
+
 function getTaskGroup(task: ProjectTaskSummary): FilterGroup {
-    const status = task.status;
-
-    if (status === 'done') {
-        return 'done';
+    switch (task.status) {
+        case 'done':
+            return 'done';
+        case 'cancelled':
+            return 'closed';
+        case 'blocked':
+        case 'failed':
+        case 'interrupted':
+        case 'changes_required':
+            return 'attention';
+        case 'ready_for_review':
+        case 'reviewing':
+            return 'review';
+        case 'coding':
+        case 'validating':
+            return 'active';
+        case 'queued':
+            return 'queued';
+        default:
+            return 'attention';
     }
-
-    if (['blocked', 'failed', 'changes_required'].includes(status)) {
-        return 'attention';
-    }
-
-    if (['ready_for_review', 'reviewing'].includes(status)) {
-        return 'review';
-    }
-
-    if (['coding', 'validating', 'in_progress'].includes(status)) {
-        return 'active';
-    }
-
-    return 'queued';
 }
 
 function getOwner(task: ProjectTaskSummary): {
@@ -100,6 +130,10 @@ function getOwner(task: ProjectTaskSummary): {
         return { owner: 'coder', label: 'Coder lane' };
     }
 
+    if (group === 'closed') {
+        return { owner: 'aios', label: 'Closed' };
+    }
+
     if (task.status === 'done' && task.reviews[0]?.status === 'approved') {
         return { owner: 'reviewer', label: 'Approved' };
     }
@@ -107,7 +141,7 @@ function getOwner(task: ProjectTaskSummary): {
     return { owner: 'aios', label: 'AIOS queue' };
 }
 
-function getUrgency(group: FilterGroup): DecoratedTask['urgencyLabel'] {
+function getSignal(group: FilterGroup): DecoratedTask['signalLabel'] {
     if (group === 'attention') {
         return 'attention';
     }
@@ -116,7 +150,7 @@ function getUrgency(group: FilterGroup): DecoratedTask['urgencyLabel'] {
         return 'active';
     }
 
-    if (group === 'done') {
+    if (group === 'done' || group === 'closed') {
         return 'resolved';
     }
 
@@ -149,8 +183,10 @@ function badgeClassForOwner(owner: DecoratedTask['owner']): string {
     }
 }
 
-function badgeClassForUrgency(urgency: DecoratedTask['urgencyLabel']): string {
-    switch (urgency) {
+function badgeClassForSignal(
+    signal: DecoratedTask['signalLabel'],
+): string {
+    switch (signal) {
         case 'attention':
             return 'border-destructive/30 bg-destructive/10 text-destructive-foreground';
         case 'active':
@@ -162,7 +198,10 @@ function badgeClassForUrgency(urgency: DecoratedTask['urgencyLabel']): string {
     }
 }
 
-function summaryValue(tasks: ProjectTaskSummary[], group: FilterGroup): number {
+function summaryValue(
+    tasks: ProjectTaskSummary[],
+    group: FilterGroup,
+): number {
     return tasks.filter((task) => getTaskGroup(task) === group).length;
 }
 
@@ -181,20 +220,22 @@ function iconForGroup(group: FilterGroup) {
     }
 }
 
-export function TasksPanel({ projectId, tasks }: Props) {
+export function TasksPanel({
+    projectId,
+    tasks,
+    gitEvidence,
+    repositoryHeadSha,
+}: Props) {
     const [query, setQuery] = useState('');
     const [groupFilter, setGroupFilter] = useState<FilterGroup>('all');
     const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('all');
 
-    const orderedTasks = useMemo(
-        () =>
-            [...tasks].sort(
-                (left, right) =>
-                    Number(left.status === 'done') -
-                    Number(right.status === 'done'),
-            ),
-        [tasks],
-    );
+    /*
+     * ProjectController already returns tasks in durable `position` order.
+     * Keep that server-authoritative ordering intact instead of reshuffling
+     * completed work in the browser.
+     */
+    const orderedTasks = useMemo(() => [...tasks], [tasks]);
 
     const decoratedTasks = useMemo<DecoratedTask[]>(
         () =>
@@ -215,7 +256,7 @@ export function TasksPanel({ projectId, tasks }: Props) {
                     latestReview,
                     owner: owner.owner,
                     ownerLabel: owner.label,
-                    urgencyLabel: getUrgency(group),
+                    signalLabel: getSignal(group),
                     subtitle: [
                         latestAttempt === null
                             ? 'No attempts yet'
@@ -240,100 +281,133 @@ export function TasksPanel({ projectId, tasks }: Props) {
                 normalizeStatus(task.status).toLowerCase().includes(search);
 
             const matchesGroup =
-                groupFilter === 'all' ? true : task.group === groupFilter;
+                groupFilter === 'all' || task.group === groupFilter;
 
             const matchesOwner =
-                ownerFilter === 'all' ? true : task.owner === ownerFilter;
+                ownerFilter === 'all' || task.owner === ownerFilter;
 
             return matchesQuery && matchesGroup && matchesOwner;
         });
     }, [decoratedTasks, groupFilter, ownerFilter, query]);
 
-    const activeCount =
-        summaryValue(tasks, 'active') + summaryValue(tasks, 'queued');
+    const queuedCount = summaryValue(tasks, 'queued');
+    const activeCount = summaryValue(tasks, 'active');
     const reviewCount = summaryValue(tasks, 'review');
     const attentionCount = summaryValue(tasks, 'attention');
     const completedCount = summaryValue(tasks, 'done');
+
+    const focusTask =
+        decoratedTasks.find(
+            (task) => task.group !== 'done' && task.group !== 'closed',
+        ) ?? null;
+
+    const percentageOfTotal = (value: number): number =>
+        tasks.length === 0 ? 0 : Math.round((value / tasks.length) * 100);
 
     const summaryCards = [
         {
             label: 'Total tasks',
             value: tasks.length,
-            hint: 'Across ordered roadmap execution',
+            hint: 'Ordered roadmap execution',
             group: 'all' as const,
+            percentage: tasks.length === 0 ? 0 : 100,
             className: 'border-primary/20 bg-primary/6',
-        },
-        {
-            label: 'Active queue',
-            value: activeCount,
-            hint: 'Queued, coding, or validating',
-            group: 'active' as const,
-            className: 'border-primary/18 bg-primary/5',
-        },
-        {
-            label: 'In review',
-            value: reviewCount,
-            hint: 'Ready for or under review',
-            group: 'review' as const,
-            className: 'border-secondary/22 bg-secondary/10',
-        },
-        {
-            label: 'Needs attention',
-            value: attentionCount,
-            hint: 'Blocked, failed, or changes required',
-            group: 'attention' as const,
-            className: 'border-destructive/18 bg-destructive/6',
         },
         {
             label: 'Completed',
             value: completedCount,
-            hint: 'Done and preserved in history',
+            hint: 'Reviewer-approved work',
             group: 'done' as const,
+            percentage: percentageOfTotal(completedCount),
             className: 'border-success/18 bg-success/6',
+        },
+        {
+            label: 'In progress',
+            value: activeCount,
+            hint: 'Coding or validating',
+            group: 'active' as const,
+            percentage: percentageOfTotal(activeCount),
+            className: 'border-warning/18 bg-warning/5',
+        },
+        {
+            label: 'Pending review',
+            value: reviewCount,
+            hint: 'Ready for or under review',
+            group: 'review' as const,
+            percentage: percentageOfTotal(reviewCount),
+            className: 'border-secondary/22 bg-secondary/10',
+        },
+        {
+            label: 'Queued',
+            value: queuedCount,
+            hint: 'Waiting in AIOS order',
+            group: 'queued' as const,
+            percentage: percentageOfTotal(queuedCount),
+            className: 'border-primary/18 bg-primary/5',
         },
     ];
 
+    const evidenceHeadSha =
+        gitEvidence?.head_sha ?? repositoryHeadSha ?? null;
+
     return (
         <div className="grid gap-3">
-            <div className="grid gap-3 xl:grid-cols-5">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 {summaryCards.map((card) => {
                     const Icon =
                         card.group === 'all'
                             ? ListFilter
-                            : iconForGroup(
-                                  card.group === 'attention'
-                                      ? 'attention'
-                                      : card.group,
-                              );
+                            : iconForGroup(card.group);
+
+                    const selected = groupFilter === card.group;
 
                     return (
                         <button
                             key={card.label}
                             type="button"
-                            onClick={() =>
-                                setGroupFilter(
-                                    card.group === 'all' ? 'all' : card.group,
-                                )
-                            }
-                            className={`panel-elevated relative overflow-hidden p-4 text-left transition hover:border-primary/25 ${card.className}`}
+                            aria-pressed={selected}
+                            onClick={() => setGroupFilter(card.group)}
+                            className={`panel-elevated relative overflow-hidden p-4 text-left transition hover:border-primary/25 ${
+                                selected
+                                    ? 'border-primary/30 shadow-glow-sm'
+                                    : ''
+                            } ${card.className}`}
                         >
                             <div className="glow-line-accent" />
+
                             <div className="flex items-start justify-between gap-3">
-                                <div>
+                                <div className="min-w-0">
                                     <p className="font-mono text-2xs tracking-[0.16em] text-muted-foreground uppercase">
                                         {card.label}
                                     </p>
+
                                     <p className="mt-2 text-2xl font-semibold text-foreground">
                                         {card.value}
                                     </p>
-                                    <p className="mt-1 text-xs text-muted-foreground">
+
+                                    <p className="mt-1 truncate text-xs text-muted-foreground">
                                         {card.hint}
                                     </p>
                                 </div>
 
-                                <div className="grid size-10 place-items-center rounded-xl border border-border/70 bg-card/70 text-primary shadow-glow-sm">
+                                <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-border/70 bg-card/70 text-primary shadow-glow-sm">
                                     <Icon className="size-4" />
                                 </div>
+                            </div>
+
+                            <div className="mt-3 flex items-center gap-2">
+                                <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                                    <div
+                                        className="progress-flow h-full rounded-full transition-[width]"
+                                        style={{
+                                            width: `${card.percentage}%`,
+                                        }}
+                                    />
+                                </div>
+
+                                <span className="font-mono text-2xs text-muted-foreground">
+                                    {card.percentage}%
+                                </span>
                             </div>
                         </button>
                     );
@@ -344,21 +418,36 @@ export function TasksPanel({ projectId, tasks }: Props) {
                 <CardHeader className="border-b border-border-subtle pb-4">
                     <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                         <div>
-                            <p className="font-mono text-2xs tracking-[0.16em] text-primary uppercase">
-                                Workflow command center
-                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-mono text-2xs tracking-[0.16em] text-primary uppercase">
+                                    Workflow command center
+                                </p>
+
+                                {attentionCount > 0 && (
+                                    <Badge
+                                        variant="outline"
+                                        className="border-destructive/30 bg-destructive/10 font-mono text-2xs text-destructive-foreground"
+                                    >
+                                        <AlertTriangle className="size-3" />
+                                        {attentionCount} need attention
+                                    </Badge>
+                                )}
+                            </div>
+
                             <CardTitle className="mt-1 text-xl">
                                 Ordered tasks
                             </CardTitle>
+
                             <CardDescription className="mt-1 text-sm">
-                                Serial task ordering remains controlled by AIOS.
-                                This view only enhances visibility, filtering,
-                                and execution context.
+                                Durable ordering remains controlled by AIOS.
+                                Search and filters never change workflow state or
+                                execution order.
                             </CardDescription>
                         </div>
 
                         <div className="grid gap-2 md:grid-cols-[minmax(0,1.3fr)_repeat(2,minmax(0,0.7fr))] xl:w-[52rem]">
                             <label className="panel-recessed flex items-center gap-2 px-3 py-2">
+                                <span className="sr-only">Search tasks</span>
                                 <Search className="size-4 text-muted-foreground" />
                                 <input
                                     value={query}
@@ -371,6 +460,9 @@ export function TasksPanel({ projectId, tasks }: Props) {
                             </label>
 
                             <label className="panel-recessed flex items-center gap-2 px-3 py-2">
+                                <span className="sr-only">
+                                    Filter tasks by workflow state
+                                </span>
                                 <ListFilter className="size-4 text-muted-foreground" />
                                 <select
                                     value={groupFilter}
@@ -383,16 +475,20 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                 >
                                     <option value="all">All states</option>
                                     <option value="queued">Queued</option>
-                                    <option value="active">Active</option>
+                                    <option value="active">In progress</option>
                                     <option value="review">Review</option>
                                     <option value="attention">
                                         Needs attention
                                     </option>
                                     <option value="done">Completed</option>
+                                    <option value="closed">Cancelled</option>
                                 </select>
                             </label>
 
                             <label className="panel-recessed flex items-center gap-2 px-3 py-2">
+                                <span className="sr-only">
+                                    Filter tasks by workflow lane
+                                </span>
                                 <TimerReset className="size-4 text-muted-foreground" />
                                 <select
                                     value={ownerFilter}
@@ -421,164 +517,194 @@ export function TasksPanel({ projectId, tasks }: Props) {
                         <span>Task</span>
                         <span>State</span>
                         <span>Lane</span>
-                        <span>Urgency</span>
+                        <span>Signal</span>
                         <span>Evidence</span>
                         <span className="text-right">Actions</span>
                     </div>
 
                     <div className="grid">
-                        {filteredTasks.map((task) => (
-                            <div
-                                key={task.id}
-                                className="border-b border-border-subtle px-4 py-4 transition hover:bg-foreground/[0.02] lg:px-5"
-                            >
-                                <div className="grid gap-4 lg:grid-cols-[5rem_minmax(0,2.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] lg:items-center">
-                                    <div className="flex items-center gap-2">
-                                        <div className="grid size-8 place-items-center rounded-lg border border-border/70 bg-card/70 font-mono text-xs text-primary">
-                                            {task.queueOrder}
-                                        </div>
-                                        <div
-                                            className={`size-2.5 rounded-full ${
-                                                task.group === 'attention'
-                                                    ? 'bg-destructive shadow-glow-sm'
-                                                    : task.group === 'review'
-                                                      ? 'bg-secondary-foreground shadow-glow-sm'
-                                                      : task.group === 'active'
-                                                        ? 'bg-primary shadow-glow-sm'
-                                                        : task.group === 'done'
-                                                          ? 'bg-success shadow-glow-sm'
-                                                          : 'bg-muted-foreground'
-                                            }`}
-                                        />
-                                    </div>
+                        {filteredTasks.map((task) => {
+                            const isFocus = focusTask?.id === task.id;
 
-                                    <div className="min-w-0">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <Link
-                                                href={
-                                                    showTask({
-                                                        project: projectId,
-                                                        task: task.id,
-                                                    }).url
-                                                }
-                                                className="truncate text-sm font-semibold text-foreground transition hover:text-primary"
+                            return (
+                                <div
+                                    key={task.id}
+                                    className={`border-b border-border-subtle px-4 py-4 transition hover:bg-foreground/[0.02] lg:px-5 ${
+                                        isFocus ? 'bg-primary/[0.035]' : ''
+                                    }`}
+                                >
+                                    <div className="grid gap-4 lg:grid-cols-[5rem_minmax(0,2.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] lg:items-center">
+                                        <div className="flex items-center gap-2">
+                                            <div
+                                                className={`grid size-8 place-items-center rounded-lg border bg-card/70 font-mono text-xs text-primary ${
+                                                    isFocus
+                                                        ? 'status-glow-pulse border-primary/35 bg-primary/10'
+                                                        : 'border-border/70'
+                                                }`}
                                             >
-                                                {task.key}: {task.title}
-                                            </Link>
+                                                {task.queueOrder}
+                                            </div>
 
-                                            {task.group === 'attention' && (
-                                                <span className="inline-flex items-center gap-1 rounded-full border border-destructive/25 bg-destructive/10 px-2 py-0.5 text-2xs text-destructive-foreground">
-                                                    <AlertTriangle className="size-3" />
-                                                    attention
-                                                </span>
-                                            )}
+                                            <div
+                                                className={`size-2.5 rounded-full ${
+                                                    task.group === 'attention'
+                                                        ? 'bg-destructive shadow-glow-sm'
+                                                        : task.group ===
+                                                            'review'
+                                                          ? 'bg-secondary-foreground shadow-glow-sm'
+                                                          : task.group ===
+                                                              'active'
+                                                            ? 'bg-primary shadow-glow-sm'
+                                                            : task.group ===
+                                                                'done'
+                                                              ? 'bg-success shadow-glow-sm'
+                                                              : 'bg-muted-foreground'
+                                                }`}
+                                            />
                                         </div>
 
-                                        <p className="mt-1 truncate text-xs text-muted-foreground">
-                                            {task.subtitle}
-                                        </p>
-                                    </div>
+                                        <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <Link
+                                                    href={
+                                                        showTask({
+                                                            project: projectId,
+                                                            task: task.id,
+                                                        }).url
+                                                    }
+                                                    className="truncate text-sm font-semibold text-foreground transition hover:text-primary"
+                                                >
+                                                    {task.key}: {task.title}
+                                                </Link>
 
-                                    <div className="flex flex-wrap gap-2">
-                                        <Badge
-                                            variant="outline"
-                                            className={badgeClassForGroup(
-                                                task.group,
-                                            )}
-                                        >
-                                            {normalizeStatus(task.status)}
-                                        </Badge>
-                                    </div>
-
-                                    <div className="flex flex-wrap gap-2">
-                                        <Badge
-                                            variant="outline"
-                                            className={badgeClassForOwner(
-                                                task.owner,
-                                            )}
-                                        >
-                                            {task.ownerLabel}
-                                        </Badge>
-                                    </div>
-
-                                    <div className="flex flex-wrap gap-2">
-                                        <Badge
-                                            variant="outline"
-                                            className={badgeClassForUrgency(
-                                                task.urgencyLabel,
-                                            )}
-                                        >
-                                            {task.urgencyLabel}
-                                        </Badge>
-                                    </div>
-
-                                    <div className="min-w-0">
-                                        <p className="text-xs text-muted-foreground">
-                                            {task.latestAttempt === null
-                                                ? 'No attempt'
-                                                : `Attempt ${task.latestAttempt}`}
-                                        </p>
-                                        <p className="mt-1 text-xs text-muted-foreground">
-                                            {task.latestReview
-                                                ? `Review ${normalizeStatus(task.latestReview)}`
-                                                : 'No review yet'}
-                                        </p>
-                                    </div>
-
-                                    <div className="flex items-center justify-start gap-2 lg:justify-end">
-                                        <Button
-                                            asChild
-                                            size="sm"
-                                            variant="outline"
-                                            className="border-border/80 bg-card/70"
-                                        >
-                                            <Link
-                                                href={
-                                                    showTask({
-                                                        project: projectId,
-                                                        task: task.id,
-                                                    }).url
-                                                }
-                                            >
-                                                Open
-                                                <ArrowUpRight className="size-3.5" />
-                                            </Link>
-                                        </Button>
-
-                                        {task.status === 'blocked' && (
-                                            <Form
-                                                {...requeueTask.form({
-                                                    project: projectId,
-                                                    task: task.id,
-                                                })}
-                                            >
-                                                {({ processing }) => (
-                                                    <Button
-                                                        size="sm"
-                                                        type="submit"
-                                                        variant="outline"
-                                                        disabled={processing}
-                                                        className="border-destructive/25 bg-destructive/10 text-destructive-foreground hover:bg-destructive/15"
-                                                    >
-                                                        <RotateCcw className="size-3.5" />
-                                                        Retry
-                                                    </Button>
+                                                {isFocus && (
+                                                    <span className="inline-flex items-center rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 font-mono text-2xs text-primary">
+                                                        queue focus
+                                                    </span>
                                                 )}
-                                            </Form>
-                                        )}
+
+                                                {task.group ===
+                                                    'attention' && (
+                                                    <span className="inline-flex items-center gap-1 rounded-full border border-destructive/25 bg-destructive/10 px-2 py-0.5 text-2xs text-destructive-foreground">
+                                                        <AlertTriangle className="size-3" />
+                                                        attention
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <p className="mt-1 truncate text-xs text-muted-foreground">
+                                                {task.subtitle}
+                                            </p>
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-2">
+                                            <Badge
+                                                variant="outline"
+                                                className={badgeClassForGroup(
+                                                    task.group,
+                                                )}
+                                            >
+                                                {normalizeStatus(task.status)}
+                                            </Badge>
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-2">
+                                            <Badge
+                                                variant="outline"
+                                                className={badgeClassForOwner(
+                                                    task.owner,
+                                                )}
+                                            >
+                                                {task.ownerLabel}
+                                            </Badge>
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-2">
+                                            <Badge
+                                                variant="outline"
+                                                className={badgeClassForSignal(
+                                                    task.signalLabel,
+                                                )}
+                                            >
+                                                {task.signalLabel}
+                                            </Badge>
+                                        </div>
+
+                                        <div className="min-w-0">
+                                            <p className="text-xs text-muted-foreground">
+                                                {task.latestAttempt === null
+                                                    ? 'No attempt'
+                                                    : `Attempt ${task.latestAttempt}`}
+                                            </p>
+
+                                            <p className="mt-1 text-xs text-muted-foreground">
+                                                {task.latestReview
+                                                    ? `Review ${normalizeStatus(
+                                                          task.latestReview,
+                                                      )}`
+                                                    : 'No review yet'}
+                                            </p>
+                                        </div>
+
+                                        <div className="flex items-center justify-start gap-2 lg:justify-end">
+                                            <Button
+                                                asChild
+                                                size="sm"
+                                                variant="outline"
+                                                className="border-border/80 bg-card/70"
+                                            >
+                                                <Link
+                                                    href={
+                                                        showTask({
+                                                            project: projectId,
+                                                            task: task.id,
+                                                        }).url
+                                                    }
+                                                >
+                                                    Open
+                                                    <ArrowUpRight className="size-3.5" />
+                                                </Link>
+                                            </Button>
+
+                                            {task.status === 'blocked' && (
+                                                <Form
+                                                    {...requeueTask.form({
+                                                        project: projectId,
+                                                        task: task.id,
+                                                    })}
+                                                >
+                                                    {({ processing }) => (
+                                                        <Button
+                                                            size="sm"
+                                                            type="submit"
+                                                            variant="outline"
+                                                            disabled={
+                                                                processing
+                                                            }
+                                                            className="border-destructive/25 bg-destructive/10 text-destructive-foreground hover:bg-destructive/15"
+                                                        >
+                                                            <RotateCcw className="size-3.5" />
+                                                            Retry
+                                                        </Button>
+                                                    )}
+                                                </Form>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
 
-                        {filteredTasks.length === 0 && (
+                        {tasks.length > 0 && filteredTasks.length === 0 && (
                             <div className="px-6 py-14 text-center">
                                 <div className="mx-auto grid size-12 place-items-center rounded-2xl border border-border/70 bg-card/70 text-primary">
                                     <Search className="size-5" />
                                 </div>
+
                                 <h3 className="mt-4 text-sm font-semibold text-foreground">
                                     No tasks matched the current filters
                                 </h3>
+
                                 <p className="mt-1 text-sm text-muted-foreground">
                                     Adjust the search term or lane/state filters
                                     to view more roadmap work.
@@ -591,9 +717,11 @@ export function TasksPanel({ projectId, tasks }: Props) {
                                 <div className="mx-auto grid size-12 place-items-center rounded-2xl border border-border/70 bg-card/70 text-primary">
                                     <Workflow className="size-5" />
                                 </div>
+
                                 <h3 className="mt-4 text-sm font-semibold text-foreground">
                                     No implementation tasks yet
                                 </h3>
+
                                 <p className="mt-1 text-sm text-muted-foreground">
                                     Upload and process a roadmap to generate the
                                     ordered execution queue.
@@ -603,6 +731,130 @@ export function TasksPanel({ projectId, tasks }: Props) {
                     </div>
                 </CardContent>
             </Card>
+
+            <section className="panel-elevated relative overflow-hidden">
+                <div className="glow-line-secondary" />
+
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                        <GitBranch className="size-4 text-secondary-foreground" />
+                        <div>
+                            <p className="font-mono text-2xs tracking-[0.14em] text-secondary-foreground uppercase">
+                                Execution evidence
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                                Read-only persisted task and Git context.
+                            </p>
+                        </div>
+                    </div>
+
+                    <Badge
+                        variant="outline"
+                        className="border-border bg-card/70 font-mono text-2xs text-muted-foreground"
+                    >
+                        AIOS controlled
+                    </Badge>
+                </div>
+
+                <div className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <div className="tile-inset min-w-0 p-2.5">
+                        <p className="font-mono text-2xs tracking-[0.12em] text-muted-foreground uppercase">
+                            Queue focus
+                        </p>
+
+                        {focusTask ? (
+                            <>
+                                <Link
+                                    href={
+                                        showTask({
+                                            project: projectId,
+                                            task: focusTask.id,
+                                        }).url
+                                    }
+                                    className="mt-1 block truncate text-xs font-semibold text-primary hover:text-primary/80"
+                                >
+                                    {focusTask.key}
+                                </Link>
+                                <p className="mt-0.5 truncate text-2xs text-muted-foreground">
+                                    {normalizeStatus(focusTask.status)}
+                                </p>
+                            </>
+                        ) : (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                No unfinished task
+                            </p>
+                        )}
+                    </div>
+
+                    <div className="tile-inset min-w-0 p-2.5">
+                        <p className="font-mono text-2xs tracking-[0.12em] text-muted-foreground uppercase">
+                            Base SHA
+                        </p>
+                        <p
+                            title={gitEvidence?.base_sha ?? undefined}
+                            className="mt-1 truncate font-mono text-xs text-foreground"
+                        >
+                            {shortSha(gitEvidence?.base_sha ?? null)}
+                        </p>
+                    </div>
+
+                    <div className="tile-inset min-w-0 p-2.5">
+                        <p className="font-mono text-2xs tracking-[0.12em] text-muted-foreground uppercase">
+                            Head SHA
+                        </p>
+                        <p
+                            title={evidenceHeadSha ?? undefined}
+                            className="mt-1 truncate font-mono text-xs text-primary"
+                        >
+                            {shortSha(evidenceHeadSha)}
+                        </p>
+                    </div>
+
+                    <div className="tile-inset min-w-0 p-2.5">
+                        <div className="flex items-center gap-1.5">
+                            <GitCommitHorizontal className="size-3 text-primary" />
+                            <p className="font-mono text-2xs tracking-[0.12em] text-muted-foreground uppercase">
+                                Latest commit
+                            </p>
+                        </div>
+                        <p
+                            title={gitEvidence?.commit_sha ?? undefined}
+                            className="mt-1 truncate font-mono text-xs text-foreground"
+                        >
+                            {shortSha(gitEvidence?.commit_sha ?? null)}
+                        </p>
+                    </div>
+
+                    <div className="tile-inset min-w-0 p-2.5">
+                        <p className="font-mono text-2xs tracking-[0.12em] text-muted-foreground uppercase">
+                            Latest evidence
+                        </p>
+
+                        {gitEvidence ? (
+                            <>
+                                <Link
+                                    href={
+                                        showTask({
+                                            project: projectId,
+                                            task: gitEvidence.task.id,
+                                        }).url
+                                    }
+                                    className="mt-1 block truncate text-xs font-semibold text-foreground hover:text-primary"
+                                >
+                                    {gitEvidence.task.key}
+                                </Link>
+                                <p className="mt-0.5 font-mono text-2xs text-muted-foreground">
+                                    Attempt {gitEvidence.attempt_number}
+                                </p>
+                            </>
+                        ) : (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                No attempt evidence
+                            </p>
+                        )}
+                    </div>
+                </div>
+            </section>
         </div>
     );
 }
