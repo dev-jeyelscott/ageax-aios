@@ -95,6 +95,7 @@ type Run = {
     role: string;
     status: string;
     attempt_number: number | null;
+    agent_messages: string[];
     live_output: string | null;
     transcript: string | null;
     exit_code: number | null;
@@ -720,18 +721,33 @@ function formatAgentOutput(
         .filter((entry) => entry.message !== '');
 }
 
+function formatNormalizedAgentMessages(
+    messages: string[],
+    agentRole: string,
+): AgentOutputEntry[] {
+    return messages.map((message) => ({
+        isAgentMessage: true,
+        label: `${agentRole.replace('_', ' ')}>`,
+        labelClassName: 'text-success',
+        message,
+        className: 'text-success-foreground',
+    }));
+}
+
 function AgentConsoleOutput({
     output,
+    agentMessages,
     agentRole,
     showTechnicalOutput,
 }: {
     output: string | null;
+    agentMessages: string[];
     agentRole: string;
     showTechnicalOutput: boolean;
 }) {
-    const entries = formatAgentOutput(output, agentRole).filter(
-        (entry) => showTechnicalOutput || entry.isAgentMessage,
-    );
+    const entries = showTechnicalOutput
+        ? formatAgentOutput(output, agentRole)
+        : formatNormalizedAgentMessages(agentMessages, agentRole);
 
     if (entries.length === 0) {
         return (
@@ -1021,6 +1037,9 @@ export default function TaskShow({
                                                     output={
                                                         liveRun.live_output ??
                                                         liveRun.transcript
+                                                    }
+                                                    agentMessages={
+                                                        liveRun.agent_messages
                                                     }
                                                     agentRole={liveRun.role}
                                                     showTechnicalOutput={

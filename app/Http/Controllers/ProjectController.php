@@ -695,6 +695,10 @@ SQL;
                     'transcript',
                     $transcript,
                 );
+                $run->setAttribute(
+                    'agent_messages',
+                    $runs->agentMessages($run),
+                );
                 $run->makeHidden('log_path');
             },
         );
