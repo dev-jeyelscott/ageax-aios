@@ -7,6 +7,7 @@ use App\Actions\DeleteProject;
 use App\Actions\ProvisionDefaultProjectAgents;
 use App\Actions\RecordProjectManagerMessage;
 use App\Actions\RecordTaskOperatorMessage;
+use App\Actions\RequeueBlockedRoadmap;
 use App\Actions\RequeueBlockedTask;
 use App\Actions\SetProjectStatus;
 use App\Actions\StoreRoadmap;
@@ -20,6 +21,7 @@ use App\Http\Requests\UpdateProjectStatusRequest;
 use App\Models\AgentRun;
 use App\Models\AgentWorker;
 use App\Models\Project;
+use App\Models\Roadmap;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use App\Models\User;
@@ -808,6 +810,18 @@ SQL;
         }
 
         $storeRoadmap->handle($project, $file);
+
+        return to_route('projects.show', $project);
+    }
+
+    public function requeueRoadmap(
+        Project $project,
+        Roadmap $roadmap,
+        RequeueBlockedRoadmap $requeueBlockedRoadmap,
+    ): RedirectResponse {
+        abort_unless($roadmap->project_id === $project->id, 404);
+
+        $requeueBlockedRoadmap->handle($roadmap);
 
         return to_route('projects.show', $project);
     }

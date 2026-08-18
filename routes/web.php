@@ -24,6 +24,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('projects/{project}/tasks/{task}/operator-messages', [ProjectController::class, 'storeOperatorMessage'])->scopeBindings()->name('projects.tasks.operator-messages.store');
     Route::post('projects/{project}/tasks/{task}/requeue', [ProjectController::class, 'requeueTask'])->scopeBindings()->name('projects.tasks.requeue');
     Route::post('projects/{project}/roadmaps', [ProjectController::class, 'storeRoadmap'])->name('projects.roadmaps.store');
+    Route::post('projects/{project}/roadmaps/{roadmap}/requeue', [ProjectController::class, 'requeueRoadmap'])->scopeBindings()->name('projects.roadmaps.requeue');
 
     Route::post('projects/{project}/agents', [AgentController::class, 'store'])->name('projects.agents.store');
     Route::patch('projects/{project}/agents/{agent}', [AgentController::class, 'update'])->scopeBindings()->name('projects.agents.update');

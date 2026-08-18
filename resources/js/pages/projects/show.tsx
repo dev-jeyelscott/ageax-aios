@@ -16,6 +16,7 @@ import {
 import { lazy, Suspense, useState, useSyncExternalStore } from 'react';
 import {
     index,
+    requeueRoadmap,
     requeueTask,
     showAgentRun,
     showTask,
@@ -383,6 +384,29 @@ function RoadmapPanel({
                 >
                     {latestRoadmap.original_filename}
                 </p>
+            )}
+
+            {latestRoadmap && latestRoadmap.status === 'blocked' && (
+                <Form
+                    {...requeueRoadmap.form({
+                        project: project.id,
+                        roadmap: latestRoadmap.id,
+                    })}
+                    className="mt-1.5"
+                >
+                    {({ processing }) => (
+                        <Button
+                            size="sm"
+                            type="submit"
+                            variant="outline"
+                            disabled={processing}
+                            className="w-full border-destructive/25 bg-destructive/10 text-destructive-foreground hover:bg-destructive/15"
+                        >
+                            <RotateCcw className="size-3.5" />
+                            Retry roadmap
+                        </Button>
+                    )}
+                </Form>
             )}
 
             <Form
