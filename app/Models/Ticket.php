@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use LogicException;
 
 #[Fillable([
@@ -119,5 +120,17 @@ class Ticket extends Model
     public function convertedTask(): BelongsTo
     {
         return $this->belongsTo(Task::class, 'converted_task_id');
+    }
+
+    /** @return HasMany<TicketMessage, $this> */
+    public function messages(): HasMany
+    {
+        return $this->hasMany(TicketMessage::class);
+    }
+
+    /** @return HasMany<TicketAttachment, $this> */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(TicketAttachment::class);
     }
 }
