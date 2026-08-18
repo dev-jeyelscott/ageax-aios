@@ -17,6 +17,7 @@ use App\Services\AgentResolver;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use App\Services\CodexCliRunner;
+use App\Services\DatabaseProtectionGuard;
 use App\Services\ObsidianProjectNotes;
 use App\Services\ProjectRuntimeCapabilityDetector;
 use App\Services\StructuredResultParser;
@@ -30,7 +31,7 @@ use Throwable;
 
 class RunProjectManager
 {
-    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private StructuredResultParser $parser, private ApplyRoadmapPlan $plans, private ObsidianProjectNotes $notes, private ProjectRuntimeCapabilityDetector $runtime, private WorkerHeartbeat $heartbeat, private AuditLogger $audit) {}
+    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private StructuredResultParser $parser, private ApplyRoadmapPlan $plans, private ObsidianProjectNotes $notes, private ProjectRuntimeCapabilityDetector $runtime, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private DatabaseProtectionGuard $databaseProtection) {}
 
     /** @return array{exit_code: int, output: string, error_output: string} */
     public function handle(Roadmap $roadmap, ?WorkerLease $lease = null): array
@@ -78,6 +79,7 @@ class RunProjectManager
         $this->renewLease($lease);
 
         try {
+            $this->databaseProtection->guard($roadmap->project);
             $onOutput = function (string $type, string $output) use ($run, $roadmap, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
                 if ($lease === null) {

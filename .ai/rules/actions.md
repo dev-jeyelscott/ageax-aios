@@ -95,6 +95,10 @@ observe
 
 Manual operator configuration changes continue through the existing validated Agent configuration/binding workflow.
 
+## Database protection guards every protected execution the same way
+
+`RunProjectManager`, `RunCoderTask`, and `RunReviewerTask` each call `DatabaseProtectionGuard::guard($project)` as the very first statement inside the existing try-block that wraps the harness call, after `AgentRunRecorder::start()` has already persisted the `AgentRun`. A guard failure (`DatabaseProtectionFailed`/`UnsafeProjectPath`) is caught by that same block's existing `catch (Throwable)` and follows the role's normal bounded-retry-then-block failure path; do not special-case it into a different transition. This applies identically regardless of the resolved Agent's harness (Codex or Claude Code) — switching harness configuration must never bypass it.
+
 ## Unbound vs. broken Agent bindings are not the same failure
 
 `AgentResolver::forRole()` throws `App\Exceptions\AgentNotBoundToRole` when a workflow role has no Agent configured at all (no `AgentWorker` row, or `agent_id` is null). While the existing migration/compatibility path supports such projects, callers may use the established legacy Codex fallback only for this genuinely unconfigured case; do not treat Codex as the default for an already configured Agent.

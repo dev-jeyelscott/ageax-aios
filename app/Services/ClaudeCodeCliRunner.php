@@ -55,6 +55,35 @@ class ClaudeCodeCliRunner
         'Bash(git worktree *)',
     ];
 
+    /**
+     * Defense-in-depth only: the authoritative protection against a destructive database/filesystem
+     * operation is AIOS's own path/workspace boundary (WorkspacePathResolver::assertProjectPath())
+     * plus DatabaseProtectionGuard's pre-execution recovery-point requirement, neither of which is
+     * under model control. These deny rules exist because Claude Code's Bash tool is not sandboxed
+     * to the project directory (it can still `cd` or use absolute paths), so an explicit denylist for
+     * the most common destructive commands adds a second layer even inside an already-scoped path.
+     */
+    private const array DeniedDestructiveCommands = [
+        'Bash(php artisan migrate:fresh*)',
+        'Bash(php artisan migrate:reset*)',
+        'Bash(php artisan db:wipe*)',
+        'Bash(artisan migrate:fresh*)',
+        'Bash(artisan migrate:reset*)',
+        'Bash(artisan db:wipe*)',
+        'Bash(dropdb*)',
+        'Bash(mysqladmin drop*)',
+        'Bash(mysql *DROP DATABASE*)',
+        'Bash(mysql *drop database*)',
+        'Bash(psql *DROP DATABASE*)',
+        'Bash(psql *drop database*)',
+        'Bash(rm -rf *)',
+        'Bash(rm -fr *)',
+        'Bash(rm --recursive --force *)',
+        'Bash(rm *.sqlite*)',
+        'Bash(shred *)',
+        'Bash(truncate *)',
+    ];
+
     public function __construct(
         private WorkspacePathResolver $paths,
         private SanitizedExecutionEnvironment $environment,
@@ -189,7 +218,7 @@ class ClaudeCodeCliRunner
             '--allowedTools',
             implode(',', $allowedTools),
             '--disallowedTools',
-            implode(',', self::DeniedGitMutations),
+            implode(',', [...self::DeniedGitMutations, ...self::DeniedDestructiveCommands]),
         ];
 
         if (filled($agent->model)) {

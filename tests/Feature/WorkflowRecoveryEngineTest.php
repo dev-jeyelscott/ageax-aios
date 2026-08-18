@@ -14,6 +14,7 @@ use App\ProjectStatus;
 use App\RecoveryIncidentStatus;
 use App\Services\RecoveryEngineerRunner;
 use App\Services\RecoveryRepositoryLifecycle;
+use App\Services\RecoveryWorktreeManager;
 use App\Services\WorkflowRecoveryEngine;
 use App\Services\WorkflowRecoveryScanner;
 use App\TaskStatus;
@@ -41,6 +42,30 @@ function recoveryMock(string $class): MockInterface
 {
     $mock = Mockery::mock($class);
     app()->instance($class, $mock);
+
+    return $mock;
+}
+
+/**
+ * By default, diagnosis runs against a real (empty) disposable directory standing in for the
+ * worktree, so realpath()-based safety checks in WorkflowRecoveryEngine's copy step behave exactly
+ * as they would for a genuine `git worktree add` result. Tests exercising a successful AIOS fix
+ * commit override this with a worktree that actually contains the expected changed file.
+ */
+function recoveryWorktreeMock(): MockInterface
+{
+    $mock = recoveryMock(RecoveryWorktreeManager::class);
+    $mock->shouldReceive('create')->andReturnUsing(function (): string {
+        $path = sys_get_temp_dir().'/aios-recovery-worktree-test-'.fake()->uuid();
+        mkdir($path, 0700, true);
+
+        return $path;
+    });
+    $mock->shouldReceive('destroy')->andReturnUsing(function (string $repositoryPath, string $worktreePath): void {
+        if (is_dir($worktreePath)) {
+            File::deleteDirectory($worktreePath);
+        }
+    });
 
     return $mock;
 }
@@ -178,6 +203,7 @@ test('a diagnosed managed-project defect is requeued without editing the AIOS re
     $task = recoveryTask($project, 'TASK-001', 1, TaskStatus::Blocked);
     $incident = RecoveryIncident::create(['project_id' => $project->id, 'task_id' => $task->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Detected, 'detected_at' => now()]);
     recoveryMock(RecoveryRepositoryLifecycle::class)->shouldReceive('preflight')->once()->andReturn(['clean' => true, 'head_sha' => 'base-sha-1', 'errors' => []]);
+    recoveryWorktreeMock();
     recoveryMock(RecoveryEngineerRunner::class)->shouldReceive('run')->once()->andReturn([
         'execution' => ['exit_code' => 0, 'output' => '{}', 'error_output' => ''],
         'decision' => [
@@ -208,6 +234,7 @@ test('a validated AIOS code fix is committed before the task is requeued', funct
         ->shouldReceive('validate')->once()->with('/aios', ['app/Services/Example.php'])->andReturn(['passed' => true, 'checks' => [], 'evidence' => []])
         ->shouldReceive('commit')->once()->andReturn('commit-sha-1');
     config()->set('aios.recovery_repository_path', '/aios');
+    recoveryWorktreeMock();
     recoveryMock(RecoveryEngineerRunner::class)->shouldReceive('run')->once()->andReturn([
         'execution' => ['exit_code' => 0, 'output' => '{}', 'error_output' => ''],
         'decision' => [
@@ -238,6 +265,7 @@ test('a fix that fails AIOS-independent validation is escalated and the task is 
         ->shouldReceive('preflight')->once()->andReturn(['clean' => true, 'head_sha' => 'base-sha-1', 'errors' => []])
         ->shouldReceive('validate')->once()->andReturn(['passed' => false, 'checks' => ['secret_scan' => false], 'evidence' => ['secret_scan' => 'a likely secret was detected']])
         ->shouldNotReceive('commit');
+    recoveryWorktreeMock();
     recoveryMock(RecoveryEngineerRunner::class)->shouldReceive('run')->once()->andReturn([
         'execution' => ['exit_code' => 0, 'output' => '{}', 'error_output' => ''],
         'decision' => [
@@ -263,6 +291,7 @@ test('repeated recovery engineer execution failures are retried up to the bounde
     $task = recoveryTask($project, 'TASK-001', 1, TaskStatus::Blocked);
     $incident = RecoveryIncident::create(['project_id' => $project->id, 'task_id' => $task->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Detected, 'detected_at' => now()]);
     recoveryMock(RecoveryRepositoryLifecycle::class)->shouldReceive('preflight')->twice()->andReturn(['clean' => true, 'head_sha' => 'base-sha-1', 'errors' => []]);
+    recoveryWorktreeMock();
     recoveryMock(RecoveryEngineerRunner::class)->shouldReceive('run')->twice()->andReturn([
         'execution' => ['exit_code' => 1, 'output' => '', 'error_output' => 'Claude Code process exited with code 1.'],
         'decision' => null,
@@ -297,6 +326,7 @@ test('recovering a later task cannot bypass an incomplete earlier task', functio
     $secondTask = recoveryTask($project, 'TASK-002', 2, TaskStatus::Blocked);
     $incident = RecoveryIncident::create(['project_id' => $project->id, 'task_id' => $secondTask->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Detected, 'detected_at' => now()]);
     recoveryMock(RecoveryRepositoryLifecycle::class)->shouldReceive('preflight')->once()->andReturn(['clean' => true, 'head_sha' => 'base-sha-1', 'errors' => []]);
+    recoveryWorktreeMock();
     recoveryMock(RecoveryEngineerRunner::class)->shouldReceive('run')->once()->andReturn([
         'execution' => ['exit_code' => 0, 'output' => '{}', 'error_output' => ''],
         'decision' => ['root_cause_category' => 'managed_project_defect', 'root_cause_summary' => 'Not an AIOS defect.', 'recoverable' => true, 'fix_applied' => false, 'changed_files' => []],
@@ -427,6 +457,7 @@ test('recovery preserves the historical AgentRun and audit evidence from the ori
     $originalRun = AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'role' => AgentRole::Coder, 'status' => AgentRunStatus::Failed, 'prompt_hash' => hash('sha256', 'original'), 'started_at' => now()->subMinutes(10), 'finished_at' => now()->subMinutes(9)]);
     $incident = RecoveryIncident::create(['project_id' => $project->id, 'task_id' => $task->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Detected, 'detected_at' => now()]);
     recoveryMock(RecoveryRepositoryLifecycle::class)->shouldReceive('preflight')->once()->andReturn(['clean' => true, 'head_sha' => 'base-sha-1', 'errors' => []]);
+    recoveryWorktreeMock();
     recoveryMock(RecoveryEngineerRunner::class)->shouldReceive('run')->once()->andReturn([
         'execution' => ['exit_code' => 0, 'output' => '{}', 'error_output' => ''],
         'decision' => ['root_cause_category' => 'managed_project_defect', 'root_cause_summary' => 'Not an AIOS defect.', 'recoverable' => true, 'fix_applied' => false, 'changed_files' => []],

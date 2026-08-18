@@ -872,6 +872,73 @@ Ticket submissions, Ticket messages, requester content, and attachments are untr
 
 ---
 
+## Database Protection (P0 hardening)
+
+This section codifies the emergency hardening initiative introduced after a confirmed incident in
+which a harness execution deleted the live AIOS database. Both Codex and Claude Code are supported
+execution harnesses; **neither is trusted to enforce these boundaries itself.** AIOS owns and
+validates the common execution-security contract before either harness starts.
+
+- Normal Project Manager, Coder, Reviewer, and Ticket-triage executions must never operate on the
+  live AIOS repository, any path inside it, or any ancestor path containing it. This is enforced
+  both at project registration and again immediately before every execution
+  (`WorkspacePathResolver::resolve()`/`assertProjectPath()`), so existing, stale, corrupted, or
+  maliciously persisted project paths fail closed on their next execution attempt, not only at
+  registration.
+- Codex is hardened via its strongest supported non-interactive workspace-restricted mode
+  (`codex exec --approve-for-me`, confirmed via `codex exec --help` to already route commands
+  through the `workspace-write` sandbox; `-s/--sandbox` cannot be combined with it). Unrestricted
+  modes (`-s danger-full-access`, `--dangerously-bypass-approvals-and-sandbox`) must never be used
+  for normal execution.
+- Claude Code is hardened via `--safe-mode`, an explicit tool allowlist per role, and an explicit
+  `--disallowedTools` denylist covering both direct Git mutation and destructive
+  database/filesystem commands (`migrate:fresh`, `migrate:reset`, `db:wipe`, `dropdb`, `DROP
+  DATABASE`, `rm -rf`, SQLite file deletion, and equivalents). These command deny rules are
+  defense-in-depth only: the authoritative protection is the AIOS-owned path/workspace boundary
+  above, which sits outside model control.
+- Until safe self-repair isolation existed, the Workflow Recovery Engineer was not permitted to
+  autonomously modify the live AIOS checkout or database through either harness. It now edits only
+  a disposable Git worktree (`RecoveryWorktreeManager`) created from the AIOS repository's current
+  HEAD; AIOS alone inspects the exact resulting diff, performs secret and forbidden-file checks,
+  runs deterministic validation, controls every Git operation, and decides whether validated
+  changes may enter durable repository state (`RecoveryRepositoryLifecycle`, unchanged). The
+  harness never receives Edit/Write/Bash access to the live checkout.
+- `DatabaseProtectionGuard` is an AIOS-owned, harness-independent pre-execution boundary that runs
+  after the AgentRun is durably created but immediately before either Codex or Claude Code is
+  launched, inside each protected role's existing operational-failure handling (bounded retry, then
+  block). It requires a verified recovery point (see below) and the absence of an active restore
+  lock before execution may proceed. If backup creation, integrity verification, path validation,
+  or another mandatory protection check fails, neither harness executes.
+- An independent backup subsystem (`DatabaseBackupService`) stores snapshots and a separate backup
+  ledger outside both the AIOS repository and any managed project workspace
+  (`aios.backup_path`, default `~/.local/share/ageax-aios/backups`), on its own `aios_backup_ledger`
+  SQLite connection with no foreign keys into the primary database, so it survives deletion of
+  either the primary AIOS database or repository-local files. The primary `AuditEvent` table may
+  mirror backup events but is never authoritative disaster-recovery evidence.
+- Snapshots are driver-safe and consistent: SQLite uses `VACUUM INTO` (never a raw file copy) plus
+  `PRAGMA integrity_check`; PostgreSQL/MySQL use `pg_dump`/`mysqldump` with securely resolved
+  connection configuration (credentials passed via process environment, never argv) and structural
+  verification. An unsupported configured driver fails closed rather than silently continuing
+  unprotected. An in-memory SQLite connection (`:memory:`, used by the automated test suite) is
+  detected explicitly and also fails closed, rather than being mistaken for a production
+  file-backed database.
+- Retention keeps at least 20 successful, verified backups and never removes the single most recent
+  known-good recovery point, even after a later failed attempt. A backup is restorable only with
+  valid completion state, non-zero artifact size, recorded driver, checksum, and integrity evidence.
+- CLI-first disaster recovery (`aios:database-backups`, `aios:database-backup:create`,
+  `aios:database-backup:verify`, `aios:database-restore`) is independent of the primary database,
+  users, sessions, queue/cache state, the web UI, and either harness. Restore reads the isolated
+  ledger, verifies checksum/driver/integrity and rejects incompatible or corrupted artifacts,
+  establishes an external filesystem-backed restore lock that `DatabaseProtectionGuard` also checks
+  (blocking new worker-driven harness executions while recovery is active), requires deterministic
+  quiescence of running work (no `Running` AgentRuns, overridable only with explicit `--force`),
+  restores using driver-correct semantics, reconnects and verifies the recovered database, and
+  persists independent recovery evidence in the ledger. An authenticated `/admin/backups` web
+  interface is a later operational convenience only, never the authoritative disaster-recovery
+  mechanism.
+
+---
+
 ## Auditing and Recovery
 
 Significant actions must be auditable, including:

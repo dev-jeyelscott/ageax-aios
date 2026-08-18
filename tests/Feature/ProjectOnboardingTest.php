@@ -25,12 +25,19 @@ use RuntimeException;
 
 use function Pest\Laravel\mock;
 
+// Test project directories must live outside the AIOS repository itself: WorkspacePathResolver
+// now fails closed on any workspace root/project path inside the AIOS installation.
+function testsWorkspaceRoot(): string
+{
+    return sys_get_temp_dir().'/aios-tests-workspace';
+}
+
 test('an authenticated user can register an existing Git project inside the workspace', function () {
-    config()->set('aios.workspace_root', base_path('tests-workspace'));
+    config()->set('aios.workspace_root', testsWorkspaceRoot());
     $vault = storage_path('framework/testing/obsidian-'.fake()->uuid());
     config()->set('aios.obsidian_vault_path', $vault);
     $path = 'existing-project-'.fake()->uuid();
-    File::ensureDirectoryExists(base_path('tests-workspace/'.$path));
+    File::ensureDirectoryExists(testsWorkspaceRoot().'/'.$path);
     Process::fake(['*' => Process::result(output: 'true')]);
 
     $this->actingAs(User::factory()->create())
@@ -39,16 +46,16 @@ test('an authenticated user can register an existing Git project inside the work
 
     $project = Project::query()->sole();
 
-    expect($project->path)->toBe(base_path('tests-workspace/'.$path))
+    expect($project->path)->toBe(testsWorkspaceRoot().'/'.$path)
         ->and($project->auditEvents()->where('event_type', 'project.registered')->exists())->toBeTrue()
         ->and($project->workers)->toHaveCount(3)
         ->and(File::get($vault.'/Projects/existing-project/Project Overview.md'))->toContain('Existing Project');
 });
 
 test('an existing project must be a Git repository', function () {
-    config()->set('aios.workspace_root', base_path('tests-workspace'));
+    config()->set('aios.workspace_root', testsWorkspaceRoot());
     $path = 'not-a-git-project-'.fake()->uuid();
-    File::ensureDirectoryExists(base_path('tests-workspace/'.$path));
+    File::ensureDirectoryExists(testsWorkspaceRoot().'/'.$path);
     Process::fake(['*' => Process::result(exitCode: 1)]);
 
     $this->actingAs(User::factory()->create())
@@ -59,10 +66,10 @@ test('an existing project must be a Git repository', function () {
 });
 
 test('project registration captures the current Git state and commit', function () {
-    config()->set('aios.workspace_root', base_path('tests-workspace'));
+    config()->set('aios.workspace_root', testsWorkspaceRoot());
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
     $path = 'tracked-project-'.fake()->uuid();
-    File::ensureDirectoryExists(base_path('tests-workspace/'.$path));
+    File::ensureDirectoryExists(testsWorkspaceRoot().'/'.$path);
     Process::fake(['*' => Process::sequence([
         Process::result(output: 'true'),
         Process::result(output: ' M app/Example.php'),

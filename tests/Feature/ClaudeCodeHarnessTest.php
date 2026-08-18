@@ -14,15 +14,18 @@ use ReflectionProperty;
 
 function claudeCodeProject(): Project
 {
+    $workspace = sys_get_temp_dir().'/aios-claude-project-'.fake()->uuid();
+    mkdir($workspace, 0700, true);
+
     config()->set(
         'aios.workspace_root',
-        dirname(base_path()),
+        dirname($workspace),
     );
 
     return Project::create([
         'name' => 'Claude Code '
             .fake()->unique()->uuid(),
-        'path' => base_path(),
+        'path' => $workspace,
         'status' => ProjectStatus::Running,
         'git_status' => 'clean',
     ]);

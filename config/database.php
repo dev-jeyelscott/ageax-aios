@@ -99,6 +99,17 @@ return [
             'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
+        // Independent disaster-recovery backup ledger (P0 database protection hardening). A
+        // dedicated SQLite database stored under aios.backup_path, deliberately outside the
+        // primary application connection, so deleting the primary AIOS database can never take
+        // the backup ledger down with it. No foreign keys ever cross into the primary connection.
+        'aios_backup_ledger' => [
+            'driver' => 'sqlite',
+            'database' => env('AIOS_BACKUP_LEDGER_DATABASE', rtrim((string) env('AIOS_BACKUP_PATH', getenv('HOME') !== false ? getenv('HOME').'/.local/share/ageax-aios/backups' : storage_path('app/aios-backups')), '/').'/ledger.sqlite'),
+            'prefix' => '',
+            'foreign_key_constraints' => false,
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),

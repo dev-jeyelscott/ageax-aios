@@ -10,8 +10,10 @@ use App\Models\Agent;
  *
  * The Recovery Engineer is an AIOS system role, configured as a global Agent (project_id null)
  * rather than a project Agent. The caller resolves and validates that persisted Agent (via
- * GlobalAgentResolver / AgentHarnessResolver) and supplies it here; this class only dispatches
- * the fresh, disposable execution against the AIOS repository itself, never a managed project.
+ * GlobalAgentResolver / AgentHarnessResolver) and supplies it here. The caller also supplies the
+ * execution path explicitly: it must always be a disposable RecoveryWorktreeManager worktree, never
+ * the live AIOS checkout (config('aios.recovery_repository_path')) directly, so neither harness is
+ * ever granted Edit/Write/Bash access to AIOS's own repository or database.
  */
 class RecoveryEngineerRunner
 {
@@ -22,10 +24,8 @@ class RecoveryEngineerRunner
     ) {}
 
     /** @return array{execution: array{exit_code: int, output: string, error_output: string}, decision: ?array<string, mixed>} */
-    public function run(Agent $agent, string $prompt): array
+    public function run(Agent $agent, string $prompt, string $path): array
     {
-        $path = (string) config('aios.recovery_repository_path');
-
         $execution = $agent->getRawOriginal('harness') === AgentHarnessIdentifier::Codex->value
             ? $this->codexRunner->runAtPath($path, $prompt, null, null, $agent)
             : $this->normalize($this->claudeCodeRunner->runAtPath($path, $agent, $prompt));

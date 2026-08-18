@@ -19,6 +19,7 @@ use App\Services\AssembledAgentContext;
 use App\Services\AuditLogger;
 use App\Services\CoderRepositoryGuard;
 use App\Services\CodexCliRunner;
+use App\Services\DatabaseProtectionGuard;
 use App\Services\NoProgressRetryGuard;
 use App\Services\ProjectGitState;
 use App\Services\TaskCommitter;
@@ -35,7 +36,7 @@ use Throwable;
 
 class RunCoderTask
 {
-    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskContractGuard $contracts, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private NoProgressRetryGuard $noProgress, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git) {}
+    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskContractGuard $contracts, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private NoProgressRetryGuard $noProgress, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git, private DatabaseProtectionGuard $databaseProtection) {}
 
     public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
     {
@@ -91,6 +92,7 @@ class RunCoderTask
         $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt, $lease, $context['retrieval_manifest'], $agent, $assembled);
 
         try {
+            $this->databaseProtection->guard($task->project);
             $onOutput = function (string $type, string $output) use ($run, $task, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
                 if ($lease === null) {

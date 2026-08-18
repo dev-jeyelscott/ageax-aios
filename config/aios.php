@@ -40,4 +40,19 @@ return [
     'recovery_engineer_reasoning_setting' => env('AIOS_RECOVERY_ENGINEER_REASONING_SETTING'),
     'recovery_repository_path' => env('AIOS_RECOVERY_REPOSITORY_PATH', base_path()),
     'recovery_validation_commands' => array_values(array_filter(explode(',', (string) env('AIOS_RECOVERY_VALIDATION_COMMANDS', '')))),
+
+    // Independent disaster-recovery backup subsystem (P0 database protection hardening). This
+    // lives outside both the AIOS repository and any managed project workspace so it survives
+    // deletion of the primary AIOS database or repository-local files. The ledger itself is a
+    // separate SQLite database (see the "aios_backup_ledger" connection below) stored under this
+    // same path, not a table in the primary application database.
+    // Which connection is "the primary AIOS database" to snapshot; defaults to database.default
+    // when unset. Kept as its own key so it can be pinned independently in unusual deployments.
+    'database_connection' => env('AIOS_DATABASE_CONNECTION'),
+    'backup_path' => env('AIOS_BACKUP_PATH', getenv('HOME') !== false ? getenv('HOME').'/.local/share/ageax-aios/backups' : storage_path('app/aios-backups')),
+    'backup_retention_count' => (int) env('AIOS_BACKUP_RETENTION_COUNT', 20),
+    // How long a verified backup remains an acceptable "recovery point" for DatabaseProtectionGuard
+    // before a fresh one is created ahead of the next protected execution.
+    'database_protection_freshness_seconds' => (int) env('AIOS_DATABASE_PROTECTION_FRESHNESS_SECONDS', 3600),
+    'database_restore_lock_filename' => env('AIOS_DATABASE_RESTORE_LOCK_FILENAME', 'restore.lock'),
 ];

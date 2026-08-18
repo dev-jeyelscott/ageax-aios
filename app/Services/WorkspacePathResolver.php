@@ -32,6 +32,8 @@ class WorkspacePathResolver
             throw new UnsafeProjectPath('Project paths must remain inside the configured workspace root.');
         }
 
+        $this->assertNotAiosInstallation($resolved);
+
         return $resolved;
     }
 
@@ -48,7 +50,37 @@ class WorkspacePathResolver
             throw new UnsafeProjectPath('Registered project paths must remain inside the configured workspace root.');
         }
 
+        $this->assertNotAiosInstallation($resolved);
+
         return $resolved;
+    }
+
+    /**
+     * Fail closed if a resolved project path is the AIOS installation itself, an ancestor of it,
+     * or lies inside it. Normal Project Manager/Coder/Reviewer/Ticket-triage execution must never
+     * be granted write access to AIOS's own repository, primary database, backups, or secrets,
+     * regardless of whether the unsafe path was just registered or was already persisted before
+     * this check existed (assertProjectPath() runs immediately before every execution, so stale
+     * or maliciously persisted rows fail closed on their next attempt, not only at registration).
+     */
+    private function assertNotAiosInstallation(string $resolved): void
+    {
+        $installationRoot = realpath(base_path());
+
+        if ($installationRoot === false) {
+            return;
+        }
+
+        $resolved = rtrim($resolved, DIRECTORY_SEPARATOR);
+        $installationRoot = rtrim($installationRoot, DIRECTORY_SEPARATOR);
+
+        $isSamePath = $resolved === $installationRoot;
+        $isDescendantOfInstallation = Str::startsWith($resolved, $installationRoot.DIRECTORY_SEPARATOR);
+        $isAncestorOfInstallation = Str::startsWith($installationRoot, $resolved.DIRECTORY_SEPARATOR);
+
+        if ($isSamePath || $isDescendantOfInstallation || $isAncestorOfInstallation) {
+            throw new UnsafeProjectPath('Project paths must never resolve to the AIOS installation itself, an ancestor of it, or a path inside it.');
+        }
     }
 
     private function resolveNewPath(string $candidate): string

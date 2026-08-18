@@ -1,9 +1,11 @@
 <?php
 
 use App\AgentRole;
+use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use App\Services\CoderRepositoryGuard;
+use App\Services\DatabaseProtectionGuard;
 use App\Services\ProjectGitState;
 use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskContractGuard;
@@ -26,6 +28,23 @@ pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
     ->beforeEach(function (): void {
         config()->set('aios.workspace_root', sys_get_temp_dir());
+
+        /**
+         * DatabaseProtectionGuard requires a verified, freshly created recovery point before any
+         * protected execution, which is real production disaster-recovery behavior that would
+         * otherwise force every Coder/Reviewer/Project Manager/Recovery Engineer test to also stand
+         * up a real backupable database. Feature tests that are not themselves testing the guard
+         * get a permissive no-op stub by default (mirroring the CoderRepositoryGuard override
+         * below); tests exercising the guard itself rebind the real service explicitly.
+         */
+        app()->bind(DatabaseProtectionGuard::class, function (): DatabaseProtectionGuard {
+            return new class extends DatabaseProtectionGuard
+            {
+                public function __construct() {}
+
+                public function guard(?Project $project = null): void {}
+            };
+        });
 
         app()->bind(CoderRepositoryGuard::class, function ($app): CoderRepositoryGuard {
             return new class($app->make(ProjectGitState::class)) extends CoderRepositoryGuard

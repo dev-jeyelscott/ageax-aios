@@ -96,7 +96,19 @@ class CodexCliRunner
         return $this->result($process->wait());
     }
 
-    /** @return list<string> */
+    /**
+     * AIOS's own path/workspace boundary (WorkspacePathResolver::assertProjectPath(), enforced by
+     * every caller before this command is built) is the authoritative protection against Codex
+     * escaping into the AIOS repository, its database, or its backups. `--approve-for-me` is
+     * confirmed (`codex exec --help`, codex-cli 0.147.0) to already route every command through the
+     * `workspace-write` sandbox automatically — the strongest supported non-destructive mode that
+     * still lets the agent implement a task, since `-s/--sandbox` cannot be combined with
+     * `--approve-for-me` (the CLI rejects that combination) and there is no interactive TTY here to
+     * approve commands one at a time. Never add `-s danger-full-access` or
+     * `--dangerously-bypass-approvals-and-sandbox` for normal execution.
+     *
+     * @return list<string>
+     */
     private function command(?Agent $agent = null): array
     {
         $command = [

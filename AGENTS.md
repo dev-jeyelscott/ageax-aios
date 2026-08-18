@@ -268,6 +268,15 @@ clean/recoverable preflight
 - New Ticket triage attempts use fresh context and durable prior evidence.
 - Ticket conversion, timeout handling, reopen, and Context Budget decisions must be idempotent/recoverable.
 
+## Database protection (P0 hardening)
+
+- Codex and Claude Code are both supported, but neither is trusted to enforce AIOS security boundaries itself; AIOS owns and validates the common execution-security contract before either harness starts.
+- Normal PM/Coder/Reviewer/Ticket-triage execution must never operate on the live AIOS repository, any path inside it, or any ancestor path containing it. `WorkspacePathResolver` enforces this both at project registration and again immediately before every execution, so stale/persisted unsafe paths fail closed.
+- `DatabaseProtectionGuard` runs after the AgentRun is durably created but immediately before either harness launches, inside each protected role's existing operational-failure handling. It requires a verified recovery point and no active restore lock; on failure, neither harness executes.
+- The Workflow Recovery Engineer edits only a disposable Git worktree (`RecoveryWorktreeManager`), never the live AIOS checkout; AIOS independently inspects, validates, and commits any resulting change.
+- An independent backup subsystem (`DatabaseBackupService`, ledger on the separate `aios_backup_ledger` connection) lives outside the AIOS repository and any managed workspace, survives deletion of the primary database, and fails closed for unsupported drivers or an in-memory SQLite connection.
+- CLI-first recovery (`aios:database-backup:create`, `aios:database-backup:verify`, `aios:database-restore`, `aios:database-backups`) works independently of the primary database, users/sessions, and either harness. See `MASTER-PROMPT.md`'s "Database Protection (P0 hardening)" section for the full contract.
+
 ## Guardrails
 
 - Prefer framework-native code, explicit state machines, transactions, locking, schema-validated structured output, immutable attempts, append-only audit logs, idempotency, focused services, and versioned deterministic policies.

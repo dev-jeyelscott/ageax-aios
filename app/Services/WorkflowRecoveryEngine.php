@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\AgentRole;
 use App\AgentRunStatus;
+use App\Exceptions\DatabaseProtectionFailed;
 use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\RecoveryIncident;
@@ -11,9 +12,11 @@ use App\Models\Task;
 use App\RecoveryIncidentStatus;
 use App\TaskStatus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use LogicException;
+use Throwable;
 
 /**
  * Repair half of the Workflow Recovery Engineer. Claims one open RecoveryIncident at a time
@@ -35,12 +38,14 @@ class WorkflowRecoveryEngine
         private AuditLogger $audit,
         private TaskWorkflow $workflow,
         private RecoveryEngineerRunner $engineer,
+        private RecoveryWorktreeManager $worktrees,
         private AgentRunRecorder $runs,
         private RecoveryRepositoryLifecycle $lifecycle,
         private ProjectGitState $git,
         private DirtyRepositoryAttributor $attributor,
         private GlobalAgentResolver $globalAgents,
         private AgentHarnessResolver $harnesses,
+        private DatabaseProtectionGuard $databaseProtection,
     ) {}
 
     /**
@@ -296,12 +301,59 @@ class WorkflowRecoveryEngine
             ];
         }
 
-        $prompt = $this->buildPrompt($incident, $task, $preflight['head_sha']);
-        $project = $task?->project;
-        $run = $this->runs->start($project ?? $incident->project, AgentRole::RecoveryEngineer, $prompt, $task, agent: $agent);
-        $run->update(['recovery_incident_id' => $incident->id]);
-        $result = $this->engineer->run($agent, $prompt);
-        $this->runs->complete($run, $result['execution']);
+        try {
+            $this->databaseProtection->guard();
+        } catch (DatabaseProtectionFailed $exception) {
+            $this->audit->record('recovery.blocked_database_protection_failed', [
+                'recovery_incident_id' => $incident->id,
+                'reason' => $exception->getMessage(),
+            ], $incident->project, $task);
+
+            return [
+                'category' => 'configuration_environment',
+                'summary' => 'No verified database recovery point was available, so no diagnosis was attempted.',
+                'recoverable' => false,
+                'fix_applied' => false,
+                'changed_files' => [],
+                'fix_summary' => null,
+                'escalation_reason' => 'Database protection guard failed: '.$exception->getMessage(),
+            ];
+        }
+
+        try {
+            $worktreePath = $this->worktrees->create($repositoryPath, $preflight['head_sha']);
+        } catch (Throwable $exception) {
+            $this->audit->record('recovery.blocked_worktree_isolation_failed', [
+                'recovery_incident_id' => $incident->id,
+                'reason' => $exception->getMessage(),
+            ], $incident->project, $task);
+
+            return [
+                'category' => 'unsafe_git_state',
+                'summary' => 'A disposable recovery worktree could not be created, so no diagnosis was attempted against the live AIOS repository.',
+                'recoverable' => false,
+                'fix_applied' => false,
+                'changed_files' => [],
+                'fix_summary' => null,
+                'escalation_reason' => 'Recovery worktree isolation failed: '.$exception->getMessage(),
+            ];
+        }
+
+        try {
+            $prompt = $this->buildPrompt($incident, $task, $preflight['head_sha']);
+            $project = $task?->project;
+            $run = $this->runs->start($project ?? $incident->project, AgentRole::RecoveryEngineer, $prompt, $task, agent: $agent);
+            $run->update(['recovery_incident_id' => $incident->id]);
+            $result = $this->engineer->run($agent, $prompt, $worktreePath);
+            $this->runs->complete($run, $result['execution']);
+
+            $candidateChangedFiles = $result['decision']['changed_files'] ?? null;
+            if (is_array($candidateChangedFiles) && $candidateChangedFiles !== []) {
+                $this->copyChangedFilesIntoRepository($worktreePath, $repositoryPath, $candidateChangedFiles);
+            }
+        } finally {
+            $this->worktrees->destroy($repositoryPath, $worktreePath);
+        }
 
         if ($result['execution']['exit_code'] !== 0 || $result['decision'] === null) {
             return [
@@ -348,6 +400,54 @@ class WorkflowRecoveryEngine
             'escalation_reason' => $validated['escalation_reason'] ?? null,
             'base_sha' => $preflight['head_sha'],
         ];
+    }
+
+    /**
+     * Materializes the Recovery Engineer's edits from the disposable worktree into the live
+     * repository's working tree as plain, uncommitted file changes, mirroring exactly what the
+     * harness would have produced had it edited the live checkout directly. AIOS still performs
+     * every trust decision afterward: RecoveryRepositoryLifecycle::validate()/commit() (used by
+     * applyRepair()) independently re-diffs the live repository against the recorded base SHA and
+     * refuses to commit unless that diff exactly matches the declared changed files, so a path this
+     * method skips (traversal, symlink escape, or a file the worktree never actually produced)
+     * simply fails that later match rather than silently entering durable state.
+     *
+     * @param  array<int, mixed>  $changedFiles  untrusted, not-yet-validated decision JSON
+     */
+    private function copyChangedFilesIntoRepository(string $worktreePath, string $repositoryPath, array $changedFiles): void
+    {
+        $worktreeRoot = realpath($worktreePath);
+        $repositoryRoot = realpath($repositoryPath);
+
+        if ($worktreeRoot === false || $repositoryRoot === false) {
+            return;
+        }
+
+        foreach ($changedFiles as $relative) {
+            if (! is_string($relative) || $relative === '' || Str::contains($relative, ["\0", '..']) || Str::startsWith($relative, ['/', '\\'])) {
+                continue;
+            }
+
+            $source = $worktreeRoot.DIRECTORY_SEPARATOR.$relative;
+            $destination = $repositoryRoot.DIRECTORY_SEPARATOR.$relative;
+            $resolvedSource = realpath($source);
+
+            if ($resolvedSource === false) {
+                // The agent deleted this file in the worktree; mirror the deletion in the live repo.
+                if (is_file($destination)) {
+                    @unlink($destination);
+                }
+
+                continue;
+            }
+
+            if (! Str::startsWith($resolvedSource, $worktreeRoot.DIRECTORY_SEPARATOR) || ! is_file($resolvedSource)) {
+                continue;
+            }
+
+            File::ensureDirectoryExists(dirname($destination));
+            @copy($resolvedSource, $destination);
+        }
     }
 
     /** @param array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string, base_sha?: string} $classification */
