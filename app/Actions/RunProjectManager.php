@@ -108,7 +108,7 @@ class RunProjectManager
         }
 
         try {
-            $this->validatePlan($plan);
+            $this->validatePlan($plan, (int) $roadmap->project->tasks()->max('position'));
         } catch (ValidationException) {
             $this->failAttempt($attempt, $execution['exit_code'], 'invalid_plan');
 
@@ -310,7 +310,7 @@ class RunProjectManager
     }
 
     /** @param array<string, mixed> $plan */
-    private function validatePlan(array $plan): void
+    private function validatePlan(array $plan, int $taskPositionOffset = 0): void
     {
         $validator = validator($plan, [
             'project_knowledge' => ['nullable', 'array'],
@@ -346,8 +346,13 @@ class RunProjectManager
             'phases.*.tasks.*.completion_evidence' => ['nullable', 'string', 'required_if:phases.*.tasks.*.completion_status,done'],
         ]);
 
-        $validator->after(function (Validator $validator) use ($plan): void {
-            $position = 0;
+        $validator->after(function (Validator $validator) use ($plan, $taskPositionOffset): void {
+            // Task positions (and depends_on references) continue globally across batches — see
+            // ApplyRoadmapPlan's own position offset — so the forward-dependency check below must
+            // start counting from the project's already-persisted task count, not 0, or a
+            // legitimate reference to a task from an earlier batch is wrongly rejected as
+            // "depends on a later task."
+            $position = $taskPositionOffset;
 
             foreach ($plan['phases'] as $phaseIndex => $phase) {
                 foreach ($phase['tasks'] as $taskIndex => $task) {

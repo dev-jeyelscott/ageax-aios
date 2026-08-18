@@ -548,6 +548,62 @@ test('an in progress roadmap batch continues immediately without waiting for the
         ->and($project->tasks()->orderBy('position')->pluck('position')->all())->toBe([1, 2]);
 });
 
+test('a later batch may declare a dependency on a task from an earlier batch', function () {
+    // Regression: validatePlan's forward-dependency check restarted its position counter at 0
+    // for every batch, so a legitimate depends_on reference to an earlier-batch task (whose real
+    // global position is higher than this batch's local counter) was wrongly rejected as
+    // "depends on a later task", failing the whole batch with invalid_plan.
+    config()->set('aios.roadmap_retry_cooldown_seconds', 3600);
+    config()->set('aios.roadmap_max_phases_per_batch', 1);
+    config()->set('aios.max_roadmap_attempts', 3);
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+
+    $project = Project::create([
+        'name' => 'Roadmap cross batch dependency',
+        'path' => '/tmp/roadmap-cross-batch-dependency-'.fake()->uuid(),
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+
+    createRoadmapBatchTestWorkers($project);
+
+    $roadmap = Roadmap::create([
+        'project_id' => $project->id,
+        'original_filename' => 'roadmap.md',
+        'storage_path' => 'roadmaps/cross-batch-dependency.md',
+        'status' => 'uploaded',
+        'content' => 'Produce a large implementation roadmap.',
+    ]);
+
+    $firstBatch = roadmapBatchPlan('Phase 1', 'Task 1', true);
+    $secondBatch = [
+        'phases' => [[
+            'title' => 'Phase 2',
+            'objective' => 'Batch phase.',
+            'tasks' => [
+                ['title' => 'Task 2', 'objective' => 'Do it.', 'acceptance_criteria' => ['It works.'], 'implementation_prompt' => 'Implement it.', 'depends_on' => [1]],
+            ],
+        ]],
+        'remaining_work' => false,
+    ];
+
+    mock(CodexCliRunner::class)
+        ->shouldReceive('run')
+        ->andReturn(
+            ['exit_code' => 0, 'output' => json_encode($firstBatch, JSON_THROW_ON_ERROR), 'error_output' => ''],
+            ['exit_code' => 0, 'output' => json_encode($secondBatch, JSON_THROW_ON_ERROR), 'error_output' => ''],
+        );
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    $tasks = $project->tasks()->orderBy('position')->get();
+
+    expect($roadmap->refresh()->status)->toBe('processed')
+        ->and($tasks)->toHaveCount(2)
+        ->and($tasks[1]->dependencies()->pluck('position')->all())->toBe([1]);
+});
+
 test('a roadmap batch failure after successful earlier batches does not exhaust the retry budget prematurely', function () {
     config()->set('aios.roadmap_retry_cooldown_seconds', 0);
     config()->set('aios.roadmap_max_phases_per_batch', 1);
