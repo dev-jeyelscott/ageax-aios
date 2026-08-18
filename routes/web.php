@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AgentController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GlobalAgentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\SkillController;
@@ -10,7 +11,7 @@ use Illuminate\Support\Facades\Route;
 Route::inertia('/', 'welcome')->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function () {
-    Route::inertia('dashboard', 'dashboard')->name('dashboard');
+    Route::get('dashboard', DashboardController::class)->name('dashboard');
     Route::resource('projects', ProjectController::class)->only(['index', 'store', 'show', 'destroy']);
 
     Route::get('agents', [GlobalAgentController::class, 'index'])->name('agents.index');
