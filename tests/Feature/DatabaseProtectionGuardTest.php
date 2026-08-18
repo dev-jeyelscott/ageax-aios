@@ -14,6 +14,7 @@ use App\Models\Task;
 use App\ProjectStatus;
 use App\Services\DatabaseBackupService;
 use App\Services\DatabaseProtectionGuard;
+use App\Services\ProjectDatabaseIsolationGuard;
 use App\Services\WorkspacePathResolver;
 use App\TaskStatus;
 use Illuminate\Process\PendingProcess;
@@ -22,7 +23,7 @@ use ReflectionProperty;
 
 function realDatabaseProtectionGuard(): DatabaseProtectionGuard
 {
-    return new DatabaseProtectionGuard(app(DatabaseBackupService::class), app(WorkspacePathResolver::class));
+    return new DatabaseProtectionGuard(app(DatabaseBackupService::class), app(WorkspacePathResolver::class), app(ProjectDatabaseIsolationGuard::class));
 }
 
 function protectedProject(): Project

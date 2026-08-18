@@ -903,6 +903,13 @@ validates the common execution-security contract before either harness starts.
   runs deterministic validation, controls every Git operation, and decides whether validated
   changes may enter durable repository state (`RecoveryRepositoryLifecycle`, unchanged). The
   harness never receives Edit/Write/Bash access to the live checkout.
+- `ProjectDatabaseIsolationGuard` proactively rejects a managed project whose own `.env` resolves to
+  the same physical database as AIOS's own primary connection (same driver/database name, treating
+  a local Unix socket and loopback TCP host as equivalent). A managed project's `.env` is read by
+  that project's own process — whether launched by AIOS or run manually — entirely outside
+  `WorkspacePathResolver`'s filesystem boundary and `SanitizedExecutionEnvironment`'s process-env
+  scrubbing, so this is a distinct check, run both at project registration (`CreateProject`) and
+  again inside `DatabaseProtectionGuard` before every execution.
 - `DatabaseProtectionGuard` is an AIOS-owned, harness-independent pre-execution boundary that runs
   after the AgentRun is durably created but immediately before either Codex or Claude Code is
   launched, inside each protected role's existing operational-failure handling (bounded retry, then

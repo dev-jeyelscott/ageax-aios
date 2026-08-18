@@ -21,6 +21,7 @@ class DatabaseProtectionGuard
     public function __construct(
         private DatabaseBackupService $backups,
         private WorkspacePathResolver $paths,
+        private ProjectDatabaseIsolationGuard $databaseIsolation,
     ) {}
 
     /**
@@ -38,6 +39,11 @@ class DatabaseProtectionGuard
             // so: this guard is a second, independent enforcement point that must fail closed on
             // its own even if a future caller forgets to path-check before invoking it.
             $this->paths->assertProjectPath($project->path);
+
+            // A project's own .env is read by its own process, not AIOS's — so this catches a
+            // misconfiguration introduced or edited after registration, not only a stale value from
+            // when the project was first registered.
+            $this->databaseIsolation->assertNoCollision($project);
         }
 
         $freshnessSeconds = max(0, (int) config('aios.database_protection_freshness_seconds'));

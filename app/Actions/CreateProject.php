@@ -8,6 +8,7 @@ use App\Models\Project;
 use App\ProjectStatus;
 use App\Services\AuditLogger;
 use App\Services\ObsidianProjectNotes;
+use App\Services\ProjectDatabaseIsolationGuard;
 use App\Services\WorkspacePathResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Process;
@@ -21,11 +22,16 @@ class CreateProject
         private ObsidianProjectNotes $notes,
         private ProvisionDefaultProjectAgents $agentProvisioner,
         private ProvisionDedicatedAgentSkills $skillProvisioner,
+        private ProjectDatabaseIsolationGuard $databaseIsolation,
     ) {}
 
     public function handle(string $name, string $path, bool $existing = false): Project
     {
         $projectPath = $this->paths->resolve($path, $existing);
+
+        if ($existing && is_dir($projectPath)) {
+            $this->databaseIsolation->assertNoCollision(new Project(['name' => $name, 'path' => $projectPath]));
+        }
 
         if ($existing && ! is_dir($projectPath)) {
             throw ValidationException::withMessages(['path' => 'The existing project directory could not be found.']);
