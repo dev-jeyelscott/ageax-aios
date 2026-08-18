@@ -22,7 +22,6 @@ use App\TicketStatus;
 use App\TicketUrgency;
 use Carbon\CarbonInterface;
 use Illuminate\Http\RedirectResponse;
-use Illuminate\Http\UploadedFile;
 use Inertia\Inertia;
 use Inertia\Response;
 use LogicException;
@@ -138,10 +137,6 @@ class TicketController extends Controller
 
         if (is_array($files)) {
             foreach ($files as $file) {
-                if (! $file instanceof UploadedFile) {
-                    continue;
-                }
-
                 $storeAttachment->handle(
                     $ticket,
                     $file,
@@ -188,22 +183,43 @@ class TicketController extends Controller
                 'key' => $ticket->key,
                 'title' => $ticket->title,
                 'description' => $ticket->description,
-                'requester_category' => $ticket->requester_category?->value,
-                'category' => $ticket->category?->value,
-                'status' => $ticket->status->value,
-                'decision' => $ticket->decision?->value,
-                'requester_urgency' => $ticket->requester_urgency?->value,
-                'ai_suggested_priority' => $ticket->ai_suggested_priority?->value,
-                'final_priority' => $ticket->final_priority?->value,
+                'requester_category' => $this->ticketEnumValue(
+                    $ticket,
+                    'requester_category',
+                ),
+                'category' => $this->ticketEnumValue($ticket, 'category'),
+                'status' => $this->requiredTicketEnumValue(
+                    $ticket,
+                    'status',
+                ),
+                'decision' => $this->ticketEnumValue($ticket, 'decision'),
+                'requester_urgency' => $this->ticketEnumValue(
+                    $ticket,
+                    'requester_urgency',
+                ),
+                'ai_suggested_priority' => $this->ticketEnumValue(
+                    $ticket,
+                    'ai_suggested_priority',
+                ),
+                'final_priority' => $this->ticketEnumValue(
+                    $ticket,
+                    'final_priority',
+                ),
                 'triage_confidence' => $ticket->triage_confidence !== null
                     ? (float) $ticket->triage_confidence
                     : null,
                 'awaiting_response_until' => $this->serializeDate(
                     $ticket->awaiting_response_until,
                 ),
-                'triaged_at' => $this->serializeDate($ticket->triaged_at),
-                'closed_at' => $this->serializeDate($ticket->closed_at),
-                'created_at' => $this->serializeDate($ticket->created_at),
+                'triaged_at' => $this->serializeDate(
+                    $ticket->triaged_at,
+                ),
+                'closed_at' => $this->serializeDate(
+                    $ticket->closed_at,
+                ),
+                'created_at' => $this->serializeDate(
+                    $ticket->created_at,
+                ),
                 'converted_task' => $convertedTask === null
                     ? null
                     : [
@@ -275,7 +291,7 @@ class TicketController extends Controller
                 continue;
             }
 
-            $body[] = $label.':'."\n".trim($value);
+            $body[] = $label.":\n".trim($value);
         }
 
         return implode("\n\n", $body);
@@ -303,17 +319,40 @@ class TicketController extends Controller
             'id' => $ticket->id,
             'key' => $ticket->key,
             'title' => $ticket->title,
-            'status' => $ticket->status->value,
-            'category' => $ticket->category?->value,
-            'requester_category' => $ticket->requester_category?->value,
-            'requester_urgency' => $ticket->requester_urgency?->value,
-            'ai_suggested_priority' => $ticket->ai_suggested_priority?->value,
-            'final_priority' => $ticket->final_priority?->value,
-            'decision' => $ticket->decision?->value,
+            'status' => $this->requiredTicketEnumValue(
+                $ticket,
+                'status',
+            ),
+            'category' => $this->ticketEnumValue(
+                $ticket,
+                'category',
+            ),
+            'requester_category' => $this->ticketEnumValue(
+                $ticket,
+                'requester_category',
+            ),
+            'requester_urgency' => $this->ticketEnumValue(
+                $ticket,
+                'requester_urgency',
+            ),
+            'ai_suggested_priority' => $this->ticketEnumValue(
+                $ticket,
+                'ai_suggested_priority',
+            ),
+            'final_priority' => $this->ticketEnumValue(
+                $ticket,
+                'final_priority',
+            ),
+            'decision' => $this->ticketEnumValue(
+                $ticket,
+                'decision',
+            ),
             'awaiting_response_until' => $this->serializeDate(
                 $ticket->awaiting_response_until,
             ),
-            'created_at' => $this->serializeDate($ticket->created_at),
+            'created_at' => $this->serializeDate(
+                $ticket->created_at,
+            ),
         ];
     }
 
@@ -349,6 +388,7 @@ class TicketController extends Controller
             ])
             ->oldest('id')
             ->get();
+
         $payload = [];
 
         foreach ($messages as $message) {
@@ -367,6 +407,13 @@ class TicketController extends Controller
                 );
             }
 
+            $attachmentPayloads = [];
+
+            foreach ($message->attachments as $attachment) {
+                $attachmentPayloads[] = $conversation
+                    ->attachmentPayload($attachment);
+            }
+
             $payload[] = [
                 'id' => $message->id,
                 'message_type' => $messageType->value,
@@ -382,18 +429,43 @@ class TicketController extends Controller
                     ? 'AI-generated response'
                     : null,
                 'agent_run_id' => $message->agent_run_id,
-                'created_at' => $this->serializeDate($message->created_at),
-                'attachments' => $message->attachments
-                    ->map(
-                        fn (TicketAttachment $attachment): array => $conversation
-                            ->attachmentPayload($attachment),
-                    )
-                    ->values()
-                    ->all(),
+                'created_at' => $this->serializeDate(
+                    $message->created_at,
+                ),
+                'attachments' => $attachmentPayloads,
             ];
         }
 
         return $payload;
+    }
+
+    private function ticketEnumValue(
+        Ticket $ticket,
+        string $attribute,
+    ): ?string {
+        $value = $ticket->getRawOriginal($attribute);
+
+        if ($value === null) {
+            return null;
+        }
+
+        if (! is_string($value)) {
+            throw new LogicException(
+                "Ticket {$attribute} value is invalid.",
+            );
+        }
+
+        return $value;
+    }
+
+    private function requiredTicketEnumValue(
+        Ticket $ticket,
+        string $attribute,
+    ): string {
+        return $this->ticketEnumValue($ticket, $attribute)
+            ?? throw new LogicException(
+                "Ticket {$attribute} value is required.",
+            );
     }
 
     private function assertProjectTicket(

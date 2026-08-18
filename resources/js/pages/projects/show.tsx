@@ -26,13 +26,6 @@ import { useAppHeaderSlot } from '@/components/app-header-slot';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from '@/components/ui/card';
 import { AgentsPanel } from '@/pages/projects/agents-panel';
 import type {
     Agent,
@@ -331,7 +324,8 @@ function RoadmapPanel({
                         {progress}%
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                        {completedTasks} of {project.tasks.length} tasks complete
+                        {completedTasks} of {project.tasks.length} tasks
+                        complete
                     </p>
                 </div>
 
@@ -829,8 +823,8 @@ function RecentActivityPanel({ project }: { project: Project }) {
                         </h2>
 
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                            Live project state backed by persisted AIOS execution
-                            and audit evidence.
+                            Live project state backed by persisted AIOS
+                            execution and audit evidence.
                         </p>
                     </div>
 
@@ -1145,9 +1139,7 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                                 </div>
 
                                                 <time
-                                                    dateTime={
-                                                        event.occurred_at
-                                                    }
+                                                    dateTime={event.occurred_at}
                                                     className="shrink-0 font-mono text-2xs text-muted-foreground"
                                                 >
                                                     {new Date(
@@ -1260,8 +1252,7 @@ export default function ProjectShow({
                                 type="submit"
                                 variant="outline"
                                 disabled={
-                                    processing ||
-                                    project.status === 'stopping'
+                                    processing || project.status === 'stopping'
                                 }
                                 className="h-7 border-border bg-card/50 px-2 text-xs"
                             >

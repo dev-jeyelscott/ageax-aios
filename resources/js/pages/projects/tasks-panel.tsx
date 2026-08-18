@@ -59,13 +59,7 @@ type Props = {
 };
 
 type FilterGroup =
-    | 'all'
-    | 'queued'
-    | 'active'
-    | 'review'
-    | 'done'
-    | 'attention'
-    | 'closed';
+    'all' | 'queued' | 'active' | 'review' | 'done' | 'attention' | 'closed';
 
 type OwnerFilter = 'all' | 'aios' | 'coder' | 'reviewer';
 
@@ -183,9 +177,7 @@ function badgeClassForOwner(owner: DecoratedTask['owner']): string {
     }
 }
 
-function badgeClassForSignal(
-    signal: DecoratedTask['signalLabel'],
-): string {
+function badgeClassForSignal(signal: DecoratedTask['signalLabel']): string {
     switch (signal) {
         case 'attention':
             return 'border-destructive/30 bg-destructive/10 text-destructive-foreground';
@@ -198,10 +190,7 @@ function badgeClassForSignal(
     }
 }
 
-function summaryValue(
-    tasks: ProjectTaskSummary[],
-    group: FilterGroup,
-): number {
+function summaryValue(tasks: ProjectTaskSummary[], group: FilterGroup): number {
     return tasks.filter((task) => getTaskGroup(task) === group).length;
 }
 
@@ -347,8 +336,7 @@ export function TasksPanel({
         },
     ];
 
-    const evidenceHeadSha =
-        gitEvidence?.head_sha ?? repositoryHeadSha ?? null;
+    const evidenceHeadSha = gitEvidence?.head_sha ?? repositoryHeadSha ?? null;
 
     return (
         <div className="grid gap-3">
@@ -440,8 +428,8 @@ export function TasksPanel({
 
                             <CardDescription className="mt-1 text-sm">
                                 Durable ordering remains controlled by AIOS.
-                                Search and filters never change workflow state or
-                                execution order.
+                                Search and filters never change workflow state
+                                or execution order.
                             </CardDescription>
                         </div>
 
@@ -583,8 +571,7 @@ export function TasksPanel({
                                                     </span>
                                                 )}
 
-                                                {task.group ===
-                                                    'attention' && (
+                                                {task.group === 'attention' && (
                                                     <span className="inline-flex items-center gap-1 rounded-full border border-destructive/25 bg-destructive/10 px-2 py-0.5 text-2xs text-destructive-foreground">
                                                         <AlertTriangle className="size-3" />
                                                         attention
