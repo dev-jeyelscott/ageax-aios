@@ -330,8 +330,8 @@ test('public replies and internal notes are persisted through separate allowed m
         ->all();
 
     expect($types)->toBe([
-        TicketMessageType::PublicReply->value,
-        TicketMessageType::InternalNote->value,
+        TicketMessageType::PublicReply,
+        TicketMessageType::InternalNote,
     ]);
 
     $this->post(
