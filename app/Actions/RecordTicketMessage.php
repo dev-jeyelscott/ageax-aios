@@ -11,6 +11,7 @@ use App\Services\TicketWorkflow;
 use App\TicketMessageAuthorType;
 use App\TicketMessageType;
 use App\TicketStatus;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use LogicException;
@@ -143,9 +144,12 @@ class RecordTicketMessage
         );
 
         if ($status === TicketStatus::AwaitingRequester) {
-            $deadline = $ticket->awaiting_response_until;
+            $deadline = $ticket->getAttribute('awaiting_response_until');
 
-            if ($deadline === null || $deadline->lessThanOrEqualTo(now())) {
+            if (
+                ! $deadline instanceof CarbonImmutable
+                || $deadline->lessThanOrEqualTo(now())
+            ) {
                 return;
             }
 
@@ -165,18 +169,23 @@ class RecordTicketMessage
             return;
         }
 
-        if (
-            $status !== TicketStatus::Closed
-            || $ticket->inactivity_closed_at === null
-        ) {
+        if ($status !== TicketStatus::Closed) {
             return;
         }
 
-        $inactivityClosedAt = $ticket->inactivity_closed_at;
+        $inactivityClosedAt = $ticket->getAttribute(
+            'inactivity_closed_at',
+        );
+
+        if (! $inactivityClosedAt instanceof CarbonImmutable) {
+            return;
+        }
+
         $reopened = $this->workflow->transition(
             $ticket,
             TicketStatus::Open,
         );
+
         $systemMessage = $this->recordMessage(
             $reopened,
             TicketMessageAuthorType::System,
@@ -210,7 +219,10 @@ class RecordTicketMessage
             $this->reject($ticket, 'body_too_large');
         }
 
-        if (($authorType === TicketMessageAuthorType::User) !== ($user !== null)) {
+        if (
+            ($authorType === TicketMessageAuthorType::User)
+            !== ($user !== null)
+        ) {
             $this->reject($ticket, 'invalid_user_attribution');
         }
 
@@ -243,6 +255,8 @@ class RecordTicketMessage
             'reason' => $reason,
         ], $ticket->project);
 
-        throw new LogicException("Ticket message rejected: {$reason}.");
+        throw new LogicException(
+            "Ticket message rejected: {$reason}.",
+        );
     }
 }

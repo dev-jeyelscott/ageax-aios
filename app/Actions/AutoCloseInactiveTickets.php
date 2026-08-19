@@ -9,6 +9,7 @@ use App\TicketDecision;
 use App\TicketMessageAuthorType;
 use App\TicketMessageType;
 use App\TicketStatus;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 class AutoCloseInactiveTickets
@@ -57,20 +58,24 @@ class AutoCloseInactiveTickets
             $status = TicketStatus::from(
                 (string) $ticket->getRawOriginal('status'),
             );
+            $decision = $ticket->getRawOriginal('decision');
 
             if (
                 $status !== TicketStatus::AwaitingRequester
-                || ! in_array($ticket->decision, [
-                    TicketDecision::NeedsInformation,
-                    TicketDecision::SelfService,
+                || ! in_array($decision, [
+                    TicketDecision::NeedsInformation->value,
+                    TicketDecision::SelfService->value,
                 ], true)
             ) {
                 return false;
             }
 
-            $deadline = $ticket->awaiting_response_until;
+            $deadline = $ticket->getAttribute('awaiting_response_until');
 
-            if ($deadline === null || $deadline->isFuture()) {
+            if (
+                ! $deadline instanceof CarbonImmutable
+                || $deadline->isFuture()
+            ) {
                 return false;
             }
 
@@ -86,7 +91,11 @@ class AutoCloseInactiveTickets
                 $ticket,
                 TicketStatus::Closed,
             );
-            $inactivityClosedAt = $closedTicket->closed_at ?? now();
+
+            $closedAt = $closedTicket->getAttribute('closed_at');
+            $inactivityClosedAt = $closedAt instanceof CarbonImmutable
+                ? $closedAt
+                : CarbonImmutable::now();
 
             $closedTicket->forceFill([
                 'inactivity_closed_at' => $inactivityClosedAt,
@@ -102,7 +111,7 @@ class AutoCloseInactiveTickets
             $this->audit->record('ticket.auto_closed', [
                 'ticket_id' => $closedTicket->id,
                 'ticket_key' => $closedTicket->key,
-                'decision' => $closedTicket->decision?->value,
+                'decision' => $decision,
                 'awaiting_response_until' => $deadline->toISOString(),
                 'closed_at' => $inactivityClosedAt->toISOString(),
                 'system_message_id' => $closeMessage->id,
@@ -116,6 +125,7 @@ class AutoCloseInactiveTickets
                 $closedTicket,
                 TicketStatus::Open,
             );
+
             $reopenMessage = $this->messages->handle(
                 $reopened,
                 TicketMessageAuthorType::System,
