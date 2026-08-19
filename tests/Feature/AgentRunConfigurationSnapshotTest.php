@@ -10,6 +10,7 @@ use App\Models\Project;
 use App\Models\Skill;
 use App\Models\Task;
 use App\ProjectStatus;
+use App\Services\AgentContextAssembler;
 use App\TaskStatus;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
@@ -53,7 +54,8 @@ test('a run bound to an agent persists an immutable configuration snapshot', fun
     expect($run->isLegacyRun())->toBeFalse()
         ->and($run->agent_id)->toBe($agent->id)
         ->and($run->harness)->toBe('codex')
-        ->and($run->context_schema_version)->toBe(1)
+        ->and($run->context_schema_version)->toBe(AgentContextAssembler::ContextSchemaVersion)
+        ->and($run->configuration_snapshot['context_schema_version'])->toBe(AgentContextAssembler::ContextSchemaVersion)
         ->and($run->configuration_snapshot['agent']['id'])->toBe($agent->id)
         ->and($run->configuration_snapshot['agent']['configuration_version'])->toBe($agent->configuration_version)
         ->and(collect($run->configuration_snapshot['skills'])->pluck('slug')->all())->toBe(['style-skill'])
