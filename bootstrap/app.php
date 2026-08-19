@@ -19,6 +19,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // per AGENTS.md; withoutOverlapping guards against a slow scan cycle running twice.
         $schedule->command('aios:recover-workflows')->everyFiveMinutes()->withoutOverlapping();
 
+        // Failure-to-Skill Promotion Queue detection is observational only. It scans existing
+        // durable evidence and creates/updates operator-review candidates; it never runs a
+        // harness, changes workflow state, or mutates Skills without a later explicit decision.
+        $schedule->command('aios:knowledge-improvements:scan')->hourly()->withoutOverlapping();
+
         // Independent disaster-recovery backup, deliberately unconditional and not gated on any
         // AIOS agent execution: DatabaseProtectionGuard only creates a backup immediately before a
         // protected AIOS-orchestrated execution, so a destructive action taken outside AIOS's own

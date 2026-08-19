@@ -1,6 +1,7 @@
 import { Link, usePage } from '@inertiajs/react';
-import { Bot, FolderKanban, LayoutGrid, Ticket } from 'lucide-react';
+import { Bot, FolderKanban, LayoutGrid, Lightbulb, Ticket } from 'lucide-react';
 import { index as agentsIndex } from '@/actions/App/Http/Controllers/GlobalAgentController';
+import { index as knowledgeImprovementsIndex } from '@/actions/App/Http/Controllers/KnowledgeImprovementController';
 import { index as projectsIndex } from '@/actions/App/Http/Controllers/ProjectController';
 import { index as ticketsIndex } from '@/actions/App/Http/Controllers/TicketController';
 import AppLogo from '@/components/app-logo';
@@ -42,11 +43,20 @@ export function AppSidebar() {
     const mainNavItems = [...baseNavItems];
 
     if (typeof project?.id === 'number') {
-        mainNavItems.splice(2, 0, {
-            title: 'Tickets',
-            href: ticketsIndex(project.id),
-            icon: Ticket,
-        });
+        mainNavItems.splice(
+            2,
+            0,
+            {
+                title: 'Tickets',
+                href: ticketsIndex(project.id),
+                icon: Ticket,
+            },
+            {
+                title: 'Knowledge',
+                href: knowledgeImprovementsIndex(project.id),
+                icon: Lightbulb,
+            },
+        );
     }
 
     return (

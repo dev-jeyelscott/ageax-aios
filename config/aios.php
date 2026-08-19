@@ -29,6 +29,10 @@ return [
     'max_coder_attempts' => (int) env('AIOS_MAX_CODER_ATTEMPTS', 3),
     'max_reviewer_attempts' => (int) env('AIOS_MAX_REVIEWER_ATTEMPTS', 3),
     'no_progress_repeat_threshold' => (int) env('AIOS_NO_PROGRESS_REPEAT_THRESHOLD', 1),
+    'knowledge_improvement_occurrence_threshold' => (int) env('AIOS_KNOWLEDGE_IMPROVEMENT_OCCURRENCE_THRESHOLD', 3),
+    'knowledge_improvement_reopen_threshold' => (int) env('AIOS_KNOWLEDGE_IMPROVEMENT_REOPEN_THRESHOLD', 3),
+    'knowledge_improvement_scan_limit' => (int) env('AIOS_KNOWLEDGE_IMPROVEMENT_SCAN_LIMIT', 500),
+    'knowledge_improvement_lookback_days' => (int) env('AIOS_KNOWLEDGE_IMPROVEMENT_LOOKBACK_DAYS', 180),
     'roadmap_scan_interval_hours' => (int) env('AIOS_ROADMAP_SCAN_INTERVAL_HOURS', 24),
 
     // Workflow Recovery Engineer (AIOS system/reliability agent, not a project workflow role).
