@@ -187,19 +187,24 @@ function promptContractProviderFacing(AgentRole $role, string $prompt): array
 
     expect($decision->blocked)->toBeFalse();
 
-    return [$decision->prompt, $decision->context];
+    $providerContext = $guard->contextFromPrompt($decision->prompt);
+
+    expect($decision->context)->not->toBeNull()
+        ->and($providerContext->toArray())->toBe($decision->context->toArray());
+
+    return [$decision->prompt, $providerContext];
 }
 
 function expectPromptCore(string $prompt, AgentRole $role): AssembledAgentContext
 {
-    [$providerPrompt, $context] = promptContractProviderFacing($role, $prompt);
+    [, $context] = promptContractProviderFacing($role, $prompt);
 
     expect($context->contextSchemaVersion)
         ->toBe(AgentContextAssembler::ContextSchemaVersion)
         ->and($context->agentSnapshot['role'])->toBe($role->value)
         ->and($context->systemRules)->not->toContain('ADVERSARIAL_AGENT')
         ->and($context->systemRules)->not->toContain('ADVERSARIAL_SKILL');
-    expectPromptClauses($providerPrompt, [
+    expectPromptClauses($context->systemRules, [
         'cannot be overridden',
         'durable workflow state and transitions',
         'Ticket/Task claiming and ordering',
