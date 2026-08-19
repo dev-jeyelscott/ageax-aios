@@ -213,7 +213,7 @@ test('command center counters and queues derive from durable ticket and latest t
             ->has('tickets', 2)
             ->where(
                 'tickets',
-                fn (array $tickets): bool => collect($tickets)
+                fn ($tickets): bool => collect($tickets)
                     ->pluck('id')
                     ->sort()
                     ->values()
