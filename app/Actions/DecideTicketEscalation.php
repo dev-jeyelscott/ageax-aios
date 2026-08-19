@@ -7,7 +7,9 @@ use App\Models\TicketEscalationDecision;
 use App\Models\TicketTriageAttempt;
 use App\Models\User;
 use App\Services\AuditLogger;
+use App\Services\TicketTriagePolicy;
 use App\Services\TicketWorkflow;
+use App\TicketEscalationReason;
 use App\TicketMessageAuthorType;
 use App\TicketMessageType;
 use App\TicketOperatorAction;
@@ -21,6 +23,7 @@ class DecideTicketEscalation
 {
     public function __construct(
         private TicketWorkflow $workflow,
+        private TicketTriagePolicy $triagePolicy,
         private RecordTicketMessage $messages,
         private AuditLogger $audit,
     ) {}
@@ -60,9 +63,10 @@ class DecideTicketEscalation
                 );
             }
 
-            $validation = $this->validationEvidence($lockedAttempt);
+            $structuredDecision = $this->structuredDecision($lockedAttempt);
+            $storedValidation = $this->storedValidation($structuredDecision);
 
-            if (($validation['requires_operator_decision'] ?? null) !== true) {
+            if (($storedValidation['requires_operator_decision'] ?? null) !== true) {
                 throw new HttpException(
                     409,
                     'This Ticket triage attempt does not require an operator decision.',
@@ -98,6 +102,21 @@ class DecideTicketEscalation
                 );
             }
 
+            $freshValidation = $this->triagePolicy->evaluate(
+                $lockedTicket,
+                $structuredDecision,
+            );
+            $criticalRoadmapApprovalRequired = $this->criticalRoadmapApprovalRequired(
+                $storedValidation,
+            ) || $this->criticalRoadmapApprovalRequired(
+                $freshValidation,
+            );
+
+            $this->validateApprovalAction(
+                $action,
+                $criticalRoadmapApprovalRequired,
+            );
+
             $decision = TicketEscalationDecision::create([
                 'ticket_id' => $lockedTicket->id,
                 'ticket_triage_attempt_id' => $lockedAttempt->id,
@@ -128,7 +147,9 @@ class DecideTicketEscalation
                 'operator_user_id' => $operator->id,
                 'action' => $action->value,
                 'direction_provided' => $direction !== null,
-                'escalation_reasons' => $validation['escalation_reasons'] ?? [],
+                'escalation_reasons' => $storedValidation['escalation_reasons'] ?? [],
+                'fresh_escalation_reasons' => $freshValidation['escalation_reasons'],
+                'critical_roadmap_interruption_approved' => $action === TicketOperatorAction::ApproveCriticalRoadmapInterruption,
                 'resulting_status' => $resultingStatus->value,
             ], $lockedTicket->project);
 
@@ -137,7 +158,7 @@ class DecideTicketEscalation
     }
 
     /** @return array<string, mixed> */
-    private function validationEvidence(TicketTriageAttempt $attempt): array
+    private function structuredDecision(TicketTriageAttempt $attempt): array
     {
         $structuredDecision = $attempt->getAttribute('structured_decision');
 
@@ -148,6 +169,15 @@ class DecideTicketEscalation
             );
         }
 
+        return $structuredDecision;
+    }
+
+    /**
+     * @param  array<string, mixed>  $structuredDecision
+     * @return array<string, mixed>
+     */
+    private function storedValidation(array $structuredDecision): array
+    {
         $validation = $structuredDecision['aios_validation'] ?? null;
 
         if (! is_array($validation)) {
@@ -158,6 +188,51 @@ class DecideTicketEscalation
         }
 
         return $validation;
+    }
+
+    /** @param array<string, mixed> $validation */
+    private function criticalRoadmapApprovalRequired(array $validation): bool
+    {
+        $reasons = $validation['escalation_reasons'] ?? [];
+
+        if (! is_array($reasons)) {
+            return false;
+        }
+
+        return in_array(
+            TicketEscalationReason::RoadmapOrPhaseReorderingOrInterruptionRequested->value,
+            $reasons,
+            true,
+        ) || in_array(
+            TicketEscalationReason::CriticalOrEmergencyPreemptionRequested->value,
+            $reasons,
+            true,
+        );
+    }
+
+    private function validateApprovalAction(
+        TicketOperatorAction $action,
+        bool $criticalRoadmapApprovalRequired,
+    ): void {
+        if (
+            $criticalRoadmapApprovalRequired
+            && $action === TicketOperatorAction::ApproveProposedHandling
+        ) {
+            throw new HttpException(
+                409,
+                'Critical roadmap interruption requires the dedicated explicit approval action.',
+            );
+        }
+
+        if (
+            ! $criticalRoadmapApprovalRequired
+            && $action === TicketOperatorAction::ApproveCriticalRoadmapInterruption
+        ) {
+            throw new HttpException(
+                409,
+                'The dedicated critical-roadmap approval action is not applicable to the current durable roadmap state.',
+            );
+        }
     }
 
     private function recordOperatorContext(
@@ -202,6 +277,7 @@ class DecideTicketEscalation
     {
         return match ($action) {
             TicketOperatorAction::ApproveProposedHandling,
+            TicketOperatorAction::ApproveCriticalRoadmapInterruption,
             TicketOperatorAction::ProvideDirection => TicketStatus::Open,
             TicketOperatorAction::RequestRequesterInformation => TicketStatus::AwaitingRequester,
             TicketOperatorAction::Reject => TicketStatus::Closed,

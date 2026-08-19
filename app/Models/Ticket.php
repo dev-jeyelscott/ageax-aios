@@ -15,6 +15,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use LogicException;
 
 #[Fillable([
@@ -140,5 +141,11 @@ class Ticket extends Model
     public function triageAttempts(): HasMany
     {
         return $this->hasMany(TicketTriageAttempt::class);
+    }
+
+    /** @return HasOne<TicketTriageAttempt, $this> */
+    public function latestTriageAttempt(): HasOne
+    {
+        return $this->hasOne(TicketTriageAttempt::class)->ofMany('number', 'max');
     }
 }

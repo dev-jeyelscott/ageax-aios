@@ -8,6 +8,7 @@ use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\SkillController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketEscalationDecisionController;
+use App\Http\Controllers\TicketOperationsController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'welcome')->name('home');
@@ -21,6 +22,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::patch('agents/{agent}', [GlobalAgentController::class, 'update'])->name('agents.update');
     Route::post('agents/{agent}/invoke', [GlobalAgentController::class, 'invoke'])->name('agents.invoke');
     Route::get('agents/{agent}/runs/{run}', [GlobalAgentController::class, 'showRun'])->scopeBindings()->name('agents.runs.show');
+
+    Route::get('ticket-operations', [TicketOperationsController::class, 'index'])->name('ticket-operations.index');
+    Route::get('ticket-operations/{ticket}', [TicketOperationsController::class, 'show'])->name('ticket-operations.show');
+
     Route::patch('projects/{project}/status', [ProjectController::class, 'updateStatus'])->name('projects.status.update');
     Route::get('projects/{project}/tasks/{task}', [ProjectController::class, 'showTask'])->scopeBindings()->name('projects.tasks.show');
     Route::get('projects/{project}/agent-runs/{run}', [ProjectController::class, 'showAgentRun'])->scopeBindings()->name('projects.agent-runs.show');
