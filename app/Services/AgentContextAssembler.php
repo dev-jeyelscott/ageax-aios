@@ -57,7 +57,7 @@ class AgentContextAssembler
      * The persisted hash is retained until content is actually reduced; rebuild() computes the
      * new final hash after any reduction.
      *
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     public function fromPayload(array $payload): AssembledAgentContext
     {
@@ -102,9 +102,9 @@ class AgentContextAssembler
     }
 
     /**
-     * @param array<string, mixed> $agentSnapshot
-     * @param list<array<string, mixed>> $skillsSnapshot
-     * @param array<string, mixed> $taskContext
+     * @param  array<string, mixed>  $agentSnapshot
+     * @param  list<array<string, mixed>>  $skillsSnapshot
+     * @param  array<string, mixed>  $taskContext
      */
     public function rebuild(
         AssembledAgentContext $context,
@@ -250,9 +250,9 @@ class AgentContextAssembler
     }
 
     /**
-     * @param array<string, mixed> $agentSnapshot
-     * @param list<array<string, mixed>> $skillsSnapshot
-     * @param array<string, mixed> $taskContext
+     * @param  array<string, mixed>  $agentSnapshot
+     * @param  list<array<string, mixed>>  $skillsSnapshot
+     * @param  array<string, mixed>  $taskContext
      */
     private function build(
         int $contextSchemaVersion,
@@ -264,7 +264,7 @@ class AgentContextAssembler
             'context_schema_version' => $contextSchemaVersion,
             'system_rules' => self::SystemRules,
             'agent' => $agentSnapshot,
-            'skills' => array_values($skillsSnapshot),
+            'skills' => $skillsSnapshot,
             'task_context' => $taskContext,
         ];
         $hash = hash(
@@ -279,7 +279,7 @@ class AgentContextAssembler
         $costEstimate = $this->costEstimator->estimate(
             self::SystemRules,
             $agentSnapshot,
-            array_values($skillsSnapshot),
+            $skillsSnapshot,
             $taskContext,
         );
 
@@ -287,7 +287,7 @@ class AgentContextAssembler
             contextSchemaVersion: $contextSchemaVersion,
             systemRules: self::SystemRules,
             agentSnapshot: $agentSnapshot,
-            skillsSnapshot: array_values($skillsSnapshot),
+            skillsSnapshot: $skillsSnapshot,
             taskContext: $taskContext,
             hash: $hash,
             contextCostEstimate: $costEstimate,
@@ -295,4 +295,3 @@ class AgentContextAssembler
         );
     }
 }
-

@@ -16,11 +16,9 @@ import {
     useAutoScrollConsole,
 } from '@/components/agent-run-console';
 import type { AgentRun } from '@/components/agent-run-console';
-import {
-    ContextBudgetEvidence,
-    type ContextBudgetSnapshot,
-} from '@/components/context-budget-evidence';
 import { useAppHeaderSlot } from '@/components/app-header-slot';
+import { ContextBudgetEvidence } from '@/components/context-budget-evidence';
+import type { ContextBudgetSnapshot } from '@/components/context-budget-evidence';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -104,11 +102,12 @@ export default function AgentRunShow({
     const consoleRef = useAutoScrollConsole(live, agentRun.agent_messages);
     const roleLabel = humanize(agentRun.role);
     const runTitle = `${roleLabel} run`;
-    const contextBudgetSnapshot = (
-        agentRun as AgentRun & {
-            context_budget_snapshot?: ContextBudgetSnapshot | null;
-        }
-    ).context_budget_snapshot ?? null;
+    const contextBudgetSnapshot =
+        (
+            agentRun as AgentRun & {
+                context_budget_snapshot?: ContextBudgetSnapshot | null;
+            }
+        ).context_budget_snapshot ?? null;
 
     useAppHeaderSlot(
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
@@ -353,4 +352,3 @@ export default function AgentRunShow({
         </>
     );
 }
-

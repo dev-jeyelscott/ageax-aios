@@ -89,4 +89,3 @@ test('legacy AgentRun detail remains readable without Context Budget evidence', 
             ->where('agent_run.context_budget_snapshot', null)
             ->where('agent_run.context_budget_schema_version', null));
 });
-

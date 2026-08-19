@@ -96,4 +96,3 @@ final readonly class CodexHarness implements AgentHarness
         );
     }
 }
-

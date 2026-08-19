@@ -74,4 +74,3 @@ class AgentRun extends Model
         return $this->context_schema_version === null;
     }
 }
-

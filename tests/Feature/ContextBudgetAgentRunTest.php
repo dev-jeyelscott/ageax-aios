@@ -241,4 +241,3 @@ test('legacy no Agent runs remain readable without false Context Budget evidence
         ->and($run->context_budget_snapshot)->toBeNull()
         ->and($run->context_budget_schema_version)->toBeNull();
 });
-

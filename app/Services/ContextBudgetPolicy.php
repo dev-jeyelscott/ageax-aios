@@ -142,4 +142,3 @@ final class ContextBudgetPolicy
         return (int) floor($tokens * ($percent / 100));
     }
 }
-

@@ -75,7 +75,7 @@ class ConvertTicketToTask
                 return $this->existingConvertedTask($project, $ticket);
             }
 
-            if ($ticket->status === TicketStatus::Converted) {
+            if ($ticket->getRawOriginal('status') === TicketStatus::Converted->value) {
                 throw new LogicException(
                     'Converted Ticket is missing its durable Task link.',
                 );
@@ -83,7 +83,7 @@ class ConvertTicketToTask
 
             if (
                 $lockedAttempt->status !== 'completed'
-                || $ticket->status !== TicketStatus::Triaging
+                || $ticket->getRawOriginal('status') !== TicketStatus::Triaging->value
             ) {
                 return null;
             }
@@ -212,8 +212,8 @@ class ConvertTicketToTask
 
             if (
                 $dependencies->contains(
-                    fn (Task $dependency): bool => $dependency->status
-                        === TaskStatus::Cancelled,
+                    fn (Task $dependency): bool => $dependency->getRawOriginal('status')
+                        === TaskStatus::Cancelled->value,
                 )
             ) {
                 $this->escalateLocked(
@@ -399,7 +399,7 @@ class ConvertTicketToTask
         Project $project,
         Ticket $ticket,
     ): Task {
-        if ($ticket->status !== TicketStatus::Converted) {
+        if ($ticket->getRawOriginal('status') !== TicketStatus::Converted->value) {
             throw new LogicException(
                 'Ticket has a Task link but is not in the converted state.',
             );
@@ -512,7 +512,7 @@ class ConvertTicketToTask
             'preferred_phase_id' => ['nullable', 'integer'],
         ])->validate();
 
-        $commands = array_values($validated['verification_commands'] ?? []);
+        $commands = $validated['verification_commands'] ?? [];
 
         if (! $this->taskValidator->verificationCommandsAreSafe($commands)) {
             throw ValidationException::withMessages([
@@ -523,13 +523,13 @@ class ConvertTicketToTask
         return [
             'title' => $validated['title'],
             'objective' => $validated['objective'],
-            'acceptance_criteria' => array_values($validated['acceptance_criteria']),
-            'scope' => array_values($validated['scope'] ?? []),
-            'constraints' => array_values($validated['constraints'] ?? []),
-            'relevant_paths' => array_values($validated['relevant_paths'] ?? []),
+            'acceptance_criteria' => $validated['acceptance_criteria'],
+            'scope' => $validated['scope'] ?? [],
+            'constraints' => $validated['constraints'] ?? [],
+            'relevant_paths' => $validated['relevant_paths'] ?? [],
             'verification_commands' => $commands,
             'implementation_prompt' => $validated['implementation_prompt'],
-            'depends_on_task_ids' => array_values($validated['depends_on_task_ids']),
+            'depends_on_task_ids' => $validated['depends_on_task_ids'],
             'preferred_phase_id' => $validated['preferred_phase_id'] ?? null,
         ];
     }
@@ -545,7 +545,7 @@ class ConvertTicketToTask
         foreach ($phases as $phase) {
             $hasUnfinishedTask = $tasks->contains(
                 fn (Task $task): bool => $task->phase_id === $phase->id
-                    && $task->status !== TaskStatus::Done,
+                    && $task->getRawOriginal('status') !== TaskStatus::Done->value,
             );
 
             if ($hasUnfinishedTask) {
@@ -656,7 +656,7 @@ class ConvertTicketToTask
 
         if (
             $phaseTasks->contains(
-                fn (Task $task): bool => $task->status === TaskStatus::Reviewing,
+                fn (Task $task): bool => $task->getRawOriginal('status') === TaskStatus::Reviewing->value,
             )
         ) {
             return true;

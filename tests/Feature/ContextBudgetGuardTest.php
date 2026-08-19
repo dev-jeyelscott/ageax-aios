@@ -184,4 +184,3 @@ test('required context at the eighty percent hard ceiling blocks before provider
         ->and($decision->evidence['block_reason'])->toBe('required_context_reaches_or_exceeds_hard_ceiling')
         ->and($decision->evidence['required_estimated_tokens'])->toBeGreaterThanOrEqual($decision->evidence['hard_ceiling_tokens']);
 });
-

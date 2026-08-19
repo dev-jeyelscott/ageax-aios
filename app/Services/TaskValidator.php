@@ -189,8 +189,7 @@ class TaskValidator
     public function verificationCommandsAreSafe(array $commands): bool
     {
         return ! collect($commands)->contains(
-            fn (mixed $command): bool => ! is_string($command)
-                || ! $this->isSafeVerificationCommand($command),
+            fn (string $command): bool => ! $this->isSafeVerificationCommand($command),
         );
     }
 

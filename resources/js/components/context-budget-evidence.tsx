@@ -76,7 +76,8 @@ export function ContextBudgetEvidence({
 
     const reduced = snapshot.reduced_sources ?? [];
     const excluded = snapshot.excluded_sources ?? [];
-    const blocked = snapshot.decision === 'blocked' || Boolean(snapshot.block_reason);
+    const blocked =
+        snapshot.decision === 'blocked' || Boolean(snapshot.block_reason);
 
     return (
         <Card>
@@ -88,7 +89,8 @@ export function ContextBudgetEvidence({
                             Context Budget
                         </CardTitle>
                         <CardDescription>
-                            Immutable pre-provider capacity, utilization, and reduction evidence.
+                            Immutable pre-provider capacity, utilization, and
+                            reduction evidence.
                         </CardDescription>
                     </div>
                     <Badge
@@ -134,31 +136,43 @@ export function ContextBudgetEvidence({
                         </div>
                         <dl className="mt-3 grid gap-2 font-mono text-2xs">
                             <div className="flex justify-between gap-4">
-                                <dt className="text-muted-foreground">Source</dt>
+                                <dt className="text-muted-foreground">
+                                    Source
+                                </dt>
                                 <dd className="truncate text-right text-foreground">
                                     {snapshot.capacity_source ?? '—'}
                                 </dd>
                             </div>
                             <div className="flex justify-between gap-4">
-                                <dt className="text-muted-foreground">Metadata version</dt>
+                                <dt className="text-muted-foreground">
+                                    Metadata version
+                                </dt>
                                 <dd className="text-foreground">
                                     {snapshot.capacity_source_version ?? '—'}
                                 </dd>
                             </div>
                             <div className="flex justify-between gap-4">
-                                <dt className="text-muted-foreground">Policy version</dt>
+                                <dt className="text-muted-foreground">
+                                    Policy version
+                                </dt>
                                 <dd className="text-foreground">
                                     {snapshot.policy_version ?? '—'}
                                 </dd>
                             </div>
                             <div className="flex justify-between gap-4">
-                                <dt className="text-muted-foreground">Required estimate</dt>
+                                <dt className="text-muted-foreground">
+                                    Required estimate
+                                </dt>
                                 <dd className="text-foreground">
-                                    {formatNumber(snapshot.required_estimated_tokens)}
+                                    {formatNumber(
+                                        snapshot.required_estimated_tokens,
+                                    )}
                                 </dd>
                             </div>
                             <div className="flex justify-between gap-4">
-                                <dt className="text-muted-foreground">Reserved capacity</dt>
+                                <dt className="text-muted-foreground">
+                                    Reserved capacity
+                                </dt>
                                 <dd className="text-foreground">
                                     {snapshot.reserved_percent ?? '—'}%
                                 </dd>
@@ -211,9 +225,7 @@ export function ContextBudgetEvidence({
                         <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                         <div>
                             {snapshot.block_reason && (
-                                <p>
-                                    Block: {humanize(snapshot.block_reason)}
-                                </p>
+                                <p>Block: {humanize(snapshot.block_reason)}</p>
                             )}
                             {snapshot.warning_reason && (
                                 <p>
@@ -225,7 +237,7 @@ export function ContextBudgetEvidence({
                 )}
 
                 {snapshot.final_context_hash && (
-                    <p className="break-all font-mono text-2xs text-muted-foreground">
+                    <p className="font-mono text-2xs break-all text-muted-foreground">
                         final context hash: {snapshot.final_context_hash}
                     </p>
                 )}
@@ -233,4 +245,3 @@ export function ContextBudgetEvidence({
         </Card>
     );
 }
-

@@ -48,8 +48,8 @@ final class ContextBudgetGuard
     ) {}
 
     /**
-     * @param array<string, mixed> $capacityEvidence
-     * @param array<string, mixed>|null $persistedPolicyEvidence
+     * @param  array<string, mixed>  $capacityEvidence
+     * @param  array<string, mixed>|null  $persistedPolicyEvidence
      */
     public function evaluate(
         AgentRole $role,
@@ -125,7 +125,7 @@ final class ContextBudgetGuard
 
         foreach ($originalContributions as $source => $measurement) {
             if (
-                ($measurement['estimated_tokens'] ?? 0) > 0
+                $measurement['estimated_tokens'] > 0
                 && (($finalContributions[$source]['estimated_tokens'] ?? 0) === 0)
             ) {
                 $excludedSources[] = $source;
@@ -135,7 +135,7 @@ final class ContextBudgetGuard
         $includedSources = [];
 
         foreach ($finalContributions as $source => $measurement) {
-            if (($measurement['estimated_tokens'] ?? 0) > 0) {
+            if ($measurement['estimated_tokens'] > 0) {
                 $includedSources[] = $source;
             }
         }
@@ -213,15 +213,11 @@ final class ContextBudgetGuard
                 ? $decoded['task']
                 : $decoded;
 
-        if (! is_array($assembled)) {
-            throw new LogicException('The provider prompt is missing assembled Agent context.');
-        }
-
         return $this->contextAssembler->fromPayload($assembled);
     }
 
     /**
-     * @param array<string, mixed> $policy
+     * @param  array<string, mixed>  $policy
      * @return array{0: AssembledAgentContext, 1: string, 2: list<array<string, mixed>>}
      */
     private function reduce(
@@ -424,7 +420,7 @@ final class ContextBudgetGuard
     }
 
     /**
-     * @param list<array<string, mixed>> $skills
+     * @param  list<array<string, mixed>>  $skills
      * @return list<array<string, mixed>>
      */
     private function fitSkills(array $skills, int $characterBudget): array
@@ -477,12 +473,12 @@ final class ContextBudgetGuard
             }
         }
 
-        return array_values($result);
+        return $result;
     }
 
     /**
-     * @param array<string, mixed> $task
-     * @param list<string> $keys
+     * @param  array<string, mixed>  $task
+     * @param  list<string>  $keys
      * @return array<string, mixed>
      */
     private function fitTaskKeys(
@@ -555,7 +551,11 @@ final class ContextBudgetGuard
             : rtrim($slice);
     }
 
-    /** @param list<string> $keys */
+    /**
+     * @param  array<string, mixed>  $source
+     * @param  list<string>  $keys
+     * @return array<string, mixed>
+     */
     private function valuesForKeys(array $source, array $keys): array
     {
         $values = [];
@@ -622,59 +622,121 @@ final class ContextBudgetGuard
         ];
     }
 
-    /** @param array<string, mixed> $persisted */
+    /**
+     * @param  array<string, mixed>  $persisted
+     * @return array{
+     *     schema_version: int,
+     *     policy_version: int,
+     *     role: string,
+     *     role_target_percent: int,
+     *     project_target_percent: int|null,
+     *     target_source: string,
+     *     target_percent: int,
+     *     warning_percent: int,
+     *     hard_ceiling_percent: int,
+     *     reserved_percent: int,
+     *     capacity_tokens: int,
+     *     target_tokens: int,
+     *     warning_tokens: int,
+     *     hard_ceiling_tokens: int,
+     *     source_quota_percents: array<string, int>,
+     *     source_quota_tokens: array<string, int>
+     * }
+     */
     private function restorePolicy(
         AgentRole $role,
         int $capacityTokens,
         array $persisted,
     ): array {
-        $keys = [
-            'policy_version',
-            'role_target_percent',
-            'project_target_percent',
-            'target_source',
-            'target_percent',
-            'warning_percent',
-            'hard_ceiling_percent',
-            'reserved_percent',
-            'budget_tokens',
-            'warning_tokens',
-            'hard_ceiling_tokens',
-            'source_quota_percents',
-            'source_quota_tokens',
-        ];
-
-        foreach ($keys as $key) {
-            if (! array_key_exists($key, $persisted)) {
-                throw new LogicException(
-                    "Persisted Context Budget evidence is missing [{$key}].",
-                );
-            }
-        }
-
         if (($persisted['role'] ?? null) !== $role->value
             || ($persisted['resolved_capacity_tokens'] ?? null) !== $capacityTokens) {
             throw new LogicException('Persisted Context Budget evidence does not match the recovered role/capacity.');
         }
 
+        $schemaVersion = $persisted['schema_version'] ?? ContextBudgetPolicy::SchemaVersion;
+        if (! is_int($schemaVersion)) {
+            throw new LogicException('Persisted Context Budget evidence has an invalid [schema_version].');
+        }
+
         return [
-            'schema_version' => $persisted['schema_version'] ?? ContextBudgetPolicy::SchemaVersion,
-            'policy_version' => $persisted['policy_version'],
+            'schema_version' => $schemaVersion,
+            'policy_version' => $this->requiredInt($persisted, 'policy_version'),
             'role' => $role->value,
-            'role_target_percent' => $persisted['role_target_percent'],
-            'project_target_percent' => $persisted['project_target_percent'],
-            'target_source' => $persisted['target_source'],
-            'target_percent' => $persisted['target_percent'],
-            'warning_percent' => $persisted['warning_percent'],
-            'hard_ceiling_percent' => $persisted['hard_ceiling_percent'],
-            'reserved_percent' => $persisted['reserved_percent'],
+            'role_target_percent' => $this->requiredInt($persisted, 'role_target_percent'),
+            'project_target_percent' => $this->nullableInt($persisted, 'project_target_percent'),
+            'target_source' => $this->requiredString($persisted, 'target_source'),
+            'target_percent' => $this->requiredInt($persisted, 'target_percent'),
+            'warning_percent' => $this->requiredInt($persisted, 'warning_percent'),
+            'hard_ceiling_percent' => $this->requiredInt($persisted, 'hard_ceiling_percent'),
+            'reserved_percent' => $this->requiredInt($persisted, 'reserved_percent'),
             'capacity_tokens' => $capacityTokens,
-            'target_tokens' => $persisted['budget_tokens'],
-            'warning_tokens' => $persisted['warning_tokens'],
-            'hard_ceiling_tokens' => $persisted['hard_ceiling_tokens'],
-            'source_quota_percents' => $persisted['source_quota_percents'],
-            'source_quota_tokens' => $persisted['source_quota_tokens'],
+            'target_tokens' => $this->requiredInt($persisted, 'budget_tokens'),
+            'warning_tokens' => $this->requiredInt($persisted, 'warning_tokens'),
+            'hard_ceiling_tokens' => $this->requiredInt($persisted, 'hard_ceiling_tokens'),
+            'source_quota_percents' => $this->requiredIntMap($persisted, 'source_quota_percents'),
+            'source_quota_tokens' => $this->requiredIntMap($persisted, 'source_quota_tokens'),
         ];
+    }
+
+    /** @param array<string, mixed> $source */
+    private function requiredInt(array $source, string $key): int
+    {
+        $value = $source[$key] ?? null;
+
+        if (! is_int($value)) {
+            throw new LogicException("Persisted Context Budget evidence has an invalid [{$key}].");
+        }
+
+        return $value;
+    }
+
+    /** @param array<string, mixed> $source */
+    private function nullableInt(array $source, string $key): ?int
+    {
+        if (! array_key_exists($key, $source) || $source[$key] === null) {
+            return null;
+        }
+
+        $value = $source[$key];
+        if (! is_int($value)) {
+            throw new LogicException("Persisted Context Budget evidence has an invalid [{$key}].");
+        }
+
+        return $value;
+    }
+
+    /** @param array<string, mixed> $source */
+    private function requiredString(array $source, string $key): string
+    {
+        $value = $source[$key] ?? null;
+
+        if (! is_string($value) || $value === '') {
+            throw new LogicException("Persisted Context Budget evidence has an invalid [{$key}].");
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param  array<string, mixed>  $source
+     * @return array<string, int>
+     */
+    private function requiredIntMap(array $source, string $key): array
+    {
+        $value = $source[$key] ?? null;
+
+        if (! is_array($value)) {
+            throw new LogicException("Persisted Context Budget evidence has an invalid [{$key}].");
+        }
+
+        foreach ($value as $mapKey => $mapValue) {
+            if (! is_string($mapKey) || ! is_int($mapValue)) {
+                throw new LogicException("Persisted Context Budget evidence has an invalid [{$key}].");
+            }
+        }
+
+        /** @var array<string, int> $value */
+        return $value;
     }
 
     private function tokens(string $value): int
@@ -706,4 +768,3 @@ final class ContextBudgetGuard
         );
     }
 }
-

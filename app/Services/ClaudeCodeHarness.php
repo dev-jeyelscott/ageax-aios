@@ -392,4 +392,3 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         );
     }
 }
-

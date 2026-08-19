@@ -9,6 +9,7 @@ use App\Models\Agent;
 use App\Models\AgentRun;
 use App\Models\Project;
 use Closure;
+use LogicException;
 
 /**
  * AIOS-owned dispatch gate. Provider harnesses remain unaware of budgeting/reduction;
@@ -59,12 +60,14 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
             $persistedPolicy = null;
 
             if ($recoverySource !== null) {
-                $snapshot = $recoverySource->context_budget_snapshot;
+                $snapshot = $recoverySource->getAttribute('context_budget_snapshot');
 
-                if (is_array($snapshot)) {
-                    $capacity = $this->capacityFromSnapshot($snapshot);
-                    $persistedPolicy = $snapshot;
+                if (! is_array($snapshot)) {
+                    throw new LogicException('Recovered Context Budget evidence is missing or malformed.');
                 }
+
+                $capacity = $this->capacityFromSnapshot($snapshot);
+                $persistedPolicy = $snapshot;
             }
 
             $decision = $this->guard->evaluate(
@@ -138,7 +141,9 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
 
     private function recoverySource(AgentRun $run): ?AgentRun
     {
-        if ($run->task_id === null || ! is_array($run->configuration_snapshot)) {
+        $configurationSnapshot = $run->getAttribute('configuration_snapshot');
+
+        if ($run->task_id === null || ! is_array($configurationSnapshot)) {
             return null;
         }
 
@@ -152,23 +157,72 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
             ->latest('id')
             ->limit(10)
             ->get()
-            ->first(function (AgentRun $candidate) use ($run): bool {
-                return is_array($candidate->configuration_snapshot)
-                    && $candidate->configuration_snapshot === $run->configuration_snapshot;
+            ->first(function (AgentRun $candidate) use ($configurationSnapshot): bool {
+                $candidateSnapshot = $candidate->getAttribute('configuration_snapshot');
+
+                return is_array($candidateSnapshot)
+                    && $candidateSnapshot === $configurationSnapshot;
             });
     }
 
-    /** @param array<string, mixed> $snapshot */
+    /**
+     * @param  array<string, mixed>  $snapshot
+     * @return array{
+     *     harness: string,
+     *     model: string|null,
+     *     resolved_capacity_tokens: int,
+     *     max_output_tokens: int|null,
+     *     capacity_source: string,
+     *     capacity_source_version: int,
+     *     fallback: bool
+     * }
+     */
     private function capacityFromSnapshot(array $snapshot): array
     {
+        $harness = $snapshot['harness'] ?? $this->identifier()->value;
+        $model = $snapshot['model'] ?? null;
+        $resolvedCapacity = $snapshot['resolved_capacity_tokens'] ?? null;
+        $maxOutputTokens = $snapshot['max_output_tokens'] ?? null;
+        $capacitySource = $snapshot['capacity_source'] ?? null;
+        $capacitySourceVersion = $snapshot['capacity_source_version'] ?? null;
+        $fallback = $snapshot['capacity_fallback'] ?? false;
+
+        if (! is_string($harness) || $harness === '') {
+            throw new LogicException('Recovered Context Budget evidence has an invalid harness.');
+        }
+
+        if ($model !== null && ! is_string($model)) {
+            throw new LogicException('Recovered Context Budget evidence has an invalid model.');
+        }
+
+        if (! is_int($resolvedCapacity) || $resolvedCapacity <= 0) {
+            throw new LogicException('Recovered Context Budget evidence has an invalid resolved capacity.');
+        }
+
+        if ($maxOutputTokens !== null && (! is_int($maxOutputTokens) || $maxOutputTokens <= 0)) {
+            throw new LogicException('Recovered Context Budget evidence has invalid max output tokens.');
+        }
+
+        if (! is_string($capacitySource) || $capacitySource === '') {
+            throw new LogicException('Recovered Context Budget evidence has an invalid capacity source.');
+        }
+
+        if (! is_int($capacitySourceVersion) || $capacitySourceVersion <= 0) {
+            throw new LogicException('Recovered Context Budget evidence has an invalid capacity source version.');
+        }
+
+        if (! is_bool($fallback)) {
+            throw new LogicException('Recovered Context Budget evidence has an invalid fallback flag.');
+        }
+
         return [
-            'harness' => $snapshot['harness'] ?? $this->identifier()->value,
-            'model' => $snapshot['model'] ?? null,
-            'resolved_capacity_tokens' => $snapshot['resolved_capacity_tokens'] ?? null,
-            'max_output_tokens' => $snapshot['max_output_tokens'] ?? null,
-            'capacity_source' => $snapshot['capacity_source'] ?? null,
-            'capacity_source_version' => $snapshot['capacity_source_version'] ?? null,
-            'fallback' => (bool) ($snapshot['capacity_fallback'] ?? false),
+            'harness' => $harness,
+            'model' => $model,
+            'resolved_capacity_tokens' => $resolvedCapacity,
+            'max_output_tokens' => $maxOutputTokens,
+            'capacity_source' => $capacitySource,
+            'capacity_source_version' => $capacitySourceVersion,
+            'fallback' => $fallback,
         ];
     }
 
@@ -238,4 +292,3 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
         );
     }
 }
-

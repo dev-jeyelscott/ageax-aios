@@ -252,4 +252,3 @@ final readonly class HarnessCapabilities
         return $value !== null && $value > 0 ? $value : null;
     }
 }
-
