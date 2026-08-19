@@ -339,6 +339,10 @@ PROMPT;
         array $decision,
         Ticket $ticket,
     ): array {
+        $proposalRequired = ($decision['implementation_required'] ?? null) === true;
+
+        // Schema-required list fields may intentionally be empty. Laravel's required rule
+        // treats an empty array as missing, so use present for lists whose empty state is valid.
         $validator = validator($decision, [
             'category' => [
                 'required',
@@ -361,7 +365,7 @@ PROMPT;
                 'max:4000',
             ],
             'documentation_alignment' => [
-                'required',
+                'present',
                 'array',
                 'max:20',
             ],
@@ -370,7 +374,7 @@ PROMPT;
                 'max:2000',
             ],
             'affected_areas' => [
-                'required',
+                'present',
                 'array',
                 'max:50',
             ],
@@ -394,7 +398,7 @@ PROMPT;
                 'max:2000',
             ],
             'questions' => [
-                'required',
+                'present',
                 'array',
                 'max:20',
             ],
@@ -403,7 +407,7 @@ PROMPT;
                 'max:2000',
             ],
             'blockers' => [
-                'required',
+                'present',
                 'array',
                 'max:20',
             ],
@@ -431,17 +435,17 @@ PROMPT;
                 'array',
             ],
             'proposed_task.title' => [
-                'required_with:proposed_task',
+                $proposalRequired ? 'required' : 'nullable',
                 'string',
                 'max:255',
             ],
             'proposed_task.objective' => [
-                'required_with:proposed_task',
+                $proposalRequired ? 'required' : 'nullable',
                 'string',
                 'max:4000',
             ],
             'proposed_task.acceptance_criteria' => [
-                'required_with:proposed_task',
+                $proposalRequired ? 'required' : 'nullable',
                 'array',
                 'min:1',
                 'max:30',
@@ -452,7 +456,7 @@ PROMPT;
                 'max:2000',
             ],
             'proposed_task.scope' => [
-                'required_with:proposed_task',
+                $proposalRequired ? 'present' : 'nullable',
                 'array',
                 'max:50',
             ],
@@ -461,7 +465,7 @@ PROMPT;
                 'max:1000',
             ],
             'proposed_task.constraints' => [
-                'required_with:proposed_task',
+                $proposalRequired ? 'present' : 'nullable',
                 'array',
                 'max:50',
             ],
@@ -470,7 +474,7 @@ PROMPT;
                 'max:2000',
             ],
             'proposed_task.relevant_paths' => [
-                'required_with:proposed_task',
+                $proposalRequired ? 'present' : 'nullable',
                 'array',
                 'max:50',
             ],
@@ -479,7 +483,7 @@ PROMPT;
                 'max:1000',
             ],
             'proposed_task.verification_commands' => [
-                'required_with:proposed_task',
+                $proposalRequired ? 'present' : 'nullable',
                 'array',
                 'max:30',
             ],
@@ -488,12 +492,12 @@ PROMPT;
                 'max:1000',
             ],
             'proposed_task.implementation_prompt' => [
-                'required_with:proposed_task',
+                $proposalRequired ? 'required' : 'nullable',
                 'string',
                 'max:16000',
             ],
             'proposed_task.depends_on_task_ids' => [
-                'required_with:proposed_task',
+                $proposalRequired ? 'present' : 'nullable',
                 'array',
                 'max:50',
             ],
@@ -502,11 +506,12 @@ PROMPT;
                 'distinct',
             ],
             'proposed_task.preferred_phase_id' => [
+                $proposalRequired ? 'present' : 'nullable',
                 'nullable',
                 'integer',
             ],
             'escalation_flags' => [
-                'required',
+                'present',
                 'array',
                 'max:20',
             ],
