@@ -133,4 +133,10 @@ class Ticket extends Model
     {
         return $this->hasMany(TicketAttachment::class);
     }
+
+    /** @return HasMany<TicketTriageAttempt, $this> */
+    public function triageAttempts(): HasMany
+    {
+        return $this->hasMany(TicketTriageAttempt::class);
+    }
 }
