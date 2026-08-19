@@ -10,51 +10,58 @@ use App\Models\AgentRun;
 use App\Models\Project;
 use Closure;
 use LogicException;
+use Throwable;
 
 /**
- * AIOS-owned dispatch gate. Provider harnesses remain unaware of budgeting/reduction;
- * this decorator only applies the centralized ContextBudgetGuard immediately before
- * delegating to the selected provider implementation.
+ * AIOS-owned execution gate shared by provider harnesses.
+ *
+ * Normal PM/Coder/Reviewer/Ticket-triage execution creates the durable AgentRun before the
+ * provider harness is invoked, so those paths always pass through Context Budget evaluation.
+ * Raw harness calls without a matching AgentRun remain a narrow provider-boundary compatibility
+ * path for harness capability/adapter verification and do not masquerade as AIOS workflow runs.
  */
-final readonly class ContextBudgetedAgentHarness implements AgentHarness
+final readonly class ContextBudgetedAgentHarness
 {
     public function __construct(
-        private AgentHarness $inner,
         private ContextBudgetGuard $guard,
         private AuditLogger $audit,
     ) {}
 
-    public function identifier(): AgentHarnessIdentifier
-    {
-        return $this->inner->identifier();
-    }
-
-    public function capabilities(): HarnessCapabilities
-    {
-        return $this->inner->capabilities();
-    }
-
+    /**
+     * @param  Closure(string, ?Closure, ?Closure): NormalizedExecutionResult  $provider
+     */
     public function execute(
+        AgentHarness $harness,
         Project $project,
         Agent $agent,
         string $prompt,
+        Closure $provider,
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
     ): NormalizedExecutionResult {
         $run = $this->currentRun($project, $agent, $prompt);
 
         if ($run === null) {
-            return $this->failure(
-                'Context Budget preflight evidence cannot be attached because no matching running AgentRun exists.',
-                'context_budget_run_missing',
+            if ($this->looksLikeManagedPrompt($prompt)) {
+                return $this->failure(
+                    $harness->identifier(),
+                    'Context Budget preflight evidence cannot be attached because no matching running AgentRun exists.',
+                    'context_budget_run_missing',
+                );
+            }
+
+            return $provider(
+                $prompt,
+                $onOutput,
+                $onHeartbeat,
             );
         }
 
         try {
             $context = $this->guard->contextFromPrompt($prompt);
-            $capacity = $this->capabilities()->resolveContextCapacity(
+            $capacity = $harness->capabilities()->resolveContextCapacity(
                 $agent,
-                $this->identifier(),
+                $harness->identifier(),
             );
             $recoverySource = $this->recoverySource($run);
             $persistedPolicy = null;
@@ -66,7 +73,10 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
                     throw new LogicException('Recovered Context Budget evidence is missing or malformed.');
                 }
 
-                $capacity = $this->capacityFromSnapshot($snapshot);
+                $capacity = $this->capacityFromSnapshot(
+                    $snapshot,
+                    $harness->identifier(),
+                );
                 $persistedPolicy = $snapshot;
             }
 
@@ -77,7 +87,7 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
                 $capacity,
                 $persistedPolicy,
             );
-        } catch (\Throwable $throwable) {
+        } catch (Throwable $throwable) {
             $this->audit->record('context_budget.blocked', [
                 'agent_run_id' => $run->id,
                 'reason' => 'context_budget_preflight_failed',
@@ -85,6 +95,7 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
             ], $project, $run->task);
 
             return $this->failure(
+                $harness->identifier(),
                 'Context Budget preflight failed safely: '.$throwable->getMessage(),
                 'context_budget_preflight_failed',
             );
@@ -111,14 +122,13 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
 
         if ($decision->blocked) {
             return $this->failure(
+                $harness->identifier(),
                 'Context Budget blocked provider execution: '.($evidence['block_reason'] ?? 'hard ceiling reached.'),
                 'context_budget_blocked',
             );
         }
 
-        return $this->inner->execute(
-            $project,
-            $agent,
+        return $provider(
             $decision->prompt,
             $onOutput,
             $onHeartbeat,
@@ -177,9 +187,11 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
      *     fallback: bool
      * }
      */
-    private function capacityFromSnapshot(array $snapshot): array
-    {
-        $harness = $snapshot['harness'] ?? $this->identifier()->value;
+    private function capacityFromSnapshot(
+        array $snapshot,
+        AgentHarnessIdentifier $identifier,
+    ): array {
+        $harness = $snapshot['harness'] ?? $identifier->value;
         $model = $snapshot['model'] ?? null;
         $resolvedCapacity = $snapshot['resolved_capacity_tokens'] ?? null;
         $maxOutputTokens = $snapshot['max_output_tokens'] ?? null;
@@ -226,7 +238,7 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
         ];
     }
 
-    /** @param array<string, mixed> $evidence */
+    /** @param  array<string, mixed>  $evidence */
     private function recordEvidence(AgentRun $run, array $evidence): void
     {
         $base = [
@@ -277,7 +289,17 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
         }
     }
 
+    private function looksLikeManagedPrompt(string $prompt): bool
+    {
+        return str_contains($prompt, "AIOS assembled context:\n")
+            || preg_match(
+                '/\\n\\n\\{(?:"context_schema_version"|"task":\\{"context_schema_version")/',
+                $prompt,
+            ) === 1;
+    }
+
     private function failure(
+        AgentHarnessIdentifier $identifier,
         string $message,
         string $failureType,
     ): NormalizedExecutionResult {
@@ -286,7 +308,7 @@ final readonly class ContextBudgetedAgentHarness implements AgentHarness
             output: '',
             errorOutput: $message,
             providerMetadata: [
-                'provider' => $this->identifier()->value,
+                'provider' => $identifier->value,
                 'failure_type' => $failureType,
             ],
         );

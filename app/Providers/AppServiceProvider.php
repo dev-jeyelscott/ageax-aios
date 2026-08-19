@@ -3,11 +3,8 @@
 namespace App\Providers;
 
 use App\Services\AgentHarnessResolver;
-use App\Services\AuditLogger;
 use App\Services\ClaudeCodeHarness;
 use App\Services\CodexHarness;
-use App\Services\ContextBudgetedAgentHarness;
-use App\Services\ContextBudgetGuard;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Foundation\DevCommands;
@@ -25,23 +22,10 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->singleton(
             AgentHarnessResolver::class,
-            function (Application $app): AgentHarnessResolver {
-                $guard = $app->make(ContextBudgetGuard::class);
-                $audit = $app->make(AuditLogger::class);
-
-                return new AgentHarnessResolver([
-                    new ContextBudgetedAgentHarness(
-                        $app->make(CodexHarness::class),
-                        $guard,
-                        $audit,
-                    ),
-                    new ContextBudgetedAgentHarness(
-                        $app->make(ClaudeCodeHarness::class),
-                        $guard,
-                        $audit,
-                    ),
-                ]);
-            },
+            fn (Application $app): AgentHarnessResolver => new AgentHarnessResolver([
+                $app->make(CodexHarness::class),
+                $app->make(ClaudeCodeHarness::class),
+            ]),
         );
     }
 

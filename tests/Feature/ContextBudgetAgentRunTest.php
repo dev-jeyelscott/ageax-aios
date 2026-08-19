@@ -11,9 +11,9 @@ use App\Models\Task;
 use App\Services\AgentContextAssembler;
 use App\Services\AgentHarness;
 use App\Services\AgentHarnessResolver;
-use App\Services\AuditLogger;
+use App\Services\ClaudeCodeHarness;
+use App\Services\CodexHarness;
 use App\Services\ContextBudgetedAgentHarness;
-use App\Services\ContextBudgetGuard;
 use App\Services\HarnessCapabilities;
 use App\Services\NormalizedExecutionResult;
 
@@ -75,10 +75,17 @@ test('the resolver exposes context capacity for both registered Codex and Claude
     ]);
     $resolver = app(AgentHarnessResolver::class);
 
-    expect($resolver->resolve($codexAgent)->capabilities()
-        ->resolveContextCapacity($codexAgent, AgentHarnessIdentifier::Codex)['resolved_capacity_tokens'])
+    $codexHarness = $resolver->resolve($codexAgent);
+    $claudeHarness = $resolver->resolve($claudeAgent);
+
+    expect($codexHarness)
+        ->toBeInstanceOf(CodexHarness::class)
+        ->and($codexHarness->capabilities()
+            ->resolveContextCapacity($codexAgent, AgentHarnessIdentifier::Codex)['resolved_capacity_tokens'])
         ->toBe(1050000)
-        ->and($resolver->resolve($claudeAgent)->capabilities()
+        ->and($claudeHarness)
+        ->toBeInstanceOf(ClaudeCodeHarness::class)
+        ->and($claudeHarness->capabilities()
             ->resolveContextCapacity($claudeAgent, AgentHarnessIdentifier::ClaudeCode)['resolved_capacity_tokens'])
         ->toBe(1000000);
 });
@@ -118,13 +125,25 @@ test('a hard Context Budget block records immutable evidence and never calls the
         'started_at' => now(),
     ]);
     $inner = p3016Harness(50000);
-    $harness = new ContextBudgetedAgentHarness(
-        $inner,
-        app(ContextBudgetGuard::class),
-        app(AuditLogger::class),
-    );
+    $gate = app(ContextBudgetedAgentHarness::class);
 
-    $result = $harness->execute($project, $agent, $prompt);
+    $result = $gate->execute(
+        $inner,
+        $project,
+        $agent,
+        $prompt,
+        fn (
+            string $approvedPrompt,
+            ?Closure $onOutput,
+            ?Closure $onHeartbeat,
+        ): NormalizedExecutionResult => $inner->execute(
+            $project,
+            $agent,
+            $approvedPrompt,
+            $onOutput,
+            $onHeartbeat,
+        ),
+    );
     $run->refresh();
 
     expect($result->exitCode)->toBe(-1)
@@ -187,12 +206,26 @@ test('recovery with the same immutable configuration reuses the persisted capaci
         'context_cost_schema_version' => $assembled->contextCostSchemaVersion,
         'started_at' => now()->subMinute(),
     ]);
-    $firstHarness = new ContextBudgetedAgentHarness(
-        p3016Harness(100000),
-        app(ContextBudgetGuard::class),
-        app(AuditLogger::class),
-    );
-    expect($firstHarness->execute($project, $agent, $prompt)->exitCode)->toBe(0);
+    $gate = app(ContextBudgetedAgentHarness::class);
+    $firstInner = p3016Harness(100000);
+
+    expect($gate->execute(
+        $firstInner,
+        $project,
+        $agent,
+        $prompt,
+        fn (
+            string $approvedPrompt,
+            ?Closure $onOutput,
+            ?Closure $onHeartbeat,
+        ): NormalizedExecutionResult => $firstInner->execute(
+            $project,
+            $agent,
+            $approvedPrompt,
+            $onOutput,
+            $onHeartbeat,
+        ),
+    )->exitCode)->toBe(0);
     $first->refresh()->update(['status' => AgentRunStatus::Interrupted]);
     $first->refresh();
 
@@ -210,19 +243,80 @@ test('recovery with the same immutable configuration reuses the persisted capaci
         'context_cost_schema_version' => $assembled->contextCostSchemaVersion,
         'started_at' => now(),
     ]);
-    $secondHarness = new ContextBudgetedAgentHarness(
-        p3016Harness(200000),
-        app(ContextBudgetGuard::class),
-        app(AuditLogger::class),
-    );
+    $secondInner = p3016Harness(200000);
 
-    expect($secondHarness->execute($project, $agent, $prompt)->exitCode)->toBe(0);
+    expect($gate->execute(
+        $secondInner,
+        $project,
+        $agent,
+        $prompt,
+        fn (
+            string $approvedPrompt,
+            ?Closure $onOutput,
+            ?Closure $onHeartbeat,
+        ): NormalizedExecutionResult => $secondInner->execute(
+            $project,
+            $agent,
+            $approvedPrompt,
+            $onOutput,
+            $onHeartbeat,
+        ),
+    )->exitCode)->toBe(0);
     $second->refresh();
 
     expect($second->context_budget_snapshot['resolved_capacity_tokens'])->toBe(100000)
         ->and($second->context_budget_snapshot['recovery_snapshot_reused'])->toBeTrue()
         ->and($second->context_budget_snapshot['recovery_snapshot_source_run_id'])->toBe($first->id)
         ->and($first->context_budget_snapshot['resolved_capacity_tokens'])->toBe(100000);
+});
+
+test('managed assembled prompts cannot bypass the Context Budget gate when their durable AgentRun is missing', function () {
+    $project = p3016Project('Missing managed run');
+    $agent = Agent::factory()->for($project)->create([
+        'role' => AgentRole::Coder,
+        'harness' => AgentHarnessIdentifier::Codex,
+        'model' => null,
+    ]);
+    $assembled = app(AgentContextAssembler::class)->assemble(
+        $agent,
+        AgentRole::Coder,
+        [
+            'task_key' => 'TASK-MISSING-RUN',
+            'objective' => 'Preserve the durable budget boundary.',
+            'acceptance_criteria' => ['Provider execution remains blocked without run evidence.'],
+        ],
+    );
+    $prompt = "Coder contract.\n\n".json_encode(
+        $assembled->toArray(),
+        JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+    );
+    $inner = p3016Harness(100000);
+    $gate = app(ContextBudgetedAgentHarness::class);
+
+    $result = $gate->execute(
+        $inner,
+        $project,
+        $agent,
+        $prompt,
+        fn (
+            string $approvedPrompt,
+            ?Closure $onOutput,
+            ?Closure $onHeartbeat,
+        ): NormalizedExecutionResult => $inner->execute(
+            $project,
+            $agent,
+            $approvedPrompt,
+            $onOutput,
+            $onHeartbeat,
+        ),
+    );
+
+    expect($result->exitCode)
+        ->toBe(-1)
+        ->and($result->providerMetadata['failure_type'])
+        ->toBe('context_budget_run_missing')
+        ->and($inner->executions)
+        ->toBe(0);
 });
 
 test('legacy no Agent runs remain readable without false Context Budget evidence', function () {

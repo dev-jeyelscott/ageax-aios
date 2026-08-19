@@ -26,7 +26,10 @@ final readonly class CodexHarness implements AgentHarness
 
     private const int ConservativeDefaultMaxOutputTokens = 64000;
 
-    public function __construct(private CodexCliRunner $runner) {}
+    public function __construct(
+        private CodexCliRunner $runner,
+        private ContextBudgetedAgentHarness $contextBudget,
+    ) {}
 
     public function identifier(): AgentHarnessIdentifier
     {
@@ -81,6 +84,34 @@ final readonly class CodexHarness implements AgentHarness
             $this->identifier(),
         );
 
+        return $this->contextBudget->execute(
+            $this,
+            $project,
+            $agent,
+            $prompt,
+            fn (
+                string $approvedPrompt,
+                ?Closure $outputCallback,
+                ?Closure $heartbeatCallback,
+            ): NormalizedExecutionResult => $this->executeProvider(
+                $project,
+                $agent,
+                $approvedPrompt,
+                $outputCallback,
+                $heartbeatCallback,
+            ),
+            $onOutput,
+            $onHeartbeat,
+        );
+    }
+
+    private function executeProvider(
+        Project $project,
+        Agent $agent,
+        string $prompt,
+        ?Closure $onOutput = null,
+        ?Closure $onHeartbeat = null,
+    ): NormalizedExecutionResult {
         $result = $this->runner->runForAgent(
             $project,
             $agent,

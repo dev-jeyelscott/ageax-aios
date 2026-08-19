@@ -507,7 +507,7 @@ class ConvertTicketToTask
             'verification_commands' => ['nullable', 'array', 'max:30'],
             'verification_commands.*' => ['string', 'max:1000'],
             'implementation_prompt' => ['required', 'string', 'max:16000'],
-            'depends_on_task_ids' => ['required', 'array', 'max:50'],
+            'depends_on_task_ids' => ['present', 'array', 'max:50'],
             'depends_on_task_ids.*' => ['integer', 'distinct'],
             'preferred_phase_id' => ['nullable', 'integer'],
         ])->validate();
