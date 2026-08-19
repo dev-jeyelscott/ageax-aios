@@ -42,6 +42,7 @@ use LogicException;
  * @property CarbonImmutable|null $awaiting_response_until
  * @property CarbonImmutable|null $triaged_at
  * @property CarbonImmutable|null $closed_at
+ * @property CarbonImmutable|null $inactivity_closed_at
  */
 class Ticket extends Model
 {
@@ -101,6 +102,7 @@ class Ticket extends Model
             'awaiting_response_until' => 'immutable_datetime',
             'triaged_at' => 'immutable_datetime',
             'closed_at' => 'immutable_datetime',
+            'inactivity_closed_at' => 'immutable_datetime',
         ];
     }
 

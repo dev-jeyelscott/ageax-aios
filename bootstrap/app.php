@@ -19,6 +19,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // per AGENTS.md; withoutOverlapping guards against a slow scan cycle running twice.
         $schedule->command('aios:recover-workflows')->everyFiveMinutes()->withoutOverlapping();
 
+        // Requester-dependent Tickets are closed only after their durable 72-hour deadline.
+        // The command re-checks eligibility under row locks, so repeated scheduler runs are safe.
+        $schedule->command('aios:tickets:close-inactive')->everyFiveMinutes()->withoutOverlapping();
+
         // Failure-to-Skill Promotion Queue detection is observational only. It scans existing
         // durable evidence and creates/updates operator-review candidates; it never runs a
         // harness, changes workflow state, or mutates Skills without a later explicit decision.

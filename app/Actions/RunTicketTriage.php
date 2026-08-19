@@ -4,6 +4,7 @@ namespace App\Actions;
 
 use App\AgentRole;
 use App\Models\Agent;
+use App\Models\AgentRun;
 use App\Models\Phase;
 use App\Models\Project;
 use App\Models\Task;
@@ -24,6 +25,8 @@ use App\Services\WorkerHeartbeat;
 use App\TicketCategory;
 use App\TicketDecision;
 use App\TicketEscalationReason;
+use App\TicketMessageAuthorType;
+use App\TicketMessageType;
 use App\TicketPriority;
 use App\TicketStatus;
 use App\WorkerLease;
@@ -45,6 +48,7 @@ class RunTicketTriage
         private StructuredResultParser $parser,
         private TicketTriagePolicy $triagePolicy,
         private TicketWorkflow $workflow,
+        private RecordTicketMessage $messages,
         private WorkerHeartbeat $heartbeat,
         private AuditLogger $audit,
         private DatabaseProtectionGuard $databaseProtection,
@@ -338,6 +342,8 @@ Rules:
 - duplicate_ticket_id is required only for decision=duplicate and must reference a different Ticket from this project; otherwise it must be null.
 - preferred_phase_id and depends_on_task_ids may reference only existing records from this project that are present in the supplied context/evidence.
 - Surface documentation conflicts in documentation_alignment and escalation_flags; never silently override approved documentation.
+- For decision=needs_information, questions must contain at least one concrete requester question; requester_reply must remain safe for public use.
+- For decision=self_service, requester_reply must contain bounded, actionable step-by-step guidance that does not require privileged/destructive operations.
 - requester_reply must contain only safe text intended for possible public use. Never copy internal notes verbatim merely because they appear in context.
 - internal_reason_summary is concise durable decision evidence only. Never include hidden reasoning, chain-of-thought, private deliberation, or a reasoning transcript.
 - Verification commands are proposals only and must remain safe, non-destructive commands from the approved project toolchain, with no shell operators, redirects, destructive database operations, or credential access.
@@ -597,6 +603,25 @@ PROMPT;
                 );
             }
 
+            $questions = $decision['questions'] ?? null;
+            $nonEmptyQuestions = is_array($questions)
+                ? array_values(array_filter(
+                    $questions,
+                    fn (mixed $question): bool => is_string($question)
+                        && trim($question) !== '',
+                ))
+                : [];
+
+            if (
+                $decisionValue === TicketDecision::NeedsInformation->value
+                && $nonEmptyQuestions === []
+            ) {
+                $validator->errors()->add(
+                    'questions',
+                    'A needs_information decision must include at least one concrete requester question.',
+                );
+            }
+
             $duplicateTicketId = $decision['duplicate_ticket_id'] ?? null;
 
             if (
@@ -777,6 +802,12 @@ PROMPT;
                     'confidence_threshold' => $aiosValidation['confidence_threshold'],
                     'confidence' => $decision['confidence'],
                 ], $ticket->project);
+            } elseif ($this->isRequesterDependentDecision($decision)) {
+                $this->persistRequesterDependentDecision(
+                    $ticket,
+                    $lockedAttempt,
+                    $decision,
+                );
             }
 
             $this->audit->record('ticket.triage_completed', [
@@ -799,6 +830,103 @@ PROMPT;
                 'triage_policy_schema_version' => $aiosValidation['schema_version'],
             ], $ticket->project);
         }, attempts: 3);
+    }
+
+    /** @param array<string, mixed> $decision */
+    private function isRequesterDependentDecision(array $decision): bool
+    {
+        return in_array($decision['decision'] ?? null, [
+            TicketDecision::NeedsInformation->value,
+            TicketDecision::SelfService->value,
+        ], true);
+    }
+
+    /** @param array<string, mixed> $decision */
+    private function persistRequesterDependentDecision(
+        Ticket $ticket,
+        TicketTriageAttempt $attempt,
+        array $decision,
+    ): void {
+        if ($attempt->agent_run_id === null) {
+            throw new LogicException(
+                'Requester-dependent Ticket triage must retain its AgentRun attribution.',
+            );
+        }
+
+        $agentRun = AgentRun::query()->find($attempt->agent_run_id);
+
+        if ($agentRun === null) {
+            throw new LogicException(
+                'Requester-dependent Ticket triage AgentRun evidence is missing.',
+            );
+        }
+
+        $decisionValue = TicketDecision::from(
+            (string) $decision['decision'],
+        );
+        $awaitingResponseUntil = now()->addHours(72);
+
+        $ticket->forceFill([
+            'category' => TicketCategory::from(
+                (string) $decision['category'],
+            ),
+            'decision' => $decisionValue,
+            'ai_suggested_priority' => TicketPriority::from(
+                (string) $decision['suggested_priority'],
+            ),
+            'triage_confidence' => (float) $decision['confidence'],
+            'awaiting_response_until' => $awaitingResponseUntil,
+            'inactivity_closed_at' => null,
+        ])->save();
+
+        $message = $this->messages->handle(
+            $ticket,
+            TicketMessageAuthorType::Ai,
+            TicketMessageType::PublicReply,
+            $this->requesterReply($decision),
+            agentRun: $agentRun,
+        );
+
+        $awaitingTicket = $this->workflow->transition(
+            $ticket,
+            TicketStatus::AwaitingRequester,
+        );
+
+        $this->audit->record('ticket.awaiting_requester', [
+            'ticket_id' => $awaitingTicket->id,
+            'ticket_key' => $awaitingTicket->key,
+            'ticket_triage_attempt_id' => $attempt->id,
+            'attempt_number' => $attempt->number,
+            'agent_run_id' => $agentRun->id,
+            'message_id' => $message->id,
+            'decision' => $decisionValue->value,
+            'awaiting_response_until' => $awaitingResponseUntil->toISOString(),
+        ], $awaitingTicket->project);
+    }
+
+    /** @param array<string, mixed> $decision */
+    private function requesterReply(array $decision): string
+    {
+        $reply = trim((string) $decision['requester_reply']);
+
+        if (($decision['decision'] ?? null) !== TicketDecision::NeedsInformation->value) {
+            return $reply;
+        }
+
+        $questionLines = [];
+        $questions = $decision['questions'] ?? [];
+
+        if (is_array($questions)) {
+            foreach ($questions as $question) {
+                if (! is_string($question) || trim($question) === '') {
+                    continue;
+                }
+
+                $questionLines[] = '- '.trim($question);
+            }
+        }
+
+        return $reply."\n\nQuestions:\n".implode("\n", $questionLines);
     }
 
     private function failAttempt(

@@ -52,15 +52,22 @@ class TicketWorkflow
 
         if ($to === TicketStatus::Closed) {
             $attributes['closed_at'] = now();
+            $attributes['inactivity_closed_at'] = null;
         }
 
         if ($to === TicketStatus::Open && $from === TicketStatus::Closed) {
             $attributes['closed_at'] = null;
-            $attributes['awaiting_response_until'] = null;
         }
 
-        if ($to === TicketStatus::Open && $from === TicketStatus::AwaitingRequester) {
+        if (
+            $to === TicketStatus::Open
+            && in_array($from, [
+                TicketStatus::Closed,
+                TicketStatus::AwaitingRequester,
+            ], true)
+        ) {
             $attributes['awaiting_response_until'] = null;
+            $attributes['inactivity_closed_at'] = null;
         }
 
         $ticket->forceFill($attributes)->save();
