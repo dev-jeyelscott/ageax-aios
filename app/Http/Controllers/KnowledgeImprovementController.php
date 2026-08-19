@@ -7,7 +7,10 @@ use App\Http\Requests\DecideKnowledgeImprovementCandidateRequest;
 use App\KnowledgeImprovementCandidateStatus;
 use App\Models\KnowledgeImprovementCandidate;
 use App\Models\Project;
+use App\Models\Skill;
 use App\Models\User;
+use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -24,38 +27,46 @@ class KnowledgeImprovementController extends Controller
             ->limit(100)
             ->get();
 
+        $candidatePayloads = [];
+
+        foreach ($candidates as $candidate) {
+            /** @var KnowledgeImprovementCandidate $candidate */
+            $occurrenceCount = (int) $candidate->getAttribute('occurrence_count');
+            $targetSkill = $candidate->getRelation('targetSkill');
+
+            $candidatePayloads[] = [
+                'id' => $candidate->id,
+                'fingerprint' => $candidate->fingerprint,
+                'source_kind' => $candidate->source_kind,
+                'failure_code' => $candidate->failure_code,
+                'affected_role' => $candidate->affected_role,
+                'affected_area' => $candidate->affected_area,
+                'status' => (string) $candidate->getRawOriginal('status'),
+                'target_type' => (string) $candidate->getRawOriginal('target_type'),
+                'evidence_summary' => $candidate->evidence_summary,
+                'proposed_change' => $candidate->proposed_change,
+                'evidence' => $candidate->getAttribute('evidence'),
+                'occurrence_count' => $occurrenceCount,
+                'confidence' => $occurrenceCount >= 10 ? 'high' : ($occurrenceCount >= 6 ? 'medium' : 'threshold_met'),
+                'reopen_after_occurrence' => $candidate->reopen_after_occurrence,
+                'first_seen_at' => $this->serializeDateAttribute($candidate, 'first_seen_at'),
+                'last_seen_at' => $this->serializeDateAttribute($candidate, 'last_seen_at'),
+                'decided_at' => $this->serializeDateAttribute($candidate, 'decided_at'),
+                'applied_at' => $this->serializeDateAttribute($candidate, 'applied_at'),
+                'applied_skill_version' => $candidate->applied_skill_version,
+                'target_skill' => $targetSkill instanceof Skill ? [
+                    'id' => $targetSkill->id,
+                    'name' => $targetSkill->name,
+                    'slug' => $targetSkill->slug,
+                    'version' => $targetSkill->version,
+                    'enabled' => (bool) $targetSkill->enabled,
+                ] : null,
+            ];
+        }
+
         return Inertia::render('projects/knowledge-improvements/index', [
             'project' => $project->only(['id', 'name', 'path']),
-            'candidates' => $candidates
-                ->map(fn (KnowledgeImprovementCandidate $candidate): array => [
-                    'id' => $candidate->id,
-                    'fingerprint' => $candidate->fingerprint,
-                    'source_kind' => $candidate->source_kind,
-                    'failure_code' => $candidate->failure_code,
-                    'affected_role' => $candidate->affected_role,
-                    'affected_area' => $candidate->affected_area,
-                    'status' => $candidate->status->value,
-                    'target_type' => $candidate->target_type->value,
-                    'evidence_summary' => $candidate->evidence_summary,
-                    'proposed_change' => $candidate->proposed_change,
-                    'evidence' => $candidate->evidence,
-                    'occurrence_count' => $candidate->occurrence_count,
-                    'confidence' => $candidate->occurrence_count >= 10 ? 'high' : ($candidate->occurrence_count >= 6 ? 'medium' : 'threshold_met'),
-                    'reopen_after_occurrence' => $candidate->reopen_after_occurrence,
-                    'first_seen_at' => $candidate->first_seen_at->toIso8601String(),
-                    'last_seen_at' => $candidate->last_seen_at->toIso8601String(),
-                    'decided_at' => $candidate->decided_at?->toIso8601String(),
-                    'applied_at' => $candidate->applied_at?->toIso8601String(),
-                    'applied_skill_version' => $candidate->applied_skill_version,
-                    'target_skill' => $candidate->targetSkill === null ? null : [
-                        'id' => $candidate->targetSkill->id,
-                        'name' => $candidate->targetSkill->name,
-                        'slug' => $candidate->targetSkill->slug,
-                        'version' => $candidate->targetSkill->version,
-                        'enabled' => (bool) $candidate->targetSkill->enabled,
-                    ],
-                ])
-                ->values(),
+            'candidates' => $candidatePayloads,
         ]);
     }
 
@@ -81,5 +92,14 @@ class KnowledgeImprovementController extends Controller
         }
 
         return back();
+    }
+
+    private function serializeDateAttribute(Model $model, string $attribute): ?string
+    {
+        $value = $model->getAttribute($attribute);
+
+        return $value instanceof CarbonInterface
+            ? $value->toIso8601String()
+            : null;
     }
 }

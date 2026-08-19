@@ -9,6 +9,7 @@ use App\Models\Task;
 use App\Models\Ticket;
 use App\TaskStatus;
 use App\TicketMessageType;
+use Carbon\CarbonInterface;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Str;
 
@@ -299,21 +300,26 @@ class TicketContextCapsuleFactory
             ),
             'triage_confidence' => $ticket->triage_confidence,
             'converted_task_id' => $ticket->converted_task_id,
-            'awaiting_response_until' => $ticket
-                ->awaiting_response_until
-                ?->toIso8601String(),
-            'triaged_at' => $ticket
-                ->triaged_at
-                ?->toIso8601String(),
-            'closed_at' => $ticket
-                ->closed_at
-                ?->toIso8601String(),
-            'created_at' => $ticket
-                ->created_at
-                ?->toIso8601String(),
-            'updated_at' => $ticket
-                ->updated_at
-                ?->toIso8601String(),
+            'awaiting_response_until' => $this->dateValue(
+                $ticket,
+                'awaiting_response_until',
+            ),
+            'triaged_at' => $this->dateValue(
+                $ticket,
+                'triaged_at',
+            ),
+            'closed_at' => $this->dateValue(
+                $ticket,
+                'closed_at',
+            ),
+            'created_at' => $this->dateValue(
+                $ticket,
+                'created_at',
+            ),
+            'updated_at' => $this->dateValue(
+                $ticket,
+                'updated_at',
+            ),
         ];
     }
 
@@ -590,9 +596,7 @@ class TicketContextCapsuleFactory
             ->orderBy('tasks.position')
             ->get()
             ->map(
-                fn ($dependency): ?array => $dependency instanceof Task
-                    ? $this->task($dependency)
-                    : null,
+                fn (Task $dependency): ?array => $this->task($dependency),
             )
             ->filter()
             ->values()
@@ -603,9 +607,7 @@ class TicketContextCapsuleFactory
             ->orderBy('tasks.position')
             ->get()
             ->map(
-                fn ($dependent): ?array => $dependent instanceof Task
-                    ? $this->task($dependent)
-                    : null,
+                fn (Task $dependent): ?array => $this->task($dependent),
             )
             ->filter()
             ->values()
@@ -1090,7 +1092,30 @@ class TicketContextCapsuleFactory
         ];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * @param  array<string, mixed>  $context
+     * @param  array{items: list<array<string, mixed>>, total: int}  $public
+     * @param  array{items: list<array<string, mixed>>, total: int}  $internal
+     * @param  array{items: list<array<string, mixed>>, total: int}  $attachments
+     * @param  array{
+     *     tickets: list<array<string, mixed>>,
+     *     tasks: list<array<string, mixed>>,
+     *     ticket_matches: int,
+     *     task_matches: int
+     * }  $related
+     * @param  array{
+     *     documents: list<array<string, mixed>>,
+     *     rules: list<array<string, mixed>>,
+     *     conflicts: list<array<string, mixed>>,
+     *     excluded_documents: list<string>,
+     *     excluded_rules: list<string>
+     * }  $documentation
+     * @param  array{
+     *     notes: array<string, string>,
+     *     manifest: array<string, mixed>
+     * }  $obsidian
+     * @return array<string, mixed>
+     */
     private function manifest(
         Ticket $ticket,
         array $context,
@@ -1415,7 +1440,7 @@ class TicketContextCapsuleFactory
 
         $paths = [];
 
-        foreach ($matches[1] ?? [] as $path) {
+        foreach ($matches[1] as $path) {
             $path = rtrim(
                 (string) $path,
                 '.,:;)]}',
@@ -1534,6 +1559,17 @@ class TicketContextCapsuleFactory
             0,
             $maxCharacters,
         );
+    }
+
+    private function dateValue(
+        Ticket $ticket,
+        string $attribute,
+    ): ?string {
+        $value = $ticket->getAttribute($attribute);
+
+        return $value instanceof CarbonInterface
+            ? $value->toIso8601String()
+            : null;
     }
 
     private function raw(

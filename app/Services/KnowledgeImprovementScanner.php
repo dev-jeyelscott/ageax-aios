@@ -186,15 +186,20 @@ class KnowledgeImprovementScanner
                 continue;
             }
 
-            $validation = $attempt->validation_results;
-            $validation = is_array($validation) ? $validation : [];
+            $validation = $this->arrayAttribute(
+                $attempt,
+                'validation_results',
+            );
             $checks = $this->failedDeterministicChecks($validation);
 
             if ($checks === []) {
                 continue;
             }
 
-            $area = $this->validationArea($validation, $attempt->changed_files ?? []);
+            $area = $this->validationArea(
+                $validation,
+                $this->stringListAttribute($attempt, 'changed_files'),
+            );
             $failureCode = 'validation:'.implode('+', $checks);
             $targetSkillSlug = $this->validationTargetSkillSlug($checks);
 
@@ -260,7 +265,7 @@ class KnowledgeImprovementScanner
             ->get();
 
         foreach ($events as $event) {
-            $payload = is_array($event->payload) ? $event->payload : [];
+            $payload = $this->arrayAttribute($event, 'payload');
             $metadata = $this->auditMetadata($event->event_type, $payload);
 
             if ($metadata === null) {
@@ -330,7 +335,9 @@ class KnowledgeImprovementScanner
 
             $failureCode = 'recovery:'.$category;
             $target = $this->recoveryTarget($category);
-            $area = $this->areaFromFiles($incident->changed_files ?? []) ?? 'recovery';
+            $area = $this->areaFromFiles(
+                $this->stringListAttribute($incident, 'changed_files'),
+            ) ?? 'recovery';
 
             $items[] = [
                 'fingerprint_payload' => [
@@ -561,7 +568,10 @@ class KnowledgeImprovementScanner
         };
     }
 
-    /** @param array<string, mixed> $validation */
+    /**
+     * @param  array<string, mixed>  $validation
+     * @return list<string>
+     */
     private function failedDeterministicChecks(array $validation): array
     {
         $checks = is_array($validation['checks'] ?? null) ? $validation['checks'] : [];
@@ -729,7 +739,10 @@ class KnowledgeImprovementScanner
         return $project->skills()->where('slug', $slug)->first();
     }
 
-    /** @param list<array<string, mixed>> $references */
+    /**
+     * @param  list<array<string, mixed>>  $references
+     * @return list<array<string, mixed>>
+     */
     private function uniqueReferences(array $references): array
     {
         $unique = [];
@@ -836,6 +849,34 @@ class KnowledgeImprovementScanner
         return in_array($role, ['project_manager', 'coder', 'reviewer', 'recovery_engineer'], true)
             ? $role
             : null;
+    }
+
+    /** @return array<string, mixed> */
+    private function arrayAttribute(Model $model, string $attribute): array
+    {
+        $value = $model->getAttribute($attribute);
+
+        return is_array($value) ? $value : [];
+    }
+
+    /** @return list<string> */
+    private function stringListAttribute(Model $model, string $attribute): array
+    {
+        $value = $model->getAttribute($attribute);
+
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $items = [];
+
+        foreach ($value as $item) {
+            if (is_string($item)) {
+                $items[] = $item;
+            }
+        }
+
+        return $items;
     }
 
     private function dateValue(Model $model, string $attribute): string
