@@ -41,34 +41,59 @@ final readonly class HarnessCapabilities
             'reasoning_setting',
         );
 
-        if ($model !== null && ! in_array($model, $this->models, true)) {
-            throw new LogicException(
-                "Agent model [{$model}] is not supported by harness [{$harness->value}].",
-            );
+        if ($model !== null) {
+            if (! in_array('model', $this->configurationFields, true)) {
+                throw new LogicException(
+                    "Harness [{$harness->value}] does not support agent model configuration.",
+                );
+            }
+
+            if (! in_array($model, $this->models, true)) {
+                throw new LogicException(
+                    "Agent model [{$model}] is not supported by harness [{$harness->value}].",
+                );
+            }
         }
 
         if ($reasoningSetting === null) {
             return;
         }
 
-        $supportedReasoningSettings = $model === null
-            ? $this->reasoningSettings
-            : ($this->reasoningSettingsByModel[$model]
-                ?? $this->reasoningSettings);
-
-        if (! in_array(
-            $reasoningSetting,
-            $supportedReasoningSettings,
-            true,
-        )) {
+        if (
+            ! in_array(
+                'reasoning_setting',
+                $this->configurationFields,
+                true,
+            )
+        ) {
             throw new LogicException(
-                'Agent reasoning setting ['
-                .$reasoningSetting
-                .'] is not supported by harness ['
-                .$harness->value
-                .'] for model ['
-                .($model ?? '(provider default)')
-                .'].',
+                "Harness [{$harness->value}] does not support agent reasoning configuration.",
+            );
+        }
+
+        if ($model === null) {
+            throw new LogicException(
+                "Agent reasoning setting [{$reasoningSetting}] requires an explicit model for harness [{$harness->value}].",
+            );
+        }
+
+        $modelReasoningSettings =
+            $this->reasoningSettingsByModel[$model] ?? [];
+
+        if (
+            ! in_array(
+                $reasoningSetting,
+                $this->reasoningSettings,
+                true,
+            )
+            || ! in_array(
+                $reasoningSetting,
+                $modelReasoningSettings,
+                true,
+            )
+        ) {
+            throw new LogicException(
+                "Agent reasoning setting [{$reasoningSetting}] is not supported for model [{$model}] by harness [{$harness->value}].",
             );
         }
     }
@@ -130,8 +155,8 @@ final readonly class HarnessCapabilities
     }
 
     /**
-     * Resolve the conservative provider-default capacity used only by the established
-     * no-bound-Agent legacy Codex path. It is intentionally not inferred from another model.
+     * Conservative provider-default capacity evidence for compatibility paths that explicitly
+     * elect to use the harness default rather than infer capacity from another model.
      *
      * @return array{
      *     resolved_capacity_tokens: int,
@@ -200,7 +225,17 @@ final readonly class HarnessCapabilities
     ): ?string {
         $value = $agent->getRawOriginal($attribute);
 
-        return is_string($value) && $value !== '' ? $value : null;
+        if ($value === null) {
+            return null;
+        }
+
+        if (! is_string($value) || trim($value) === '') {
+            throw new LogicException(
+                "Agent configuration field [{$attribute}] must be null or a non-empty string.",
+            );
+        }
+
+        return $value;
     }
 
     private function positiveCapacity(?int $value, string $message): int

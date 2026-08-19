@@ -2,9 +2,7 @@
 
 namespace App\Services;
 
-use App\AgentRunStatus;
 use App\Models\Agent;
-use App\Models\AgentRun;
 use App\Models\Project;
 use Closure;
 use Illuminate\Contracts\Process\ProcessResult;
@@ -17,46 +15,23 @@ class CodexCliRunner
         private SanitizedExecutionEnvironment $environment,
     ) {}
 
-    /** @return array{exit_code: int, output: string, error_output: string} */
+    /**
+     * Established no-bound-Agent compatibility path.
+     *
+     * New bound-Agent execution is budgeted through AgentHarnessResolver ->
+     * ContextBudgetedAgentHarness before provider dispatch. This direct runner path is retained
+     * only for existing legacy workflow semantics that do not carry AssembledAgentContext or an
+     * attributable Agent/harness/model configuration. P3-016 permits such a scoped, tested
+     * exception rather than introducing a second authoritative budgeting/capability system here.
+     *
+     * @return array{exit_code: int, output: string, error_output: string}
+     */
     public function run(
         Project $project,
         string $prompt,
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
     ): array {
-        $legacyWorkflowRun = AgentRun::query()
-            ->whereBelongsTo($project)
-            ->whereNull('agent_id')
-            ->where('status', AgentRunStatus::Running)
-            ->where('prompt_hash', hash('sha256', $prompt))
-            ->latest('id')
-            ->first();
-
-        if ($legacyWorkflowRun !== null) {
-            $legacyWorkflowRun->update([
-                'context_budget_schema_version' => ContextBudgetPolicy::SchemaVersion,
-                'context_budget_snapshot' => [
-                    'schema_version' => ContextBudgetPolicy::SchemaVersion,
-                    'policy_version' => ContextBudgetPolicy::PolicyVersion,
-                    'decision' => 'blocked',
-                    'capacity_source' => null,
-                    'capacity_source_version' => null,
-                    'resolved_capacity_tokens' => null,
-                    'original_prompt_hash' => hash('sha256', $prompt),
-                    'final_prompt_hash' => hash('sha256', $prompt),
-                    'warning_reason' => null,
-                    'block_reason' => 'legacy_execution_has_no_bound_agent_capacity',
-                    'action' => 'Bind a supported project Agent so AIOS can resolve attributable harness/model capacity before execution.',
-                ],
-            ]);
-
-            return [
-                'exit_code' => -1,
-                'output' => '',
-                'error_output' => 'Context Budget blocked the legacy no-Agent execution path. Bind a supported project Agent before retrying.',
-            ];
-        }
-
         return $this->runAtPath(
             $this->paths->assertProjectPath($project->path),
             $prompt,

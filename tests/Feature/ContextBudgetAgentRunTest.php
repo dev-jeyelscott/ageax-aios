@@ -151,6 +151,7 @@ test('recovery with the same immutable configuration reuses the persisted capaci
         'objective' => 'Small recovery task.',
         'acceptance_criteria' => ['Preserve evidence.'],
         'implementation_prompt' => 'Implement the recovery task.',
+        'context_capsule' => [],
         'status' => 'coding',
     ]);
     $agent = Agent::factory()->for($project)->create([
@@ -224,8 +225,8 @@ test('recovery with the same immutable configuration reuses the persisted capaci
         ->and($first->context_budget_snapshot['resolved_capacity_tokens'])->toBe(100000);
 });
 
-test('legacy no Agent workflow execution fails closed before direct Codex provider dispatch', function () {
-    $project = p3016Project('Legacy fail closed');
+test('legacy no Agent runs remain readable without false Context Budget evidence', function () {
+    $project = p3016Project('Legacy Context Budget exception');
     $prompt = 'Legacy workflow prompt.';
     $run = AgentRun::create([
         'project_id' => $project->id,
@@ -234,17 +235,10 @@ test('legacy no Agent workflow execution fails closed before direct Codex provid
         'prompt_hash' => hash('sha256', $prompt),
         'started_at' => now(),
     ]);
-    \Illuminate\Support\Facades\Process::fake();
 
-    $execution = app(\App\Services\CodexCliRunner::class)->run(
-        $project,
-        $prompt,
-    );
-    $run->refresh();
-
-    expect($execution['exit_code'])->toBe(-1)
-        ->and($run->context_budget_snapshot['decision'])->toBe('blocked')
-        ->and($run->context_budget_snapshot['block_reason'])->toBe('legacy_execution_has_no_bound_agent_capacity');
-    \Illuminate\Support\Facades\Process::assertNotRan(fn (): bool => true);
+    expect($run->agent_id)->toBeNull()
+        ->and($run->configuration_snapshot)->toBeNull()
+        ->and($run->context_budget_snapshot)->toBeNull()
+        ->and($run->context_budget_schema_version)->toBeNull();
 });
 
