@@ -139,10 +139,16 @@ class DecideTicketEscalation
     /** @return array<string, mixed> */
     private function validationEvidence(TicketTriageAttempt $attempt): array
     {
-        $structuredDecision = $attempt->structured_decision;
-        $validation = is_array($structuredDecision)
-            ? ($structuredDecision['aios_validation'] ?? null)
-            : null;
+        $structuredDecision = $attempt->getAttribute('structured_decision');
+
+        if (! is_array($structuredDecision)) {
+            throw new HttpException(
+                409,
+                'The Ticket triage attempt has no durable structured decision.',
+            );
+        }
+
+        $validation = $structuredDecision['aios_validation'] ?? null;
 
         if (! is_array($validation)) {
             throw new HttpException(
