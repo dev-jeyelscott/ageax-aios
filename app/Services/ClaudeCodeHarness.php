@@ -27,6 +27,10 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         'max',
     ];
 
+    private const int ConservativeDefaultContextWindowTokens = 200000;
+
+    private const int ConservativeDefaultMaxOutputTokens = 64000;
+
     public function __construct(
         private ClaudeCodeCliRunner $runner,
     ) {}
@@ -56,6 +60,22 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 'claude-sonnet-5' => self::ReasoningSettings,
                 'claude-haiku-4-5-20251001' => [],
             ],
+            contextWindowTokensByModel: [
+                'claude-fable-5' => 1000000,
+                'claude-opus-5' => 1000000,
+                'claude-sonnet-5' => 1000000,
+                'claude-haiku-4-5-20251001' => 200000,
+            ],
+            maxOutputTokensByModel: [
+                'claude-fable-5' => 128000,
+                'claude-opus-5' => 128000,
+                'claude-sonnet-5' => 128000,
+                'claude-haiku-4-5-20251001' => 64000,
+            ],
+            defaultContextWindowTokens: self::ConservativeDefaultContextWindowTokens,
+            defaultMaxOutputTokens: self::ConservativeDefaultMaxOutputTokens,
+            capacityMetadataSource: 'anthropic_model_docs_2026_08_19',
+            capacityMetadataVersion: 1,
         );
     }
 
@@ -372,3 +392,4 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         );
     }
 }
+

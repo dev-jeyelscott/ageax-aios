@@ -43,27 +43,80 @@ class AgentContextAssembler
                 ->all(),
         );
 
-        $payload = [
-            'context_schema_version' => self::ContextSchemaVersion,
-            'system_rules' => self::SystemRules,
-            'agent' => $agentSnapshot,
-            'skills' => $skillsSnapshot,
-            'task_context' => $taskContext,
-        ];
+        return $this->build(
+            self::ContextSchemaVersion,
+            $agentSnapshot,
+            $skillsSnapshot,
+            $taskContext,
+        );
+    }
 
-        $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    /**
+     * Rehydrate a provider-facing assembled-context payload already embedded in an execution
+     * prompt. Context Budget uses this only to apply deterministic reduction before dispatch.
+     * The persisted hash is retained until content is actually reduced; rebuild() computes the
+     * new final hash after any reduction.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function fromPayload(array $payload): AssembledAgentContext
+    {
+        $contextSchemaVersion = $payload['context_schema_version'] ?? null;
+        $contextHash = $payload['context_hash'] ?? null;
+        $systemRules = $payload['system_rules'] ?? null;
+        $agentSnapshot = $payload['agent'] ?? null;
+        $skillsSnapshot = $payload['skills'] ?? null;
+        $taskContext = $payload['task_context'] ?? null;
 
-        $costEstimate = $this->costEstimator->estimate(self::SystemRules, $agentSnapshot, $skillsSnapshot, $taskContext);
+        if (! is_int($contextSchemaVersion)
+            || ! is_string($contextHash)
+            || $contextHash === ''
+            || $systemRules !== self::SystemRules
+            || ! is_array($agentSnapshot)
+            || ! is_array($skillsSnapshot)
+            || ! is_array($taskContext)) {
+            throw new LogicException('The provider prompt does not contain a valid AIOS assembled-context payload.');
+        }
+
+        $skills = array_values(array_filter(
+            $skillsSnapshot,
+            fn (mixed $skill): bool => is_array($skill),
+        ));
+        $costEstimate = $this->costEstimator->estimate(
+            self::SystemRules,
+            $agentSnapshot,
+            $skills,
+            $taskContext,
+        );
 
         return new AssembledAgentContext(
-            contextSchemaVersion: self::ContextSchemaVersion,
+            contextSchemaVersion: $contextSchemaVersion,
             systemRules: self::SystemRules,
             agentSnapshot: $agentSnapshot,
-            skillsSnapshot: $skillsSnapshot,
+            skillsSnapshot: $skills,
             taskContext: $taskContext,
-            hash: $hash,
+            hash: $contextHash,
             contextCostEstimate: $costEstimate,
             contextCostSchemaVersion: ContextCostEstimator::SchemaVersion,
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $agentSnapshot
+     * @param list<array<string, mixed>> $skillsSnapshot
+     * @param array<string, mixed> $taskContext
+     */
+    public function rebuild(
+        AssembledAgentContext $context,
+        array $agentSnapshot,
+        array $skillsSnapshot,
+        array $taskContext,
+    ): AssembledAgentContext {
+        return $this->build(
+            $context->contextSchemaVersion,
+            $agentSnapshot,
+            $skillsSnapshot,
+            $taskContext,
         );
     }
 
@@ -195,4 +248,51 @@ class AgentContextAssembler
             'constraints' => $skill->constraints,
         ];
     }
+
+    /**
+     * @param array<string, mixed> $agentSnapshot
+     * @param list<array<string, mixed>> $skillsSnapshot
+     * @param array<string, mixed> $taskContext
+     */
+    private function build(
+        int $contextSchemaVersion,
+        array $agentSnapshot,
+        array $skillsSnapshot,
+        array $taskContext,
+    ): AssembledAgentContext {
+        $payload = [
+            'context_schema_version' => $contextSchemaVersion,
+            'system_rules' => self::SystemRules,
+            'agent' => $agentSnapshot,
+            'skills' => array_values($skillsSnapshot),
+            'task_context' => $taskContext,
+        ];
+        $hash = hash(
+            'sha256',
+            json_encode(
+                $payload,
+                JSON_THROW_ON_ERROR
+                    | JSON_UNESCAPED_SLASHES
+                    | JSON_UNESCAPED_UNICODE,
+            ),
+        );
+        $costEstimate = $this->costEstimator->estimate(
+            self::SystemRules,
+            $agentSnapshot,
+            array_values($skillsSnapshot),
+            $taskContext,
+        );
+
+        return new AssembledAgentContext(
+            contextSchemaVersion: $contextSchemaVersion,
+            systemRules: self::SystemRules,
+            agentSnapshot: $agentSnapshot,
+            skillsSnapshot: array_values($skillsSnapshot),
+            taskContext: $taskContext,
+            hash: $hash,
+            contextCostEstimate: $costEstimate,
+            contextCostSchemaVersion: ContextCostEstimator::SchemaVersion,
+        );
+    }
 }
+

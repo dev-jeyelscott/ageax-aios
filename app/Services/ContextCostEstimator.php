@@ -76,13 +76,13 @@ class ContextCostEstimator
         ];
     }
 
+    /** @return array{characters: int, estimated_tokens: int} */
+    public function measureValue(mixed $value): array
+    {
+        return $this->measure($value);
+    }
+
     /**
-     * Splits task_context into the meaningful, named buckets required for attribution, without
-     * dropping or double-counting any key. Anything not recognized as Obsidian, retry/recovery,
-     * or review evidence falls into task_core (task fields, roadmap content, operator messages,
-     * runtime capabilities, retrieval manifest, etc.) so the estimator stays generic across both
-     * TaskContextCapsuleFactory::make() and RunProjectManager's inline roadmap context shape.
-     *
      * @param  array<string, mixed>  $taskContext
      * @return array{task_core: array<string, mixed>, obsidian_context: mixed, retry_recovery_evidence: mixed, review_evidence: mixed}
      */
@@ -161,3 +161,4 @@ class ContextCostEstimator
         return $flagged;
     }
 }
+
