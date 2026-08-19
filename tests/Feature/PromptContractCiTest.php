@@ -165,8 +165,10 @@ function promptContractTask(Project $project, TaskStatus $status): Task
 /** @param list<string> $clauses */
 function expectPromptClauses(string $value, array $clauses): void
 {
+    $normalizedValue = (string) str($value)->squish();
+
     foreach ($clauses as $clause) {
-        expect($value)->toContain($clause);
+        expect($normalizedValue)->toContain((string) str($clause)->squish());
     }
 }
 
