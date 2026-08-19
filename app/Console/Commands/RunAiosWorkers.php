@@ -7,6 +7,7 @@ use App\Actions\ClaimTicketForTriage;
 use App\Actions\RunCoderTask;
 use App\Actions\RunProjectManager;
 use App\Actions\RunReviewerTask;
+use App\Actions\RunTicketTriage;
 use App\Actions\SetProjectStatus;
 use App\AgentRole;
 use App\Models\AgentWorker;
@@ -34,6 +35,7 @@ class RunAiosWorkers extends Command
         RunCoderTask $runCoderTask,
         RunProjectManager $runProjectManager,
         RunReviewerTask $runReviewerTask,
+        RunTicketTriage $runTicketTriage,
         SetProjectStatus $setProjectStatus,
         WorkerHeartbeat $heartbeat,
     ): int {
@@ -116,6 +118,11 @@ class RunAiosWorkers extends Command
 
                                 $this->info(
                                     "Claimed {$ticket->key} for project_manager ticket triage attempt {$attempt->number}.",
+                                );
+
+                                $runTicketTriage->handle(
+                                    $attempt,
+                                    $lease,
                                 );
                             }
                         } finally {
@@ -260,7 +267,9 @@ class RunAiosWorkers extends Command
             && $taskCompletedAt->addSeconds($cooldownSeconds)->isFuture();
     }
 
-    /** @phpstan-impure */
+    /**
+     * @phpstan-impure
+     */
     private function stopRequested(
         Project $project,
         SetProjectStatus $setProjectStatus,
