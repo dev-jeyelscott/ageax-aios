@@ -88,7 +88,7 @@ class ConvertTicketToTask
                 return null;
             }
 
-            $decision = $lockedAttempt->structured_decision;
+            $decision = $lockedAttempt->getAttribute('structured_decision');
             if (! is_array($decision)) {
                 return null;
             }
