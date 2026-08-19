@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\TaskComplexity;
 use App\TaskStatus;
+use App\TaskWorkType;
 use Carbon\CarbonImmutable;
 use Database\Factories\TaskFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -13,9 +15,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
-#[Fillable(['project_id', 'phase_id', 'key', 'position', 'title', 'objective', 'acceptance_criteria', 'scope', 'constraints', 'relevant_paths', 'verification_commands', 'implementation_prompt', 'context_capsule', 'status', 'claimed_at', 'completed_at'])]
+#[Fillable(['project_id', 'phase_id', 'key', 'position', 'title', 'objective', 'work_type', 'complexity', 'acceptance_criteria', 'scope', 'constraints', 'relevant_paths', 'verification_commands', 'implementation_prompt', 'context_capsule', 'status', 'claimed_at', 'completed_at'])]
 /**
  * @property TaskStatus $status
+ * @property ?TaskWorkType $work_type
+ * @property ?TaskComplexity $complexity
  * @property array<int, string> $acceptance_criteria
  * @property array<int, string>|null $scope
  * @property array<int, string>|null $constraints
@@ -30,7 +34,7 @@ class Task extends Model
 
     protected function casts(): array
     {
-        return ['status' => TaskStatus::class, 'acceptance_criteria' => 'array', 'scope' => 'array', 'constraints' => 'array', 'relevant_paths' => 'array', 'verification_commands' => 'array', 'context_capsule' => 'array', 'claimed_at' => 'immutable_datetime', 'completed_at' => 'immutable_datetime'];
+        return ['status' => TaskStatus::class, 'work_type' => TaskWorkType::class, 'complexity' => TaskComplexity::class, 'acceptance_criteria' => 'array', 'scope' => 'array', 'constraints' => 'array', 'relevant_paths' => 'array', 'verification_commands' => 'array', 'context_capsule' => 'array', 'claimed_at' => 'immutable_datetime', 'completed_at' => 'immutable_datetime'];
     }
 
     /** @return BelongsTo<Project, $this> */

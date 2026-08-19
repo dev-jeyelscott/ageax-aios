@@ -13,7 +13,9 @@ use App\Services\ObsidianProjectNotes;
 use App\Services\TaskValidator;
 use App\Services\TicketTriagePolicy;
 use App\Services\TicketWorkflow;
+use App\TaskComplexity;
 use App\TaskStatus;
+use App\TaskWorkType;
 use App\TicketCategory;
 use App\TicketDecision;
 use App\TicketEscalationReason;
@@ -153,18 +155,30 @@ class ConvertTicketToTask
 
             $categoryValue = $decision['category'] ?? null;
             $priorityValue = $decision['suggested_priority'] ?? null;
+            $complexityValue = $decision['complexity'] ?? null;
             $category = is_string($categoryValue)
                 ? TicketCategory::tryFrom($categoryValue)
                 : null;
             $priority = is_string($priorityValue)
                 ? TicketPriority::tryFrom($priorityValue)
                 : null;
+            $workType = $category !== null
+                ? TaskWorkType::tryFrom($category->value)
+                : null;
+            $complexity = is_string($complexityValue)
+                ? TaskComplexity::tryFrom($complexityValue)
+                : null;
 
-            if ($category === null || $priority === null) {
+            if (
+                $category === null
+                || $priority === null
+                || $workType === null
+                || $complexity === null
+            ) {
                 $this->failConversionLocked(
                     $ticket,
                     $lockedAttempt,
-                    'The validated Ticket category or suggested priority is invalid.',
+                    'The validated Ticket category, complexity, or suggested priority is invalid.',
                 );
 
                 return null;
@@ -306,6 +320,8 @@ class ConvertTicketToTask
                 'position' => $position,
                 'title' => $proposal['title'],
                 'objective' => $proposal['objective'],
+                'work_type' => $workType,
+                'complexity' => $complexity,
                 'acceptance_criteria' => $proposal['acceptance_criteria'],
                 'scope' => $proposal['scope'],
                 'constraints' => $proposal['constraints'],
@@ -429,7 +445,7 @@ class ConvertTicketToTask
 
         return (is_float($confidence) || is_int($confidence))
             && is_string($complexity)
-            && in_array($complexity, ['low', 'medium', 'high'], true)
+            && TaskComplexity::tryFrom($complexity) !== null
             && is_array($proposal)
             && ! array_is_list($proposal)
             && is_array($escalationFlags)
@@ -461,7 +477,7 @@ class ConvertTicketToTask
             && ($decision['implementation_required'] ?? false) === true
             && (is_float($confidence) || is_int($confidence))
             && (float) $confidence >= TicketTriagePolicy::ConfidenceThreshold
-            && in_array($decision['complexity'] ?? null, ['low', 'medium'], true)
+            && in_array($decision['complexity'] ?? null, [TaskComplexity::Low->value, TaskComplexity::Medium->value], true)
             && is_string($category)
             && TicketCategory::tryFrom($category) !== null
             && is_string($priority)
