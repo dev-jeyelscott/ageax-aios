@@ -18,10 +18,12 @@ use App\Services\AuditLogger;
 use App\Services\DatabaseProtectionGuard;
 use App\Services\StructuredResultParser;
 use App\Services\TicketContextCapsuleFactory;
+use App\Services\TicketTriagePolicy;
 use App\Services\TicketWorkflow;
 use App\Services\WorkerHeartbeat;
 use App\TicketCategory;
 use App\TicketDecision;
+use App\TicketEscalationReason;
 use App\TicketPriority;
 use App\TicketStatus;
 use App\WorkerLease;
@@ -41,6 +43,7 @@ class RunTicketTriage
         private TicketContextCapsuleFactory $ticketContexts,
         private AgentRunRecorder $runs,
         private StructuredResultParser $parser,
+        private TicketTriagePolicy $triagePolicy,
         private TicketWorkflow $workflow,
         private WorkerHeartbeat $heartbeat,
         private AuditLogger $audit,
@@ -293,8 +296,26 @@ Required JSON contract:
   "suggested_priority": "low|normal|high|critical|emergency",
   "implementation_required": false,
   "proposed_task": null,
-  "escalation_flags": ["concise deterministic-risk signal"]
+  "escalation_flags": []
 }
+
+escalation_flags may contain only these canonical identifiers:
+- low_confidence
+- unclear_or_contradictory_requirements
+- architectural_decision_required
+- breaking_public_api_or_data_contract
+- material_schema_or_data_migration_risk
+- destructive_operation
+- security_privacy_or_auth_judgment_required
+- approved_documentation_conflict
+- business_priority_unclear
+- high_complexity
+- multiple_tasks_or_phases_required
+- roadmap_or_phase_reordering_or_interruption_requested
+- critical_or_emergency_preemption_requested
+- unsafe_or_unresolved_dependency_placement
+
+AIOS independently derives low_confidence and high_complexity from the structured fields and may derive roadmap/preemption/dependency risk from durable project state. Never omit a canonical semantic risk merely because confidence is high.
 
 When implementation_required is true, proposed_task must be exactly one bounded Task proposal with:
 {
@@ -517,7 +538,8 @@ PROMPT;
             ],
             'escalation_flags.*' => [
                 'string',
-                'max:1000',
+                'distinct',
+                Rule::enum(TicketEscalationReason::class),
             ],
         ]);
 
@@ -724,11 +746,38 @@ PROMPT;
                 );
             }
 
+            $aiosValidation = $this->triagePolicy->evaluate(
+                $ticket,
+                $decision,
+            );
+            $storedDecision = [
+                ...$decision,
+                'aios_validation' => $aiosValidation,
+            ];
+
             $lockedAttempt->update([
-                'structured_decision' => $decision,
+                'structured_decision' => $storedDecision,
                 'status' => 'completed',
                 'finished_at' => now(),
             ]);
+
+            if ($aiosValidation['requires_operator_decision']) {
+                $this->workflow->transition(
+                    $ticket,
+                    TicketStatus::Escalated,
+                );
+
+                $this->audit->record('ticket.escalated', [
+                    'ticket_id' => $ticket->id,
+                    'ticket_key' => $ticket->key,
+                    'ticket_triage_attempt_id' => $lockedAttempt->id,
+                    'attempt_number' => $lockedAttempt->number,
+                    'agent_run_id' => $lockedAttempt->agent_run_id,
+                    'escalation_reasons' => $aiosValidation['escalation_reasons'],
+                    'confidence_threshold' => $aiosValidation['confidence_threshold'],
+                    'confidence' => $decision['confidence'],
+                ], $ticket->project);
+            }
 
             $this->audit->record('ticket.triage_completed', [
                 'ticket_id' => $ticket->id,
@@ -744,6 +793,10 @@ PROMPT;
                 'implementation_required' => $decision['implementation_required'],
                 'has_proposed_task' => $decision['proposed_task'] !== null,
                 'escalation_flags' => $decision['escalation_flags'],
+                'requires_operator_decision' => $aiosValidation['requires_operator_decision'],
+                'automatic_task_conversion_eligible' => $aiosValidation['automatic_task_conversion_eligible'],
+                'escalation_reasons' => $aiosValidation['escalation_reasons'],
+                'triage_policy_schema_version' => $aiosValidation['schema_version'],
             ], $ticket->project);
         }, attempts: 3);
     }

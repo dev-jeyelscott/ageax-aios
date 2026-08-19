@@ -7,6 +7,7 @@ use App\Http\Controllers\KnowledgeImprovementController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\SkillController;
 use App\Http\Controllers\TicketController;
+use App\Http\Controllers\TicketEscalationDecisionController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'welcome')->name('home');
@@ -33,6 +34,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('projects/{project}/tickets', [TicketController::class, 'store'])->name('projects.tickets.store');
     Route::get('projects/{project}/tickets/{ticket}', [TicketController::class, 'show'])->scopeBindings()->name('projects.tickets.show');
     Route::post('projects/{project}/tickets/{ticket}/messages', [TicketController::class, 'storeMessage'])->scopeBindings()->name('projects.tickets.messages.store');
+    Route::post(
+        'projects/{project}/tickets/{ticket}/triage-attempts/{triageAttempt}/operator-decision',
+        TicketEscalationDecisionController::class,
+    )->scopeBindings()->name('projects.tickets.escalation-decisions.store');
 
     Route::get('projects/{project}/knowledge-improvements', [KnowledgeImprovementController::class, 'index'])->name('projects.knowledge-improvements.index');
     Route::patch('projects/{project}/knowledge-improvements/{candidate}', [KnowledgeImprovementController::class, 'decide'])->name('projects.knowledge-improvements.decide');
