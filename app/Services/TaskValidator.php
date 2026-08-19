@@ -185,6 +185,15 @@ class TaskValidator
         return array_values($commands);
     }
 
+    /** @param list<string> $commands */
+    public function verificationCommandsAreSafe(array $commands): bool
+    {
+        return ! collect($commands)->contains(
+            fn (mixed $command): bool => ! is_string($command)
+                || ! $this->isSafeVerificationCommand($command),
+        );
+    }
+
     private function isSafeVerificationCommand(string $command): bool
     {
         if (preg_match('~^[A-Za-z0-9_./:=+,@-]+(?: [A-Za-z0-9_./:=+,@-]+)*$~', $command) !== 1) {

@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Actions\ClaimTask;
 use App\Actions\ClaimTicketForTriage;
+use App\Actions\ConvertTicketToTask;
 use App\Actions\RunCoderTask;
 use App\Actions\RunProjectManager;
 use App\Actions\RunReviewerTask;
@@ -13,6 +14,7 @@ use App\AgentRole;
 use App\Models\AgentWorker;
 use App\Models\Project;
 use App\Models\Roadmap;
+use App\Models\TicketTriageAttempt;
 use App\ProjectStatus;
 use App\Services\WorkerHeartbeat;
 use App\TicketStatus;
@@ -32,6 +34,7 @@ class RunAiosWorkers extends Command
     public function handle(
         ClaimTask $claimTask,
         ClaimTicketForTriage $claimTicketForTriage,
+        ConvertTicketToTask $convertTicketToTask,
         RunCoderTask $runCoderTask,
         RunProjectManager $runProjectManager,
         RunReviewerTask $runReviewerTask,
@@ -46,6 +49,14 @@ class RunAiosWorkers extends Command
                 if ($this->stopRequested($project, $setProjectStatus)) {
                     continue;
                 }
+
+                // A completed PM triage decision may have been persisted immediately before the
+                // worker process died. Resume that same durable conversion before allowing new PM
+                // work so a crash cannot strand a conversion-eligible Ticket in triaging.
+                $this->recoverPendingTicketConversion(
+                    $project,
+                    $convertTicketToTask,
+                );
 
                 // Stale worker/lease and workflow-failure recovery is owned by the Workflow
                 // Recovery Engineer's five-minute scheduled scan (aios:recover-workflows), not
@@ -124,6 +135,8 @@ class RunAiosWorkers extends Command
                                     $attempt,
                                     $lease,
                                 );
+
+                                $convertTicketToTask->handle($attempt);
                             }
                         } finally {
                             $heartbeat->release($lease);
@@ -191,6 +204,38 @@ class RunAiosWorkers extends Command
         } while (! $this->option('once'));
 
         return self::SUCCESS;
+    }
+
+    private function recoverPendingTicketConversion(
+        Project $project,
+        ConvertTicketToTask $convertTicketToTask,
+    ): void {
+        $attempt = TicketTriageAttempt::query()
+            ->where('status', 'completed')
+            ->where(
+                'structured_decision->aios_validation->automatic_task_conversion_eligible',
+                true,
+            )
+            ->whereHas(
+                'ticket',
+                fn ($query) => $query
+                    ->where('project_id', $project->id)
+                    ->where('status', TicketStatus::Triaging->value),
+            )
+            ->oldest('id')
+            ->first();
+
+        if ($attempt === null) {
+            return;
+        }
+
+        $task = $convertTicketToTask->handle($attempt);
+
+        if ($task !== null) {
+            $this->info(
+                "Recovered automatic Ticket conversion to {$task->key}.",
+            );
+        }
     }
 
     private function hasPendingRoadmapWork(Project $project): bool

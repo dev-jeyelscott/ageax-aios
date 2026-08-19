@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable(['project_id', 'phase_id', 'key', 'position', 'title', 'objective', 'acceptance_criteria', 'scope', 'constraints', 'relevant_paths', 'verification_commands', 'implementation_prompt', 'context_capsule', 'status', 'claimed_at', 'completed_at'])]
 /**
@@ -90,5 +91,11 @@ class Task extends Model
     public function dependents(): BelongsToMany
     {
         return $this->belongsToMany(self::class, 'task_dependencies', 'depends_on_task_id', 'task_id');
+    }
+
+    /** @return HasOne<Ticket, $this> */
+    public function originTicket(): HasOne
+    {
+        return $this->hasOne(Ticket::class, 'converted_task_id');
     }
 }
