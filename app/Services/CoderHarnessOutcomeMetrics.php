@@ -5,7 +5,6 @@ namespace App\Services;
 use App\AgentRole;
 use App\AgentRunStatus;
 use App\Models\AgentRun;
-use App\Models\AuditEvent;
 use App\Models\Review;
 use App\Models\Task;
 use App\Models\TaskAttempt;
@@ -51,7 +50,9 @@ class CoderHarnessOutcomeMetrics
         $outcomes = [];
 
         foreach ($tasks as $task) {
-            if (! in_array($task->status->value, self::TerminalTaskStatuses, true)) {
+            $status = $this->stringValue($task->getRawOriginal('status'));
+
+            if ($status === null || ! in_array($status, self::TerminalTaskStatuses, true)) {
                 continue;
             }
 
@@ -199,7 +200,10 @@ class CoderHarnessOutcomeMetrics
             ->values();
 
         $coderRuns = $task->runs
-            ->filter(fn (AgentRun $run): bool => $run->role === AgentRole::Coder)
+            ->filter(
+                fn (AgentRun $run): bool => $this->stringValue($run->getRawOriginal('role'))
+                    === AgentRole::Coder->value,
+            )
             ->sortBy(function (AgentRun $run): string {
                 $attemptNumber = $this->integerValue($run->getAttribute('attempt_number'))
                     ?? PHP_INT_MAX;
@@ -212,6 +216,7 @@ class CoderHarnessOutcomeMetrics
             })
             ->values();
 
+        /** @var array<int, TaskAttempt> $attemptsByNumber */
         $attemptsByNumber = [];
 
         foreach ($attempts as $attempt) {
@@ -251,13 +256,12 @@ class CoderHarnessOutcomeMetrics
                 $knownTokenUsage += $tokenUsage;
             }
 
-            if ($run->finished_at === null) {
+            $durationSeconds = $this->runDurationSeconds($run);
+
+            if ($durationSeconds === null) {
                 $durationComplete = false;
             } else {
-                $knownDurationSeconds += max(
-                    0,
-                    $run->finished_at->getTimestamp() - $run->started_at->getTimestamp(),
-                );
+                $knownDurationSeconds += $durationSeconds;
             }
 
             $configuration = $this->configurationFromRun($run);
@@ -306,7 +310,7 @@ class CoderHarnessOutcomeMetrics
         $validReviews = $task->reviews
             ->filter(function (Review $review): bool {
                 return in_array(
-                    (string) $review->getRawOriginal('status'),
+                    $this->stringValue($review->getRawOriginal('status')),
                     [
                         ReviewStatus::Approved->value,
                         ReviewStatus::ChangesRequired->value,
@@ -334,7 +338,7 @@ class CoderHarnessOutcomeMetrics
         $firstPassReviewerApproved = $firstCoderAttempt !== null
             && $firstReview !== null
             && (int) $firstReview->getAttribute('task_attempt_id') === (int) $firstCoderAttempt->getKey()
-            && (string) $firstReview->getRawOriginal('status') === ReviewStatus::Approved->value;
+            && $this->stringValue($firstReview->getRawOriginal('status')) === ReviewStatus::Approved->value;
 
         $noProgressRetryCondition = $attempts->contains(function (TaskAttempt $attempt): bool {
             $validationResults = $attempt->getAttribute('validation_results');
@@ -352,51 +356,47 @@ class CoderHarnessOutcomeMetrics
         $retryExhausted = false;
 
         foreach ($task->auditEvents as $auditEvent) {
-            if (! $auditEvent instanceof AuditEvent) {
-                continue;
-            }
+            $payload = $auditEvent->getAttribute('payload');
+            $payload = is_array($payload) ? $payload : [];
 
-            $payload = $auditEvent->payload;
-            $isCoderEvent = ($payload['operation'] ?? AgentRole::Coder->value) === AgentRole::Coder->value;
+            $operation = $payload['operation'] ?? null;
+            $isCoderEvent = $operation === null || $operation === AgentRole::Coder->value;
+            $eventType = $this->stringValue($auditEvent->getRawOriginal('event_type'));
 
-            if (
-                $auditEvent->getAttribute('event_type') === 'task.no_progress_detected'
-                && $isCoderEvent
-            ) {
+            if ($eventType === 'task.no_progress_detected' && $isCoderEvent) {
                 $noProgressRetryCondition = true;
             }
 
-            if (
-                $auditEvent->getAttribute('event_type') === 'task.coder_retry_exhausted'
-                && $isCoderEvent
-            ) {
+            if ($eventType === 'task.coder_retry_exhausted' && $isCoderEvent) {
                 $retryExhausted = true;
             }
         }
 
         $hasOperationalRunFailure = $coderRuns->contains(
             fn (AgentRun $run): bool => in_array(
-                $run->status,
+                $this->stringValue($run->getRawOriginal('status')),
                 [
-                    AgentRunStatus::Failed,
-                    AgentRunStatus::Interrupted,
+                    AgentRunStatus::Failed->value,
+                    AgentRunStatus::Interrupted->value,
                 ],
                 true,
             ),
         );
 
+        $taskStatus = $this->stringValue($task->getRawOriginal('status')) ?? '';
+
         $operationalRetryOrBlock = $hasOperationalRunFailure
             || $retryExhausted
             || $noProgressRetryCondition
-            || ($task->status === TaskStatus::Blocked && $coderRuns->isNotEmpty());
+            || ($taskStatus === TaskStatus::Blocked->value && $coderRuns->isNotEmpty());
 
         return [
             'task_id' => (int) $task->getKey(),
             'task_key' => (string) $task->getAttribute('key'),
             'project_id' => (int) $task->getAttribute('project_id'),
-            'work_type' => $task->work_type?->value,
-            'complexity' => $task->complexity?->value,
-            'task_status' => $task->status->value,
+            'work_type' => $this->stringValue($task->getRawOriginal('work_type')),
+            'complexity' => $this->stringValue($task->getRawOriginal('complexity')),
+            'task_status' => $taskStatus,
             'configuration_status' => $configurationStatus,
             'configuration_key' => $configurationKey,
             'configuration' => $configuration,
@@ -681,12 +681,32 @@ class CoderHarnessOutcomeMetrics
         return null;
     }
 
+    private function stringValue(mixed $value): ?string
+    {
+        return is_string($value) ? $value : null;
+    }
+
+    private function runDurationSeconds(AgentRun $run): ?int
+    {
+        $startedAt = $run->getAttribute('started_at');
+        $finishedAt = $run->getAttribute('finished_at');
+
+        if (! $startedAt instanceof DateTimeInterface || ! $finishedAt instanceof DateTimeInterface) {
+            return null;
+        }
+
+        return max(
+            0,
+            $finishedAt->getTimestamp() - $startedAt->getTimestamp(),
+        );
+    }
+
     /**
      * @return array{harness: string, model: ?string, reasoning_setting: ?string}|null
      */
     private function configurationFromRun(AgentRun $run): ?array
     {
-        $snapshot = $run->configuration_snapshot;
+        $snapshot = $run->getAttribute('configuration_snapshot');
 
         if (! is_array($snapshot)) {
             return null;
@@ -714,7 +734,9 @@ class CoderHarnessOutcomeMetrics
             return null;
         }
 
-        if ($run->harness === null || $run->harness !== $harness) {
+        $persistedHarness = $this->stringValue($run->getRawOriginal('harness'));
+
+        if ($persistedHarness === null || $persistedHarness !== $harness) {
             return null;
         }
 
