@@ -35,7 +35,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('projects/{project}/tickets/{ticket}/messages', [TicketController::class, 'storeMessage'])->scopeBindings()->name('projects.tickets.messages.store');
 
     Route::get('projects/{project}/knowledge-improvements', [KnowledgeImprovementController::class, 'index'])->name('projects.knowledge-improvements.index');
-    Route::patch('projects/{project}/knowledge-improvements/{candidate}', [KnowledgeImprovementController::class, 'decide'])->scopeBindings()->name('projects.knowledge-improvements.decide');
+    Route::patch('projects/{project}/knowledge-improvements/{candidate}', [KnowledgeImprovementController::class, 'decide'])->name('projects.knowledge-improvements.decide');
 
     Route::post('projects/{project}/agents', [AgentController::class, 'store'])->name('projects.agents.store');
     Route::patch('projects/{project}/agents/{agent}', [AgentController::class, 'update'])->scopeBindings()->name('projects.agents.update');
