@@ -41,6 +41,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('projects/{project}/project-manager-messages', [ProjectController::class, 'storeProjectManagerMessage'])->name('projects.project-manager-messages.store');
     Route::post('projects/{project}/tasks/{task}/operator-messages', [ProjectController::class, 'storeOperatorMessage'])->scopeBindings()->name('projects.tasks.operator-messages.store');
     Route::post('projects/{project}/tasks/{task}/requeue', [ProjectController::class, 'requeueTask'])->scopeBindings()->name('projects.tasks.requeue');
+    Route::post('projects/{project}/tasks/{task}/skip', [ProjectController::class, 'skipTask'])->scopeBindings()->name('projects.tasks.skip');
     Route::post('projects/{project}/roadmaps', [ProjectController::class, 'storeRoadmap'])->name('projects.roadmaps.store');
     Route::post('projects/{project}/roadmaps/{roadmap}/requeue', [ProjectController::class, 'requeueRoadmap'])->scopeBindings()->name('projects.roadmaps.requeue');
 

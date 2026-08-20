@@ -10,9 +10,11 @@ use App\Actions\RecordTaskOperatorMessage;
 use App\Actions\RequeueBlockedRoadmap;
 use App\Actions\RequeueBlockedTask;
 use App\Actions\SetProjectStatus;
+use App\Actions\SkipBlockedTask;
 use App\Actions\StoreRoadmap;
 use App\AgentHarness;
 use App\AgentRole;
+use App\Http\Requests\SkipBlockedTaskRequest;
 use App\Http\Requests\StoreProjectManagerMessageRequest;
 use App\Http\Requests\StoreProjectRequest;
 use App\Http\Requests\StoreRoadmapRequest;
@@ -732,6 +734,28 @@ SQL;
         return to_route('projects.show', $project);
     }
 
+    public function skipTask(
+        SkipBlockedTaskRequest $request,
+        Project $project,
+        Task $task,
+        SkipBlockedTask $skipBlockedTask,
+    ): RedirectResponse {
+        abort_unless(
+            $task->project_id === $project->id,
+            404,
+        );
+
+        $skipBlockedTask->handle(
+            $task,
+            $request->validated('reason'),
+        );
+
+        return to_route(
+            'projects.tasks.show',
+            [$project, $task],
+        );
+    }
+
     public function showTask(
         Project $project,
         Task $task,
@@ -745,6 +769,7 @@ SQL;
         $task->load([
             'phase',
             'dependencies:id,key,title,status',
+            'dependents:id,key,title,status',
             'attempts' => fn ($query) => $query->latest('number'),
             'reviews' => fn ($query) => $query
                 ->latest()
@@ -793,6 +818,11 @@ SQL;
             },
         );
 
+        $latestEscalation = $task->auditEvents()
+            ->where('event_type', 'recovery.escalated')
+            ->latest('occurred_at')
+            ->first();
+
         return Inertia::render(
             'projects/tasks/show',
             [
@@ -802,6 +832,7 @@ SQL;
                     'path',
                 ]),
                 'task' => $task,
+                'recovery_escalation_reason' => $latestEscalation?->payload['escalation_reason'] ?? null,
             ],
         );
     }

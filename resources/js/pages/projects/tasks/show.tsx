@@ -2,6 +2,7 @@ import { Form, Head, Link, usePoll } from '@inertiajs/react';
 import {
     Activity,
     ArrowLeft,
+    Ban,
     Bot,
     Braces,
     CheckCircle2,
@@ -16,12 +17,14 @@ import {
     ShieldCheck,
     Sparkles,
     Terminal,
+    TriangleAlert,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
     show as showProject,
     showAgentRun,
+    skipTask,
     storeOperatorMessage,
 } from '@/actions/App/Http/Controllers/ProjectController';
 import { useAppHeaderSlot } from '@/components/app-header-slot';
@@ -53,6 +56,7 @@ type Task = {
     context_capsule: { completion_evidence?: string | null };
     phase: { id: number; title: string } | null;
     dependencies: { id: number; key: string; title: string; status: string }[];
+    dependents: { id: number; key: string; title: string; status: string }[];
     attempts: Attempt[];
     reviews: Review[];
     runs: Run[];
@@ -777,9 +781,11 @@ function AgentConsoleOutput({
 export default function TaskShow({
     project,
     task,
+    recovery_escalation_reason: recoveryEscalationReason,
 }: {
     project: Project;
     task: Task;
+    recovery_escalation_reason: string | null;
 }) {
     usePoll(2_000, { only: ['task'] }, { mode: 'rest' });
     const consoleRef = useRef<HTMLPreElement>(null);
@@ -1468,6 +1474,99 @@ export default function TaskShow({
                                     </Form>
                                 </CardContent>
                             </Card>
+
+                            {task.status === 'blocked' && (
+                                <Card className="border-destructive/25">
+                                    <CardHeader>
+                                        <CardTitle className="flex items-center gap-2 text-destructive-foreground">
+                                            <Ban className="size-4" />
+                                            Skip task
+                                        </CardTitle>
+                                        <CardDescription>
+                                            Cancels this task instead of
+                                            retrying it. Use this when the
+                                            acceptance criteria cannot be met
+                                            by an automated Coder run (e.g.
+                                            they require physical hardware or
+                                            access this environment doesn’t
+                                            have).
+                                        </CardDescription>
+                                    </CardHeader>
+                                    <CardContent className="grid gap-3">
+                                        {recoveryEscalationReason && (
+                                            <div className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/5 p-3 text-xs text-warning-foreground">
+                                                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+                                                <span>
+                                                    Recovery Engineer:{' '}
+                                                    {recoveryEscalationReason}
+                                                </span>
+                                            </div>
+                                        )}
+                                        {task.dependents.length > 0 && (
+                                            <div className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/5 p-3 text-xs text-warning-foreground">
+                                                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+                                                <span>
+                                                    {task.dependents.length}{' '}
+                                                    task
+                                                    {task.dependents.length ===
+                                                    1
+                                                        ? ''
+                                                        : 's'}{' '}
+                                                    depend on this one and
+                                                    will stay blocked once it
+                                                    is skipped:{' '}
+                                                    {task.dependents
+                                                        .map(
+                                                            (dependent) =>
+                                                                dependent.key,
+                                                        )
+                                                        .join(', ')}
+                                                </span>
+                                            </div>
+                                        )}
+                                        <Form
+                                            {...skipTask.form({
+                                                project: project.id,
+                                                task: task.id,
+                                            })}
+                                            className="grid gap-3"
+                                        >
+                                            {({ errors, processing }) => (
+                                                <>
+                                                    <div className="grid gap-2">
+                                                        <Label htmlFor="reason">
+                                                            Reason
+                                                        </Label>
+                                                        <textarea
+                                                            id="reason"
+                                                            name="reason"
+                                                            required
+                                                            maxLength={2000}
+                                                            rows={4}
+                                                            placeholder="Why can't this task be completed as specified?"
+                                                            className="rounded-md border border-input bg-surface-sunken px-3 py-2 text-sm text-foreground transition outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
+                                                        />
+                                                        <InputError
+                                                            message={
+                                                                errors.reason
+                                                            }
+                                                        />
+                                                    </div>
+                                                    <Button
+                                                        type="submit"
+                                                        variant="outline"
+                                                        disabled={processing}
+                                                        className="border-destructive/25 bg-destructive/10 text-destructive-foreground hover:bg-destructive/15"
+                                                    >
+                                                        <Ban className="size-4" />
+                                                        Skip task
+                                                    </Button>
+                                                </>
+                                            )}
+                                        </Form>
+                                    </CardContent>
+                                </Card>
+                            )}
 
                             <RunEvidenceGateway
                                 project={project}
