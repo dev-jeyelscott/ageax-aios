@@ -84,7 +84,7 @@ type CoderConfigurationScore = {
         token_usage?: number | null;
         execution_duration_seconds?: number | null;
     };
-    points: {
+    component_points: {
         quality?: {
             first_pass_reviewer_approval?: number;
             first_pass_deterministic_validation?: number;
@@ -434,7 +434,11 @@ function CohortHeader({
     );
 }
 
-function CoderConfigurationCard({ score }: { score: CoderConfigurationScore }) {
+function CoderConfigurationCard({
+    score,
+}: {
+    score: CoderConfigurationScore;
+}) {
     return (
         <article className="rounded-xl border border-border-subtle bg-card/70 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -463,22 +467,22 @@ function CoderConfigurationCard({ score }: { score: CoderConfigurationScore }) {
             <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 <Metric
                     label="Quality"
-                    value={number(score.points.quality?.total, 2)}
+                    value={number(score.component_points.quality?.total, 2)}
                     detail="55 points maximum"
                 />
                 <Metric
                     label="Reliability"
-                    value={number(score.points.reliability?.total, 2)}
+                    value={number(score.component_points.reliability?.total, 2)}
                     detail="25 points maximum"
                 />
                 <Metric
                     label="Token efficiency"
-                    value={number(score.points.cost_efficiency, 2)}
+                    value={number(score.component_points.cost_efficiency, 2)}
                     detail="15 points maximum"
                 />
                 <Metric
                     label="Speed"
-                    value={number(score.points.speed, 2)}
+                    value={number(score.component_points.speed, 2)}
                     detail="5 points maximum"
                 />
             </div>
@@ -652,7 +656,10 @@ export default function HarnessScorecardsIndex({
         });
     }
 
-    function updateFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
+    function updateFilter<K extends keyof Filters>(
+        key: K,
+        value: Filters[K],
+    ) {
         const nextFilters: Filters = {
             ...filters,
             [key]: value,

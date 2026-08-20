@@ -265,6 +265,13 @@ test('the system scorecard exposes eligible coder recommendations and reviewer d
             )
             ->where('coder_scorecard.configuration_count_total', 2)
             ->where(
+                'coder_scorecard.configuration_scores.0.component_points.quality.total',
+                55.0,
+            )
+            ->missing(
+                'coder_scorecard.configuration_scores.0.points',
+            )
+            ->where(
                 'reviewer_diagnostics.methodology_version',
                 ReviewerHarnessDiagnostics::MethodologyVersion,
             )
@@ -408,6 +415,11 @@ test('scorecard UI remains explicitly advisory token based and navigation only',
         ->toContain('Phase 3 cost measure')
         ->toContain('Diagnostic only')
         ->toContain('do not recalculate')
+        ->toContain('score.component_points.quality?.total')
+        ->toContain('score.component_points.reliability?.total')
+        ->toContain('score.component_points.cost_efficiency')
+        ->toContain('score.component_points.speed')
+        ->not->toContain('score.points.')
         ->not->toContain('price_usd')
         ->not->toContain('provider_pricing')
         ->and($routes)
