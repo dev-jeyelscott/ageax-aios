@@ -460,28 +460,28 @@ function executionConfiguration(
     worker: OfficeWorker,
     agent: OfficeAgent | undefined,
 ): ExecutionConfiguration | null {
-    const runConfiguration = worker.run?.configuration;
-
-    if (runConfiguration?.harness) {
+    if (agent) {
         return {
-            harness: runConfiguration.harness,
-            model: runConfiguration.model,
-            reasoningSetting: runConfiguration.reasoning_setting,
-            configurationVersion: runConfiguration.configuration_version,
-            source: runConfiguration.source,
+            harness: agent.harness,
+            model: agent.model,
+            reasoningSetting: agent.reasoning_setting,
+            configurationVersion: agent.configuration_version,
+            source: 'bound_agent',
         };
     }
 
-    if (!agent) {
+    const runConfiguration = worker.run?.configuration;
+
+    if (!runConfiguration?.harness) {
         return null;
     }
 
     return {
-        harness: agent.harness,
-        model: agent.model,
-        reasoningSetting: agent.reasoning_setting,
-        configurationVersion: agent.configuration_version,
-        source: 'bound_agent',
+        harness: runConfiguration.harness,
+        model: runConfiguration.model,
+        reasoningSetting: runConfiguration.reasoning_setting,
+        configurationVersion: runConfiguration.configuration_version,
+        source: runConfiguration.source,
     };
 }
 

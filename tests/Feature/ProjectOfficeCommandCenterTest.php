@@ -136,6 +136,8 @@ test('the project office command center matches the workflow first sixty forty o
         ->toContain('Harness / Model')
         ->toContain('worker.run?.configuration')
         ->toContain("source: 'bound_agent'")
+        ->toContain('if (agent) {')
+        ->toContain('const runConfiguration = worker.run?.configuration;')
         ->toContain("? 'Recent Task'")
         ->toContain('Roadmap Actions')
         ->toContain('requeueRoadmap.form({')
