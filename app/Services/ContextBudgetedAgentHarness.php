@@ -29,7 +29,7 @@ final readonly class ContextBudgetedAgentHarness
     ) {}
 
     /**
-     * @param Closure(string, ?Closure, ?Closure): NormalizedExecutionResult $provider
+     * @param  Closure(string, ?Closure, ?Closure): NormalizedExecutionResult  $provider
      */
     public function execute(
         AgentHarness $harness,
@@ -128,29 +128,20 @@ final readonly class ContextBudgetedAgentHarness
 
         $evidence = [
             ...$decision->evidence,
-            'recovery_snapshot_reused' =>
-                $recoverySource !== null,
-            'recovery_snapshot_source_run_id' =>
-                $recoverySource?->id,
+            'recovery_snapshot_reused' => $recoverySource !== null,
+            'recovery_snapshot_source_run_id' => $recoverySource?->id,
         ];
 
         $finalContext = $decision->context;
 
         $run->update([
-            'prompt_hash' =>
-                $evidence['final_prompt_hash'],
-            'configuration_snapshot' =>
-                $finalContext?->configurationSnapshot(),
-            'context_schema_version' =>
-                $finalContext?->contextSchemaVersion,
-            'context_cost_estimate' =>
-                $finalContext?->contextCostEstimate,
-            'context_cost_schema_version' =>
-                $finalContext?->contextCostSchemaVersion,
-            'context_budget_snapshot' =>
-                $evidence,
-            'context_budget_schema_version' =>
-                ContextBudgetPolicy::SchemaVersion,
+            'prompt_hash' => $evidence['final_prompt_hash'],
+            'configuration_snapshot' => $finalContext?->configurationSnapshot(),
+            'context_schema_version' => $finalContext?->contextSchemaVersion,
+            'context_cost_estimate' => $finalContext?->contextCostEstimate,
+            'context_cost_schema_version' => $finalContext?->contextCostSchemaVersion,
+            'context_budget_snapshot' => $evidence,
+            'context_budget_schema_version' => ContextBudgetPolicy::SchemaVersion,
         ]);
 
         $this->recordEvidence(
@@ -311,8 +302,18 @@ final readonly class ContextBudgetedAgentHarness
             )
             ->first();
 
-        $validationResults =
-            $attempt?->validation_results;
+        $rawValidationResults = $attempt?->getRawOriginal(
+            'validation_results',
+        );
+
+        if ($rawValidationResults === null) {
+            return null;
+        }
+
+        $validationResults = json_decode(
+            $rawValidationResults,
+            true,
+        );
 
         if (! is_array($validationResults)) {
             return null;
@@ -360,9 +361,13 @@ final readonly class ContextBudgetedAgentHarness
     }
 
     /**
-     * Read an Eloquent JSON-cast attribute from its serialized model
-     * representation so static analysis receives the same casted value
-     * that application code receives at runtime.
+     * Decode an AgentRun JSON column directly from its persisted database
+     * representation.
+     *
+     * Larastan correctly sees the underlying database value as string|null,
+     * while Eloquent normally converts it to an array through the model cast.
+     * Decoding the durable raw value explicitly keeps the runtime behavior and
+     * static type boundary deterministic.
      *
      * @return array<string, mixed>|null
      */
@@ -370,27 +375,36 @@ final readonly class ContextBudgetedAgentHarness
         AgentRun $run,
         string $attribute,
     ): ?array {
-        $attributes = $run->toArray();
-        $value = $attributes[$attribute] ?? null;
+        $raw = $run->getRawOriginal(
+            $attribute,
+        );
 
-        if ($value === null) {
+        if ($raw === null) {
             return null;
         }
 
-        if (! is_array($value)) {
+        $decoded = json_decode(
+            (string) $raw,
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        if (! is_array($decoded)) {
             throw new LogicException(
                 sprintf(
-                    'AgentRun %s must resolve to an array.',
+                    'AgentRun %s must contain a JSON object or array.',
                     $attribute,
                 ),
             );
         }
 
-        return $value;
+        /** @var array<string, mixed> $decoded */
+        return $decoded;
     }
 
     /**
-     * @param array<string, mixed> $snapshot
+     * @param  array<string, mixed>  $snapshot
      * @return array{
      *     harness: string,
      *     model: string|null,
@@ -504,21 +518,16 @@ final readonly class ContextBudgetedAgentHarness
         return [
             'harness' => $harness,
             'model' => $model,
-            'resolved_capacity_tokens' =>
-                $resolvedCapacity,
-            'max_output_tokens' =>
-                $maxOutputTokens,
-            'capacity_source' =>
-                $capacitySource,
-            'capacity_source_version' =>
-                $capacitySourceVersion,
-            'fallback' =>
-                $fallback,
+            'resolved_capacity_tokens' => $resolvedCapacity,
+            'max_output_tokens' => $maxOutputTokens,
+            'capacity_source' => $capacitySource,
+            'capacity_source_version' => $capacitySourceVersion,
+            'fallback' => $fallback,
         ];
     }
 
     /**
-     * @param array<string, mixed> $evidence
+     * @param  array<string, mixed>  $evidence
      */
     private function recordEvidence(
         AgentRun $run,
@@ -526,37 +535,29 @@ final readonly class ContextBudgetedAgentHarness
     ): void {
         $base = [
             'agent_run_id' => $run->id,
-            'role' =>
-                (string) $run->getRawOriginal(
-                    'role',
-                ),
+            'role' => (string) $run->getRawOriginal(
+                'role',
+            ),
             'harness' => $run->harness,
-            'policy_version' =>
-                $evidence[
+            'policy_version' => $evidence[
                     'policy_version'
                 ] ?? null,
-            'resolved_capacity_tokens' =>
-                $evidence[
+            'resolved_capacity_tokens' => $evidence[
                     'resolved_capacity_tokens'
                 ] ?? null,
-            'original_estimated_tokens' =>
-                $evidence[
+            'original_estimated_tokens' => $evidence[
                     'original_estimated_tokens'
                 ] ?? null,
-            'final_estimated_tokens' =>
-                $evidence[
+            'final_estimated_tokens' => $evidence[
                     'final_estimated_tokens'
                 ] ?? null,
-            'utilization_before' =>
-                $evidence[
+            'utilization_before' => $evidence[
                     'utilization_before'
                 ] ?? null,
-            'utilization_after' =>
-                $evidence[
+            'utilization_after' => $evidence[
                     'utilization_after'
                 ] ?? null,
-            'final_context_hash' =>
-                $evidence[
+            'final_context_hash' => $evidence[
                     'final_context_hash'
                 ] ?? null,
         ];
@@ -565,8 +566,7 @@ final readonly class ContextBudgetedAgentHarness
             'context_budget.evaluated',
             [
                 ...$base,
-                'decision' =>
-                    $evidence[
+                'decision' => $evidence[
                         'decision'
                     ] ?? null,
             ],
@@ -582,8 +582,7 @@ final readonly class ContextBudgetedAgentHarness
                 'context_budget.warning',
                 [
                     ...$base,
-                    'reason' =>
-                        $evidence[
+                    'reason' => $evidence[
                             'warning_reason'
                         ],
                 ],
@@ -600,8 +599,7 @@ final readonly class ContextBudgetedAgentHarness
                 'context_budget.reduced',
                 [
                     ...$base,
-                    'reductions' =>
-                        $evidence[
+                    'reductions' => $evidence[
                             'reductions'
                         ],
                 ],
@@ -618,8 +616,7 @@ final readonly class ContextBudgetedAgentHarness
                 'context_budget.blocked',
                 [
                     ...$base,
-                    'reason' =>
-                        $evidence[
+                    'reason' => $evidence[
                             'block_reason'
                         ],
                 ],
@@ -652,10 +649,8 @@ final readonly class ContextBudgetedAgentHarness
             output: '',
             errorOutput: $message,
             providerMetadata: [
-                'provider' =>
-                    $identifier->value,
-                'failure_type' =>
-                    $failureType,
+                'provider' => $identifier->value,
+                'failure_type' => $failureType,
             ],
         );
     }
