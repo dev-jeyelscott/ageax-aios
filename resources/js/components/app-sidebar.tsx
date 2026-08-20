@@ -2,12 +2,14 @@ import { Link, usePage } from '@inertiajs/react';
 import {
     Bot,
     FolderKanban,
+    Gauge,
     LayoutGrid,
     Lightbulb,
     ShieldAlert,
     Ticket,
 } from 'lucide-react';
 import { index as agentsIndex } from '@/actions/App/Http/Controllers/GlobalAgentController';
+import { index as harnessScorecardsIndex } from '@/actions/App/Http/Controllers/HarnessScorecardController';
 import { index as knowledgeImprovementsIndex } from '@/actions/App/Http/Controllers/KnowledgeImprovementController';
 import { index as projectsIndex } from '@/actions/App/Http/Controllers/ProjectController';
 import { index as ticketsIndex } from '@/actions/App/Http/Controllers/TicketController';
@@ -42,6 +44,11 @@ const baseNavItems: NavItem[] = [
         title: 'Ticket Operations',
         href: ticketOperationsIndex(),
         icon: ShieldAlert,
+    },
+    {
+        title: 'Harness Scorecards',
+        href: harnessScorecardsIndex(),
+        icon: Gauge,
     },
     {
         title: 'Agents',

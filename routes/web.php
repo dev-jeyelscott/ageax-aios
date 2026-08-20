@@ -3,6 +3,7 @@
 use App\Http\Controllers\AgentController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GlobalAgentController;
+use App\Http\Controllers\HarnessScorecardController;
 use App\Http\Controllers\KnowledgeImprovementController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\SkillController;
@@ -25,6 +26,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::get('ticket-operations', [TicketOperationsController::class, 'index'])->name('ticket-operations.index');
     Route::get('ticket-operations/{ticket}', [TicketOperationsController::class, 'show'])->name('ticket-operations.show');
+
+    Route::get('harness-scorecards', [HarnessScorecardController::class, 'index'])->name('harness-scorecards.index');
 
     Route::patch('projects/{project}/status', [ProjectController::class, 'updateStatus'])->name('projects.status.update');
     Route::get('projects/{project}/tasks/{task}', [ProjectController::class, 'showTask'])->scopeBindings()->name('projects.tasks.show');
