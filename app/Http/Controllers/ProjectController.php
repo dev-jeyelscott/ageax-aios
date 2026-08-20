@@ -359,7 +359,14 @@ SQL;
      *         started_at: ?string,
      *         finished_at: ?string,
      *         failure_reason: ?string,
-     *         latest_message: ?string
+     *         latest_message: ?string,
+     *         configuration: ?array{
+     *             harness: ?string,
+     *             model: ?string,
+     *             reasoning_setting: ?string,
+     *             configuration_version: ?int,
+     *             source: 'snapshot'|'run'
+     *         }
      *     },
      *     task: ?array{
      *         id: int,
@@ -391,8 +398,11 @@ SQL;
                         'task_id',
                         'agent_worker_id',
                         'role',
+                        'harness',
                         'status',
                         'attempt_number',
+                        'configuration_snapshot',
+                        'context_schema_version',
                         'live_output',
                         'log_path',
                         'started_at',
@@ -477,6 +487,7 @@ SQL;
                         'latest_message' => $latestAgentMessage === null
                             ? null
                             : Str::limit($latestAgentMessage, 240),
+                        'configuration' => $this->officeRunConfiguration($run),
                     ],
                 'task' => $task === null
                     ? null
@@ -495,6 +506,66 @@ SQL;
     }
 
     /**
+     * Expose only the safe immutable execution identity needed by the command center.
+     * Full default context and Skill content remain on the AgentRun detail evidence.
+     *
+     * @return array{
+     *     harness: ?string,
+     *     model: ?string,
+     *     reasoning_setting: ?string,
+     *     configuration_version: ?int,
+     *     source: 'snapshot'|'run'
+     * }|null
+     */
+    private function officeRunConfiguration(AgentRun $run): ?array
+    {
+        $snapshot = $run->configuration_snapshot;
+        $agent = is_array($snapshot)
+            ? ($snapshot['agent'] ?? null)
+            : null;
+
+        if (is_array($agent)) {
+            $snapshotHarness = $agent['harness'] ?? null;
+            $model = $agent['model'] ?? null;
+            $reasoningSetting = $agent['reasoning_setting'] ?? null;
+            $configurationVersion = $agent['configuration_version'] ?? null;
+            $runHarness = $run->getRawOriginal('harness');
+
+            return [
+                'harness' => is_string($snapshotHarness) && $snapshotHarness !== ''
+                    ? $snapshotHarness
+                    : (is_string($runHarness) && $runHarness !== ''
+                        ? $runHarness
+                        : null),
+                'model' => is_string($model) && $model !== ''
+                    ? $model
+                    : null,
+                'reasoning_setting' => is_string($reasoningSetting) && $reasoningSetting !== ''
+                    ? $reasoningSetting
+                    : null,
+                'configuration_version' => is_int($configurationVersion)
+                    ? $configurationVersion
+                    : null,
+                'source' => 'snapshot',
+            ];
+        }
+
+        $runHarness = $run->getRawOriginal('harness');
+
+        if (! is_string($runHarness) || $runHarness === '') {
+            return null;
+        }
+
+        return [
+            'harness' => $runHarness,
+            'model' => null,
+            'reasoning_setting' => null,
+            'configuration_version' => null,
+            'source' => 'run',
+        ];
+    }
+
+    /**
      * @param array<int, array{
      *     id: int,
      *     role: string,
@@ -509,7 +580,14 @@ SQL;
      *         started_at: ?string,
      *         finished_at: ?string,
      *         failure_reason: ?string,
-     *         latest_message: ?string
+     *         latest_message: ?string,
+     *         configuration: ?array{
+     *             harness: ?string,
+     *             model: ?string,
+     *             reasoning_setting: ?string,
+     *             configuration_version: ?int,
+     *             source: 'snapshot'|'run'
+     *         }
      *     },
      *     task: ?array{
      *         id: int,

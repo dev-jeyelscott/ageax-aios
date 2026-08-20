@@ -4,6 +4,7 @@ import {
     AlertTriangle,
     CheckCircle2,
     CircleDot,
+    Clock,
     Cpu,
     FileUp,
     GitBranch,
@@ -24,6 +25,14 @@ import { Button } from '@/components/ui/button';
 import { store as storeRoadmap } from '@/routes/projects/roadmaps';
 import './agent-office.css';
 
+type RunConfiguration = {
+    harness: string | null;
+    model: string | null;
+    reasoning_setting: string | null;
+    configuration_version: number | null;
+    source: 'snapshot' | 'run';
+};
+
 export type OfficeWorker = {
     id: number;
     role: string;
@@ -39,6 +48,7 @@ export type OfficeWorker = {
         finished_at: string | null;
         failure_reason: string | null;
         latest_message: string | null;
+        configuration: RunConfiguration | null;
     } | null;
     task: {
         id: number;
@@ -111,14 +121,6 @@ type HarnessUsage = {
     token_usage: number;
 };
 
-type TokenObservability = {
-    rolling_average: number | null;
-    baseline_average: number | null;
-    change_percentage: number | null;
-    run_count: number;
-    warning_threshold: number;
-};
-
 type OverviewProject = {
     id: number;
     status: string;
@@ -128,7 +130,6 @@ type OverviewProject = {
     tasks: OfficeTask[];
     git_evidence: GitEvidence | null;
     token_usage_total: number;
-    token_observability: Record<string, TokenObservability>;
     harness_usage: Record<string, HarnessUsage>;
     recent_agent_runs: {
         id: number;
@@ -150,7 +151,14 @@ type ValidationPresentation = {
     label: string;
     dotClass: string;
     badgeClass: string;
-    summary: string;
+};
+
+type ExecutionConfiguration = {
+    harness: string;
+    model: string | null;
+    reasoningSetting: string | null;
+    configurationVersion: number | null;
+    source: 'snapshot' | 'run' | 'bound_agent';
 };
 
 const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'] as const;
@@ -174,7 +182,6 @@ const implementationStatuses = new Set([
 ]);
 
 const reviewStatuses = new Set(['ready_for_review', 'reviewing']);
-
 const attentionStatuses = new Set(['blocked', 'interrupted', 'failed']);
 
 function labelForRole(role: string): string {
@@ -211,18 +218,18 @@ function formatTokens(tokens: number): string {
 }
 
 function shortSha(value: string | null): string {
-    return value ? value.slice(0, 10) : 'Not recorded';
+    return value ? value.slice(0, 10) : '—';
 }
 
 function formatEvidenceTime(value: string | null): string {
     if (!value) {
-        return 'No timestamp';
+        return 'Not recorded';
     }
 
     const parsed = new Date(value);
 
     if (Number.isNaN(parsed.getTime())) {
-        return 'No timestamp';
+        return 'Not recorded';
     }
 
     return parsed.toLocaleString();
@@ -233,37 +240,32 @@ function formatRunDuration(
     finishedAt: string | null,
 ): string {
     if (!startedAt) {
-        return 'Not recorded';
-    }
-
-    if (!finishedAt) {
-        return 'In progress';
+        return '—';
     }
 
     const started = new Date(startedAt).getTime();
-    const finished = new Date(finishedAt).getTime();
+    const finished = finishedAt ? new Date(finishedAt).getTime() : Date.now();
 
     if (!Number.isFinite(started) || !Number.isFinite(finished)) {
-        return 'Not recorded';
+        return '—';
     }
 
     const totalSeconds = Math.max(0, Math.round((finished - started) / 1_000));
-
-    if (totalSeconds < 60) {
-        return `${totalSeconds}s`;
-    }
-
-    const totalMinutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
+    const totalMinutes = Math.floor(totalSeconds / 60);
 
     if (totalMinutes < 60) {
-        return `${totalMinutes}m ${seconds.toString().padStart(2, '0')}s`;
+        return `${totalMinutes.toString().padStart(2, '0')}:${seconds
+            .toString()
+            .padStart(2, '0')}`;
     }
 
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
 
-    return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
+    return `${hours.toString().padStart(2, '0')}:${minutes
+        .toString()
+        .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
 function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
@@ -445,23 +447,45 @@ function fallbackTaskForRole(
     return null;
 }
 
+function executionConfiguration(
+    worker: OfficeWorker,
+    agent: OfficeAgent | undefined,
+): ExecutionConfiguration | null {
+    const runConfiguration = worker.run?.configuration;
+
+    if (runConfiguration?.harness) {
+        return {
+            harness: runConfiguration.harness,
+            model: runConfiguration.model,
+            reasoningSetting: runConfiguration.reasoning_setting,
+            configurationVersion: runConfiguration.configuration_version,
+            source: runConfiguration.source,
+        };
+    }
+
+    if (!agent) {
+        return null;
+    }
+
+    return {
+        harness: agent.harness,
+        model: agent.model,
+        reasoningSetting: agent.reasoning_setting,
+        configurationVersion: agent.configuration_version,
+        source: 'bound_agent',
+    };
+}
+
 function validationPresentation(
     evidence: GitEvidence | null,
     workflow: OfficeWorkflow | null,
 ): ValidationPresentation {
     if (evidence?.validation_results?.passed === true) {
-        const checks = Object.values(evidence.validation_results.checks ?? {});
-        const passed = checks.filter(Boolean).length;
-
         return {
             label: 'Passed',
             dotClass: 'bg-success',
             badgeClass:
                 'border-success/25 bg-success/8 text-success-foreground',
-            summary:
-                checks.length > 0
-                    ? `${passed}/${checks.length} recorded checks passed`
-                    : 'Deterministic validation passed',
         };
     }
 
@@ -471,7 +495,6 @@ function validationPresentation(
             dotClass: 'bg-destructive',
             badgeClass:
                 'border-destructive/25 bg-destructive/8 text-destructive-foreground',
-            summary: 'Deterministic validation recorded a failure',
         };
     }
 
@@ -483,7 +506,6 @@ function validationPresentation(
             label: 'Running',
             dotClass: 'bg-primary',
             badgeClass: 'border-primary/25 bg-primary/8 text-primary',
-            summary: 'AIOS deterministic validation is in progress',
         };
     }
 
@@ -497,7 +519,6 @@ function validationPresentation(
             dotClass: 'bg-warning',
             badgeClass:
                 'border-warning/25 bg-warning/8 text-warning-foreground',
-            summary: 'Validation has not completed for the active attempt',
         };
     }
 
@@ -505,8 +526,28 @@ function validationPresentation(
         label: 'Not recorded',
         dotClass: 'bg-muted-foreground',
         badgeClass: 'border-border bg-background/55 text-muted-foreground',
-        summary: 'No deterministic validation evidence recorded',
     };
+}
+
+function validationCheck(
+    checks: Record<string, boolean> | undefined,
+    aliases: string[],
+): string {
+    if (!checks) {
+        return '—';
+    }
+
+    const entry = Object.entries(checks).find(([name]) => {
+        const normalized = name.toLowerCase();
+
+        return aliases.some((alias) => normalized.includes(alias));
+    });
+
+    if (!entry) {
+        return '—';
+    }
+
+    return entry[1] ? 'Passed' : 'Failed';
 }
 
 function nextStageFor(
@@ -559,6 +600,23 @@ function nextStageFor(
                 detail: 'Next eligible workflow stage',
                 trigger: 'AIOS-controlled deterministic ordering',
             };
+    }
+}
+
+function lastHandoffFor(workflow: OfficeWorkflow | null): string {
+    if (workflow?.mode !== 'current') {
+        return 'No active handoff';
+    }
+
+    switch (workflow.role) {
+        case 'coder':
+            return 'PM → Coder';
+        case 'reviewer':
+            return 'Coder → Reviewer';
+        case 'project_manager':
+            return 'No handoff yet';
+        default:
+            return 'AIOS-controlled';
     }
 }
 
@@ -619,10 +677,15 @@ function AgentNode({
     const thumbnail = roleThumbnails[worker.role] ?? null;
     const message = workerMessage(worker, active);
     const displayedTask = worker.task ?? fallbackTask;
+    const configuration = executionConfiguration(worker, agent);
     const timestamp =
         worker.run?.finished_at ??
         worker.run?.started_at ??
         worker.last_heartbeat_at;
+    const duration = formatRunDuration(
+        worker.run?.started_at ?? null,
+        worker.run?.finished_at ?? null,
+    );
 
     return (
         <article
@@ -692,7 +755,7 @@ function AgentNode({
                 >
                     <span aria-hidden="true" className="execution-chat-tail" />
 
-                    <p className="relative line-clamp-3 text-xs leading-relaxed text-foreground">
+                    <p className="relative line-clamp-4 text-xs leading-relaxed text-foreground">
                         {message}
                     </p>
 
@@ -714,11 +777,16 @@ function AgentNode({
                             <p className="execution-meta-label">
                                 Harness / Model
                             </p>
-                            <p className="mt-0.5 truncate text-xs font-medium text-foreground">
-                                {agent
-                                    ? `${labelForHarness(agent.harness)} · ${
-                                          agent.model ?? 'default model'
-                                      }`
+                            <p
+                                className="mt-0.5 truncate text-xs font-medium text-foreground"
+                                title={
+                                    configuration
+                                        ? `${labelForHarness(configuration.harness)} · ${configuration.model ?? 'default model'}`
+                                        : undefined
+                                }
+                            >
+                                {configuration
+                                    ? `${labelForHarness(configuration.harness)} · ${configuration.model ?? 'default model'}`
                                     : 'Not recorded'}
                             </p>
                         </div>
@@ -776,26 +844,35 @@ function AgentNode({
                 </div>
             </div>
 
-            <div className="mt-auto flex items-center justify-between gap-2 border-t border-border-subtle pt-2.5">
-                <span className="font-mono text-2xs text-muted-foreground">
-                    Run ID
-                </span>
-
-                {worker.run ? (
-                    <Link
-                        href={
-                            showAgentRun({
-                                project: projectId,
-                                run: worker.run.id,
-                            }).url
-                        }
-                        className="font-mono text-xs text-primary transition hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-                    >
-                        #{worker.run.id}
-                    </Link>
-                ) : (
+            <div className="mt-auto flex items-center justify-between gap-3 border-t border-border-subtle pt-2.5">
+                <div className="flex items-center gap-2">
                     <span className="font-mono text-2xs text-muted-foreground">
-                        Not recorded
+                        Run ID
+                    </span>
+
+                    {worker.run ? (
+                        <Link
+                            href={
+                                showAgentRun({
+                                    project: projectId,
+                                    run: worker.run.id,
+                                }).url
+                            }
+                            className="font-mono text-xs text-primary transition hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                        >
+                            #{worker.run.id}
+                        </Link>
+                    ) : (
+                        <span className="font-mono text-2xs text-muted-foreground">
+                            —
+                        </span>
+                    )}
+                </div>
+
+                {worker.run && (
+                    <span className="flex items-center gap-1 font-mono text-2xs text-muted-foreground">
+                        <Clock className="size-3" aria-hidden="true" />
+                        {duration}
                     </span>
                 )}
             </div>
@@ -824,6 +901,209 @@ function WorkflowConnector({
                 <span className="workflow-connector__arrow" />
             </div>
         </div>
+    );
+}
+
+function RoadmapActionsBar({
+    projectId,
+    roadmap,
+}: {
+    projectId: number;
+    roadmap: OfficeRoadmap | null;
+}) {
+    return (
+        <div className="execution-roadmap-actions">
+            <div>
+                <p className="execution-ops-heading">Roadmap Actions</p>
+                <p className="mt-0.5 text-2xs text-muted-foreground">
+                    Existing AIOS operator controls
+                </p>
+            </div>
+
+            <div className="execution-roadmap-actions__controls">
+                {roadmap?.status === 'blocked' && (
+                    <Form
+                        {...requeueRoadmap.form({
+                            project: projectId,
+                            roadmap: roadmap.id,
+                        })}
+                    >
+                        {({ processing }) => (
+                            <Button
+                                size="sm"
+                                type="submit"
+                                variant="outline"
+                                disabled={processing}
+                                className="h-8 border-destructive/25 bg-destructive/8 px-3 text-xs text-destructive-foreground hover:bg-destructive/15"
+                            >
+                                <RotateCcw className="size-3.5" />
+                                {processing ? 'Retrying…' : 'Retry roadmap'}
+                            </Button>
+                        )}
+                    </Form>
+                )}
+
+                <Form
+                    {...storeRoadmap.form(projectId)}
+                    encType="multipart/form-data"
+                >
+                    {({ errors, processing }) => (
+                        <div>
+                            <label className="flex h-8 cursor-pointer items-center justify-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 text-xs font-medium text-primary transition focus-within:ring-2 focus-within:ring-primary hover:border-primary/35 hover:bg-primary/10">
+                                <input
+                                    name="roadmap"
+                                    type="file"
+                                    accept=".md,.txt,text/markdown,text/plain"
+                                    required
+                                    disabled={processing}
+                                    className="sr-only"
+                                    onChange={(event) => {
+                                        if (event.currentTarget.files?.length) {
+                                            event.currentTarget.form?.requestSubmit();
+                                        }
+                                    }}
+                                />
+                                <FileUp className="size-3.5" />
+                                {processing
+                                    ? 'Uploading…'
+                                    : roadmap
+                                      ? 'Upload new roadmap'
+                                      : 'Upload roadmap'}
+                            </label>
+                            <InputError message={errors.roadmap} />
+                        </div>
+                    )}
+                </Form>
+            </div>
+        </div>
+    );
+}
+
+function ExecutionContextPanel({
+    tasks,
+    workflow,
+    workers,
+    completed,
+    total,
+}: {
+    tasks: OfficeTask[];
+    workflow: OfficeWorkflow | null;
+    workers: OfficeWorker[];
+    completed: number;
+    total: number;
+}) {
+    const currentWorkflow = workflow?.mode === 'current' ? workflow : null;
+    const activeWorker = currentWorkflow
+        ? workers.find((worker) => worker.id === currentWorkflow.worker_id)
+        : undefined;
+    const currentTask =
+        currentWorkflow?.task ??
+        tasks.find((task) => !['done', 'cancelled'].includes(task.status)) ??
+        null;
+    const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
+
+    return (
+        <section
+            className="execution-context-panel"
+            aria-label="Execution context"
+        >
+            <div className="execution-ops-heading">
+                <Activity className="size-3.5 text-primary" />
+                <span>Execution Context</span>
+            </div>
+
+            <div className="execution-context-grid">
+                <div className="execution-context-item">
+                    <p className="execution-meta-label">Current Task</p>
+                    {currentTask ? (
+                        <p className="mt-1 truncate text-xs font-medium text-foreground">
+                            <span className="font-mono text-primary">
+                                {currentTask.key}
+                            </span>{' '}
+                            · {currentTask.title}
+                        </p>
+                    ) : (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            No current task recorded
+                        </p>
+                    )}
+                </div>
+
+                <div className="execution-context-item">
+                    <p className="execution-meta-label">Task Progress</p>
+                    <div className="mt-1 flex items-center gap-2">
+                        <span className="font-mono text-xs text-foreground">
+                            {completed} / {total}
+                        </span>
+                        <div className="h-1.5 min-w-12 flex-1 overflow-hidden rounded-full bg-muted">
+                            <div
+                                className="progress-flow h-full rounded-full"
+                                style={{ width: `${progress}%` }}
+                            />
+                        </div>
+                        <span className="font-mono text-2xs text-muted-foreground">
+                            {progress}%
+                        </span>
+                    </div>
+                </div>
+
+                <div className="execution-context-item">
+                    <p className="execution-meta-label">Active Run</p>
+                    {activeWorker?.run ? (
+                        <div className="mt-1 flex items-center gap-2">
+                            <span className="font-mono text-xs text-primary">
+                                #{activeWorker.run.id}
+                            </span>
+                            <Badge
+                                variant="outline"
+                                className="border-primary/20 bg-primary/5 px-1.5 py-0 font-mono text-[9px] text-primary"
+                            >
+                                In progress
+                            </Badge>
+                            <span className="ml-auto font-mono text-2xs text-muted-foreground">
+                                {formatRunDuration(
+                                    activeWorker.run.started_at,
+                                    activeWorker.run.finished_at,
+                                )}
+                            </span>
+                        </div>
+                    ) : (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            No active run
+                        </p>
+                    )}
+                </div>
+
+                <div className="execution-context-item">
+                    <p className="execution-meta-label">Last Handoff</p>
+                    <p className="mt-1 text-xs font-medium text-foreground">
+                        {lastHandoffFor(currentWorkflow)}
+                    </p>
+                </div>
+            </div>
+
+            <div className="execution-context-policy-grid">
+                <div>
+                    <p className="execution-meta-label">Workflow Scope</p>
+                    <p className="mt-1 text-2xs text-muted-foreground">
+                        PM planning/triage · Coder implementation · Reviewer
+                        review
+                    </p>
+                </div>
+                <div>
+                    <p className="execution-meta-label">Deterministic Mode</p>
+                    <p className="mt-1 text-2xs font-medium text-success-foreground">
+                        Enabled
+                    </p>
+                </div>
+                <div>
+                    <p className="execution-meta-label">Handoff Policy</p>
+                    <p className="mt-1 text-2xs text-muted-foreground">
+                        Verifiable · Deterministic · Auditable
+                    </p>
+                </div>
+            </div>
+        </section>
     );
 }
 
@@ -863,7 +1143,7 @@ function RoadmapProgressCard({
                 )}
             </div>
 
-            <div className="mt-3 flex items-end justify-between gap-3">
+            <div className="mt-2.5 flex items-end justify-between gap-3">
                 <div>
                     <p className="text-3xl font-semibold tracking-tight text-primary">
                         {progress}%
@@ -873,120 +1153,53 @@ function RoadmapProgressCard({
                     </p>
                 </div>
 
-                {roadmap && (
-                    <p
-                        title={roadmap.original_filename}
-                        className="max-w-[45%] truncate text-right font-mono text-2xs text-muted-foreground"
-                    >
-                        {roadmap.original_filename}
+                <div className="text-right">
+                    <p className="font-mono text-xs text-foreground">
+                        {completed} / {total} Tasks
                     </p>
-                )}
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                        {nextTask
+                            ? 'In progress'
+                            : total > 0
+                              ? 'Complete'
+                              : 'No tasks'}
+                    </p>
+                </div>
             </div>
 
-            <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
                 <div
                     className="progress-flow h-full rounded-full"
                     style={{ width: `${progress}%` }}
                 />
             </div>
 
-            <div className="mt-3 min-w-0 rounded-lg border border-border-subtle bg-background/30 p-2.5">
-                <p className="execution-meta-label">Next unfinished task</p>
-
-                {nextTask ? (
-                    <div className="mt-1 flex min-w-0 items-center justify-between gap-3">
-                        <p className="min-w-0 truncate text-xs font-medium text-foreground">
-                            <span className="font-mono text-primary">
-                                {nextTask.key}
-                            </span>{' '}
-                            · {nextTask.title}
-                        </p>
-
-                        <Link
-                            href={
-                                showTask({
-                                    project: projectId,
-                                    task: nextTask.id,
-                                }).url
-                            }
-                            className="shrink-0 text-2xs font-medium text-primary transition hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-                        >
-                            View task
-                        </Link>
-                    </div>
-                ) : (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {total === 0
-                            ? 'No roadmap tasks recorded.'
-                            : 'Roadmap execution complete.'}
+            <div className="mt-2.5 flex min-w-0 items-center justify-between gap-3 border-t border-border-subtle pt-2.5">
+                <div className="min-w-0">
+                    <p className="execution-meta-label">
+                        {roadmap ? 'Current roadmap' : 'Roadmap'}
                     </p>
-                )}
-            </div>
-
-            <div className="mt-3 border-t border-border-subtle pt-2.5">
-                <p className="execution-meta-label">Roadmap actions</p>
-
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {roadmap?.status === 'blocked' && (
-                        <Form
-                            {...requeueRoadmap.form({
-                                project: projectId,
-                                roadmap: roadmap.id,
-                            })}
-                        >
-                            {({ processing }) => (
-                                <Button
-                                    size="sm"
-                                    type="submit"
-                                    variant="outline"
-                                    disabled={processing}
-                                    className="h-8 w-full border-destructive/25 bg-destructive/8 text-xs text-destructive-foreground hover:bg-destructive/15"
-                                >
-                                    <RotateCcw className="size-3.5" />
-                                    {processing ? 'Retrying…' : 'Retry roadmap'}
-                                </Button>
-                            )}
-                        </Form>
-                    )}
-
-                    <Form
-                        {...storeRoadmap.form(projectId)}
-                        encType="multipart/form-data"
-                        className={
-                            roadmap?.status === 'blocked' ? '' : 'sm:col-span-2'
-                        }
+                    <p
+                        className="mt-1 truncate text-xs text-muted-foreground"
+                        title={roadmap?.original_filename}
                     >
-                        {({ errors, processing }) => (
-                            <div>
-                                <label className="flex h-8 cursor-pointer items-center justify-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 text-xs font-medium text-primary transition hover:border-primary/35 hover:bg-primary/10">
-                                    <input
-                                        name="roadmap"
-                                        type="file"
-                                        accept=".md,.txt,text/markdown,text/plain"
-                                        required
-                                        disabled={processing}
-                                        className="sr-only"
-                                        onChange={(event) => {
-                                            if (
-                                                event.currentTarget.files
-                                                    ?.length
-                                            ) {
-                                                event.currentTarget.form?.requestSubmit();
-                                            }
-                                        }}
-                                    />
-                                    <FileUp className="size-3.5" />
-                                    {processing
-                                        ? 'Uploading…'
-                                        : roadmap
-                                          ? 'Upload new roadmap'
-                                          : 'Upload roadmap'}
-                                </label>
-                                <InputError message={errors.roadmap} />
-                            </div>
-                        )}
-                    </Form>
+                        {roadmap?.original_filename ?? 'No roadmap recorded'}
+                    </p>
                 </div>
+
+                {nextTask && (
+                    <Link
+                        href={
+                            showTask({
+                                project: projectId,
+                                task: nextTask.id,
+                            }).url
+                        }
+                        className="shrink-0 text-2xs font-medium text-primary transition hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                    >
+                        {nextTask.key}
+                    </Link>
+                )}
             </div>
         </section>
     );
@@ -1004,6 +1217,7 @@ function CurrentOperationCard({
     const worker = workflow
         ? workers.find((candidate) => candidate.id === workflow.worker_id)
         : undefined;
+    const active = workflow?.mode === 'current';
 
     return (
         <section className="execution-ops-card">
@@ -1012,52 +1226,55 @@ function CurrentOperationCard({
                 <span>Current Operation</span>
             </div>
 
-            <div className="mt-3">
-                <p className="execution-meta-label">Active Stage</p>
-                <p className="mt-1 text-sm font-semibold text-foreground">
-                    {workflow?.mode === 'current'
-                        ? labelForRole(workflow.role)
-                        : 'No active stage'}
-                </p>
-            </div>
+            <dl className="mt-2.5 grid gap-2">
+                <div className="execution-data-row">
+                    <dt className="execution-meta-label">Active Stage</dt>
+                    <dd className="text-xs font-semibold text-foreground">
+                        {active && workflow
+                            ? labelForRole(workflow.role)
+                            : 'No active stage'}
+                    </dd>
+                </div>
 
-            <div className="mt-3 min-w-0">
-                <p className="execution-meta-label">Current Task</p>
+                <div className="execution-data-row">
+                    <dt className="execution-meta-label">Current Task</dt>
+                    <dd className="min-w-0 truncate text-xs font-medium text-foreground">
+                        {active && workflow?.task ? (
+                            <>
+                                <span className="font-mono text-primary">
+                                    {workflow.task.key}
+                                </span>{' '}
+                                · {workflow.task.title}
+                            </>
+                        ) : (
+                            'Not recorded'
+                        )}
+                    </dd>
+                </div>
+            </dl>
 
-                {workflow?.task ? (
-                    <p className="mt-1 line-clamp-2 text-xs font-medium text-foreground">
-                        <span className="font-mono text-primary">
-                            {workflow.task.key}
-                        </span>{' '}
-                        · {workflow.task.title}
-                    </p>
-                ) : (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        Not recorded
-                    </p>
-                )}
-            </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border-subtle pt-2.5">
+            <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-border-subtle pt-2.5">
                 <div>
                     <p className="execution-meta-label">Started</p>
                     <p className="mt-1 truncate text-2xs text-muted-foreground">
-                        {formatEvidenceTime(worker?.run?.started_at ?? null)}
+                        {formatEvidenceTime(
+                            active ? (worker?.run?.started_at ?? null) : null,
+                        )}
                     </p>
                 </div>
 
                 <div>
                     <p className="execution-meta-label">Duration</p>
-                    <p className="mt-1 text-2xs text-muted-foreground">
+                    <p className="mt-1 font-mono text-2xs text-muted-foreground">
                         {formatRunDuration(
-                            worker?.run?.started_at ?? null,
-                            worker?.run?.finished_at ?? null,
+                            active ? (worker?.run?.started_at ?? null) : null,
+                            active ? (worker?.run?.finished_at ?? null) : null,
                         )}
                     </p>
                 </div>
             </div>
 
-            {workflow?.task && (
+            {active && workflow?.task && (
                 <Link
                     href={
                         showTask({
@@ -1090,8 +1307,9 @@ function NextStageCard({
                 <span>Next Stage</span>
             </div>
 
-            <div className="mt-3">
-                <p className="text-sm font-semibold text-foreground">
+            <div className="mt-2.5">
+                <p className="execution-meta-label">Next Agent</p>
+                <p className="mt-1 text-sm font-semibold text-foreground">
                     {nextStage.stage}
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -1099,7 +1317,7 @@ function NextStageCard({
                 </p>
             </div>
 
-            <div className="mt-4 border-t border-border-subtle pt-2.5">
+            <div className="mt-3 border-t border-border-subtle pt-2.5">
                 <p className="execution-meta-label">Trigger</p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {nextStage.trigger}
@@ -1123,7 +1341,7 @@ function RepositoryEvidenceCard({
     const changedFiles =
         evidence?.changed_files === null ||
         evidence?.changed_files === undefined
-            ? 'Not recorded'
+            ? '—'
             : evidence.changed_files.length.toString();
 
     return (
@@ -1148,44 +1366,34 @@ function RepositoryEvidenceCard({
                 </div>
             </div>
 
-            <dl className="mt-3 grid grid-cols-3 gap-2">
-                {[
-                    ['Base', evidence?.base_sha ?? null],
-                    ['Head', evidence?.head_sha ?? repositoryHeadSha ?? null],
-                    ['Commit', evidence?.commit_sha ?? null],
-                ].map(([label, value]) => (
-                    <div
-                        key={label}
-                        className="rounded-lg border border-border-subtle bg-background/35 px-2 py-2"
-                    >
-                        <dt className="execution-meta-label">{label}</dt>
-                        <dd
-                            title={value ?? undefined}
-                            className="mt-1 truncate font-mono text-2xs text-primary"
-                        >
-                            {shortSha(value)}
-                        </dd>
-                    </div>
-                ))}
-            </dl>
-
-            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border-subtle pt-2.5">
+            <dl className="execution-git-grid">
                 <div>
-                    <p className="execution-meta-label">Changed Files</p>
-                    <p className="mt-1 text-xs font-medium text-foreground">
+                    <dt className="execution-meta-label">Base</dt>
+                    <dd className="mt-1 truncate font-mono text-2xs text-primary">
+                        {shortSha(evidence?.base_sha ?? null)}
+                    </dd>
+                </div>
+                <div>
+                    <dt className="execution-meta-label">Head</dt>
+                    <dd className="mt-1 truncate font-mono text-2xs text-primary">
+                        {shortSha(
+                            evidence?.head_sha ?? repositoryHeadSha ?? null,
+                        )}
+                    </dd>
+                </div>
+                <div>
+                    <dt className="execution-meta-label">Commit</dt>
+                    <dd className="mt-1 truncate font-mono text-2xs text-primary">
+                        {shortSha(evidence?.commit_sha ?? null)}
+                    </dd>
+                </div>
+                <div>
+                    <dt className="execution-meta-label">Changes</dt>
+                    <dd className="mt-1 font-mono text-2xs text-foreground">
                         {changedFiles}
-                    </p>
+                    </dd>
                 </div>
-
-                <div>
-                    <p className="execution-meta-label">Attempt</p>
-                    <p className="mt-1 text-xs font-medium text-foreground">
-                        {evidence
-                            ? `#${evidence.attempt_number}`
-                            : 'Not recorded'}
-                    </p>
-                </div>
-            </div>
+            </dl>
 
             {evidence && (
                 <Link
@@ -1195,10 +1403,10 @@ function RepositoryEvidenceCard({
                             task: evidence.task.id,
                         }).url
                     }
-                    className="execution-card-action"
+                    className="execution-inline-link"
                 >
-                    <GitCommitHorizontal className="size-3.5" />
-                    View diff & evidence
+                    <GitCommitHorizontal className="size-3" />
+                    Attempt #{evidence.attempt_number} evidence
                 </Link>
             )}
         </section>
@@ -1215,17 +1423,22 @@ function ValidationStateCard({
     workflow: OfficeWorkflow | null;
 }) {
     const presentation = validationPresentation(evidence, workflow);
+    const checks = evidence?.validation_results?.checks;
     const task = evidence?.task ?? workflow?.task ?? null;
+    const columns = [
+        ['Tests', validationCheck(checks, ['test', 'pest', 'phpunit'])],
+        ['Static Analysis', validationCheck(checks, ['static', 'phpstan'])],
+        ['Build', validationCheck(checks, ['build', 'vite'])],
+        ['Latest Result', presentation.label],
+    ] as const;
 
     return (
         <section className="execution-ops-card">
-            <div className="execution-ops-heading">
-                <ShieldCheck className="size-3.5 text-primary" />
-                <span>Validation State</span>
-            </div>
-
-            <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="text-xs text-muted-foreground">Status</span>
+            <div className="flex items-center justify-between gap-3">
+                <div className="execution-ops-heading">
+                    <ShieldCheck className="size-3.5 text-primary" />
+                    <span>Validation State</span>
+                </div>
 
                 <Badge
                     variant="outline"
@@ -1238,21 +1451,27 @@ function ValidationStateCard({
                 </Badge>
             </div>
 
-            <div className="mt-3 border-t border-border-subtle pt-2.5">
-                <p className="execution-meta-label">Evidence</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    {presentation.summary}
-                </p>
-            </div>
-
-            <div className="mt-3 flex items-center justify-between border-t border-border-subtle pt-2.5">
-                <span className="execution-meta-label">Checks</span>
-                <span className="font-mono text-2xs text-muted-foreground">
-                    {evidence?.validation_results?.checks
-                        ? Object.keys(evidence.validation_results.checks).length
-                        : '—'}
-                </span>
-            </div>
+            <dl className="execution-validation-grid">
+                {columns.map(([label, value]) => (
+                    <div key={label} className="min-w-0">
+                        <dt className="execution-meta-label">{label}</dt>
+                        <dd
+                            className={`mt-1 truncate font-mono text-2xs ${
+                                value === 'Passed'
+                                    ? 'text-success-foreground'
+                                    : value === 'Failed'
+                                      ? 'text-destructive-foreground'
+                                      : value === 'Running' ||
+                                          value === 'Pending'
+                                        ? 'text-warning-foreground'
+                                        : 'text-muted-foreground'
+                            }`}
+                        >
+                            {value}
+                        </dd>
+                    </div>
+                ))}
+            </dl>
 
             {task && (
                 <Link
@@ -1262,9 +1481,9 @@ function ValidationStateCard({
                             task: task.id,
                         }).url
                     }
-                    className="execution-card-action"
+                    className="execution-inline-link"
                 >
-                    View validation
+                    View validation evidence
                 </Link>
             )}
         </section>
@@ -1274,13 +1493,15 @@ function ValidationStateCard({
 function TokenUsageCard({
     total,
     harnessUsage,
-    observability,
 }: {
     total: number;
     harnessUsage: Record<string, HarnessUsage>;
-    observability: Record<string, TokenObservability>;
 }) {
-    const harnesses = ['claude_code', 'codex']
+    const preferredHarnesses = ['claude_code', 'codex'];
+    const allHarnesses = Array.from(
+        new Set([...preferredHarnesses, ...Object.keys(harnessUsage)]),
+    );
+    const harnesses = allHarnesses
         .map((harness) => ({
             key: harness,
             usage: harnessUsage[harness] ?? {
@@ -1294,7 +1515,6 @@ function TokenUsageCard({
                 usage.token_usage > 0 ||
                 Object.keys(harnessUsage).length === 0,
         );
-
     const barTotal = Math.max(
         1,
         harnesses.reduce((sum, entry) => sum + entry.usage.token_usage, 0),
@@ -1307,18 +1527,15 @@ function TokenUsageCard({
                 <span>Execution / Token Usage</span>
             </div>
 
-            <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(9rem,0.7fr)_minmax(0,1.3fr)]">
+            <div className="execution-token-layout">
                 <div>
                     <p className="execution-meta-label">Total Observed</p>
                     <p className="mt-1 text-2xl font-semibold text-foreground">
                         {formatTokens(total)}
                     </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                        persisted tokens
-                    </p>
                 </div>
 
-                <div className="grid gap-2.5">
+                <div className="grid min-w-0 gap-2">
                     {harnesses.length > 0 ? (
                         harnesses.map(({ key, usage }) => {
                             const percentage = Math.round(
@@ -1331,19 +1548,15 @@ function TokenUsageCard({
                                         <span className="text-xs font-medium text-foreground">
                                             {labelForHarness(key)}
                                         </span>
-
                                         <span className="font-mono text-2xs text-primary">
                                             {formatTokens(usage.token_usage)}{' '}
                                             tokens
                                         </span>
                                     </div>
-
                                     <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
                                         <div
                                             className="execution-token-bar h-full rounded-full"
-                                            style={{
-                                                width: `${percentage}%`,
-                                            }}
+                                            style={{ width: `${percentage}%` }}
                                         />
                                     </div>
                                 </div>
@@ -1356,37 +1569,6 @@ function TokenUsageCard({
                     )}
                 </div>
             </div>
-
-            <div className="mt-3 border-t border-border-subtle pt-2.5">
-                <p className="execution-meta-label">Rolling Role Averages</p>
-
-                <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
-                    {preferredRoleOrder.map((role) => {
-                        const observation = observability[role];
-
-                        return (
-                            <div
-                                key={role}
-                                className="min-w-0 rounded-lg border border-border-subtle bg-background/25 px-2 py-1.5"
-                            >
-                                <span className="block truncate text-2xs text-muted-foreground">
-                                    {labelForRole(role)}
-                                </span>
-                                <span className="mt-0.5 block truncate font-mono text-2xs text-foreground">
-                                    {observation?.rolling_average === null
-                                        ? 'No runs'
-                                        : observation?.rolling_average !==
-                                            undefined
-                                          ? `${formatTokens(
-                                                observation.rolling_average,
-                                            )} avg`
-                                          : 'Not recorded'}
-                                </span>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
         </section>
     );
 }
@@ -1394,11 +1576,14 @@ function TokenUsageCard({
 function HealthCard({
     errors,
     warnings,
+    blocked,
 }: {
     errors: string[];
     warnings: string[];
+    blocked: number;
 }) {
-    const healthy = errors.length === 0 && warnings.length === 0;
+    const healthy =
+        errors.length === 0 && warnings.length === 0 && blocked === 0;
 
     return (
         <section className="execution-ops-card">
@@ -1407,21 +1592,21 @@ function HealthCard({
                 <span>Health & Warnings</span>
             </div>
 
-            <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 rounded-xl border border-border-subtle bg-background/30 p-3">
+            <div className="execution-health-grid">
                 <div className="flex min-w-0 items-center gap-2">
                     <div
-                        className={`grid size-8 shrink-0 place-items-center rounded-full border ${
+                        className={`grid size-7 shrink-0 place-items-center rounded-full border ${
                             healthy
                                 ? 'border-success/25 bg-success/8 text-success-foreground'
-                                : errors.length > 0
+                                : errors.length > 0 || blocked > 0
                                   ? 'border-destructive/25 bg-destructive/8 text-destructive-foreground'
                                   : 'border-warning/25 bg-warning/8 text-warning-foreground'
                         }`}
                     >
                         {healthy ? (
-                            <CheckCircle2 className="size-4" />
+                            <CheckCircle2 className="size-3.5" />
                         ) : (
-                            <AlertTriangle className="size-4" />
+                            <AlertTriangle className="size-3.5" />
                         )}
                     </div>
 
@@ -1431,59 +1616,44 @@ function HealthCard({
                             className={`mt-0.5 truncate text-xs font-medium ${
                                 healthy
                                     ? 'text-success-foreground'
-                                    : errors.length > 0
+                                    : errors.length > 0 || blocked > 0
                                       ? 'text-destructive-foreground'
                                       : 'text-warning-foreground'
                             }`}
                         >
-                            {healthy
-                                ? 'Operational'
-                                : errors.length > 0
-                                  ? 'Needs attention'
-                                  : 'Warning'}
+                            {healthy ? 'Healthy' : 'Needs attention'}
                         </p>
                     </div>
                 </div>
 
-                <div className="border-l border-border-subtle pl-3 text-center">
+                <div className="execution-health-metric">
                     <p className="execution-meta-label">Warnings</p>
-                    <p
-                        className={`mt-1 text-xl font-semibold ${
-                            warnings.length > 0
-                                ? 'text-warning-foreground'
-                                : 'text-foreground'
-                        }`}
-                    >
+                    <p className="mt-1 text-lg font-semibold text-warning-foreground">
                         {warnings.length}
                     </p>
                 </div>
 
-                <div className="border-l border-border-subtle pl-3 text-center">
+                <div className="execution-health-metric">
                     <p className="execution-meta-label">Errors</p>
-                    <p
-                        className={`mt-1 text-xl font-semibold ${
-                            errors.length > 0
-                                ? 'text-destructive-foreground'
-                                : 'text-foreground'
-                        }`}
-                    >
+                    <p className="mt-1 text-lg font-semibold text-destructive-foreground">
                         {errors.length}
+                    </p>
+                </div>
+
+                <div className="execution-health-metric">
+                    <p className="execution-meta-label">Blocked</p>
+                    <p className="mt-1 text-lg font-semibold text-primary">
+                        {blocked}
                     </p>
                 </div>
             </div>
 
-            {!healthy && (
-                <div className="mt-2 grid gap-1">
-                    {[...errors, ...warnings].slice(0, 3).map((message) => (
-                        <p
-                            key={message}
-                            className="truncate text-2xs text-muted-foreground"
-                        >
-                            {message}
-                        </p>
-                    ))}
-                </div>
-            )}
+            <p className="mt-2 truncate text-2xs text-muted-foreground">
+                {healthy
+                    ? 'All recorded systems operational'
+                    : ([...errors, ...warnings][0] ??
+                      'Blocked workflow evidence exists')}
+            </p>
         </section>
     );
 }
@@ -1583,13 +1753,17 @@ export function AgentOffice({
 
     const healthErrors = new Set<string>();
     const healthWarnings = new Set<string>();
+    let blockedWorkerCount = 0;
 
     for (const worker of displayedWorkers) {
-        if (
+        const blocked =
             attentionStatuses.has(worker.status) ||
             worker.run?.status === 'failed' ||
-            Boolean(worker.run?.failure_reason)
-        ) {
+            Boolean(worker.run?.failure_reason) ||
+            Boolean(worker.task && attentionStatuses.has(worker.task.status));
+
+        if (blocked) {
+            blockedWorkerCount += 1;
             healthErrors.add(`${labelForRole(worker.role)} requires attention`);
         }
     }
@@ -1618,13 +1792,13 @@ export function AgentOffice({
         );
     }
 
-    const activeStageLabel = projectPaused
-        ? 'PAUSED'
+    const activeRole = projectPaused
+        ? 'Paused'
         : currentWorkflow
-          ? `${labelForRole(currentWorkflow.role).toUpperCase()} ACTIVE`
+          ? labelForRole(currentWorkflow.role)
           : healthErrors.size > 0
-            ? 'ATTENTION'
-            : 'IDLE';
+            ? 'Attention required'
+            : 'No active role';
 
     return (
         <section
@@ -1658,54 +1832,50 @@ export function AgentOffice({
                     </p>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                    <Badge
-                        variant="outline"
-                        className={`gap-1.5 rounded-full px-3 py-1 font-mono text-2xs ${
-                            projectPaused
-                                ? 'border-warning/25 bg-warning/8 text-warning-foreground'
-                                : healthErrors.size > 0
-                                  ? 'border-destructive/25 bg-destructive/8 text-destructive-foreground'
-                                  : currentWorkflow
-                                    ? 'border-success/25 bg-success/8 text-success-foreground'
-                                    : 'border-border bg-background/55 text-muted-foreground'
-                        }`}
-                    >
-                        <span
-                            className={`size-1.5 rounded-full ${
-                                projectPaused
-                                    ? 'bg-warning'
-                                    : healthErrors.size > 0
-                                      ? 'bg-destructive'
-                                      : currentWorkflow
-                                        ? 'status-glow-pulse bg-success'
-                                        : 'bg-muted-foreground'
-                            }`}
-                        />
-                        {activeStageLabel}
-                    </Badge>
+                <div className="execution-command-meta">
+                    <div className="execution-command-meta__item">
+                        <p className="execution-meta-label">Active Role</p>
+                        <p className="mt-1 text-sm font-semibold text-foreground">
+                            {activeRole}
+                        </p>
+                    </div>
 
-                    <Badge
-                        variant="outline"
-                        className={`rounded-full px-3 py-1 font-mono text-2xs ${
-                            gitStatus === 'clean'
-                                ? 'border-primary/20 bg-primary/5 text-primary'
-                                : 'border-warning/25 bg-warning/8 text-warning-foreground'
-                        }`}
-                    >
-                        Git · {humanize(gitStatus)}
-                    </Badge>
+                    <div className="execution-command-meta__item">
+                        <p className="execution-meta-label">Repository State</p>
+                        <Badge
+                            variant="outline"
+                            className={`mt-1 rounded-full px-2.5 py-0.5 font-mono text-2xs ${
+                                gitStatus === 'clean'
+                                    ? 'border-success/25 bg-success/8 text-success-foreground'
+                                    : 'border-warning/25 bg-warning/8 text-warning-foreground'
+                            }`}
+                        >
+                            <span
+                                className={`mr-1.5 inline-block size-1.5 rounded-full ${
+                                    gitStatus === 'clean'
+                                        ? 'bg-success'
+                                        : 'bg-warning'
+                                }`}
+                            />
+                            Git {humanize(gitStatus)}
+                        </Badge>
+                    </div>
                 </div>
             </header>
 
             <div className="execution-command-body">
                 <div className="execution-workflow-panel">
                     <div className="execution-workflow-panel__label">
-                        <span>Workflow agents</span>
+                        <span>Workflow Agents</span>
                         <span className="text-muted-foreground">
                             PM → Coder → Reviewer
                         </span>
                     </div>
+
+                    <RoadmapActionsBar
+                        projectId={projectId}
+                        roadmap={pageProject?.roadmaps[0] ?? null}
+                    />
 
                     <div
                         className="execution-workflow-grid"
@@ -1713,7 +1883,6 @@ export function AgentOffice({
                     >
                         {preferredRoleOrder.map((role, index) => {
                             const worker = workerByRole.get(role);
-
                             const node = worker ? (
                                 <AgentNode
                                     projectId={projectId}
@@ -1739,19 +1908,25 @@ export function AgentOffice({
                                             label="Project Manager to Coder"
                                         />
                                     )}
-
                                     {index === 2 && (
                                         <WorkflowConnector
                                             state={coderToReviewerState}
                                             label="Coder to Reviewer"
                                         />
                                     )}
-
                                     {node}
                                 </Fragment>
                             );
                         })}
                     </div>
+
+                    <ExecutionContextPanel
+                        tasks={tasks}
+                        workflow={workflow}
+                        workers={displayedWorkers}
+                        completed={taskProgress.completed}
+                        total={taskProgress.total}
+                    />
                 </div>
 
                 <aside
@@ -1795,12 +1970,12 @@ export function AgentOffice({
                     <TokenUsageCard
                         total={pageProject?.token_usage_total ?? 0}
                         harnessUsage={pageProject?.harness_usage ?? {}}
-                        observability={pageProject?.token_observability ?? {}}
                     />
 
                     <HealthCard
                         errors={Array.from(healthErrors)}
                         warnings={Array.from(healthWarnings)}
+                        blocked={blockedWorkerCount}
                     />
                 </aside>
             </div>

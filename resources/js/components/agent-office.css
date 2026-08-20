@@ -31,9 +31,9 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     border-radius: 0.875rem;
     background:
         radial-gradient(
-            circle at 38% 18%,
+            circle at 35% 17%,
             color-mix(in oklch, var(--primary) 7%, transparent),
-            transparent 30%
+            transparent 31%
         ),
         linear-gradient(
             color-mix(in oklch, var(--primary) 3%, transparent) 1px,
@@ -56,7 +56,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 .execution-command-center::before {
     position: absolute;
     top: -7rem;
-    left: 24%;
+    left: 22%;
     width: 24rem;
     height: 16rem;
     border-radius: 999px;
@@ -69,13 +69,12 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 .execution-command-header {
     position: relative;
     z-index: 2;
-    display: flex;
+    display: grid;
     flex-shrink: 0;
-    flex-wrap: wrap;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    min-height: 4.75rem;
+    gap: 1rem;
+    min-height: 5rem;
     padding: 0.85rem 1rem;
     border-bottom: 1px solid
         color-mix(in oklch, var(--primary) 12%, var(--border));
@@ -85,6 +84,19 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
         color-mix(in oklch, var(--background) 96%, transparent),
         color-mix(in oklch, var(--primary) 6%, transparent)
     );
+}
+
+.execution-command-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(8.5rem, auto));
+    align-items: stretch;
+    gap: 0;
+}
+
+.execution-command-meta__item {
+    min-width: 0;
+    padding: 0.15rem 1rem;
+    border-left: 1px solid var(--border-subtle);
 }
 
 .execution-command-body {
@@ -108,6 +120,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 .execution-workflow-panel {
     display: flex;
     flex-direction: column;
+    gap: 0.65rem;
     overflow: hidden;
     padding: 0.75rem;
     border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
@@ -125,7 +138,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: 0 0.1rem 0.6rem;
+    padding: 0 0.1rem;
     color: color-mix(in oklch, var(--primary) 78%, white);
     font-family: var(--font-mono);
     font-size: 0.625rem;
@@ -133,10 +146,31 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     text-transform: uppercase;
 }
 
+.execution-roadmap-actions {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 3.15rem;
+    padding: 0.55rem 0.65rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.65rem;
+    background: color-mix(in oklch, var(--background) 45%, transparent);
+}
+
+.execution-roadmap-actions__controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
 .execution-operations-panel {
     display: grid;
     align-content: start;
-    gap: 0.65rem;
+    gap: 0.6rem;
     overflow-y: auto;
     padding-right: 0.2rem;
 }
@@ -144,21 +178,21 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 .execution-operations-pair {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.65rem;
+    gap: 0.6rem;
 }
 
 .execution-workflow-grid {
     display: grid;
-    min-height: 0;
-    flex: 1;
+    min-height: 18rem;
+    flex: 1 1 auto;
     grid-template-columns:
         minmax(0, 1fr)
-        minmax(2.75rem, 4rem)
+        minmax(2.25rem, 3rem)
         minmax(0, 1fr)
-        minmax(2.75rem, 4rem)
+        minmax(2.25rem, 3rem)
         minmax(0, 1fr);
     align-items: stretch;
-    gap: 0.55rem;
+    gap: 0.45rem;
 }
 
 .execution-agent-card {
@@ -166,12 +200,12 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     isolation: isolate;
     display: flex;
     min-width: 0;
-    min-height: 18.5rem;
+    min-height: 18rem;
     flex-direction: column;
     overflow: hidden;
-    padding: 0.8rem;
+    padding: 0.75rem;
     border: 1px solid color-mix(in oklch, var(--border) 88%, transparent);
-    border-radius: 0.8rem;
+    border-radius: 0.75rem;
     background: linear-gradient(
         145deg,
         color-mix(in oklch, var(--card) 86%, transparent),
@@ -179,11 +213,10 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     );
     box-shadow:
         inset 0 1px 0 color-mix(in oklch, white 3%, transparent),
-        0 12px 34px color-mix(in oklch, black 20%, transparent);
+        0 10px 28px color-mix(in oklch, black 18%, transparent);
     transition:
         border-color 180ms ease,
-        box-shadow 180ms ease,
-        transform 180ms ease;
+        box-shadow 180ms ease;
 }
 
 .execution-agent-card::after {
@@ -204,7 +237,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     box-shadow:
         0 0 0 1px color-mix(in oklch, var(--primary) 20%, transparent),
         0 0 20px color-mix(in oklch, var(--primary) 18%, transparent),
-        inset 0 0 26px color-mix(in oklch, var(--primary) 5%, transparent);
+        inset 0 0 24px color-mix(in oklch, var(--primary) 5%, transparent);
 }
 
 .execution-agent-card--empty {
@@ -239,6 +272,15 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     letter-spacing: 0.14em;
 }
 
+.execution-ops-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: color-mix(in oklch, var(--primary) 80%, white);
+    font-size: 0.6875rem;
+    letter-spacing: 0.07em;
+}
+
 .execution-meta-label {
     color: var(--muted-foreground);
     font-size: 0.625rem;
@@ -248,14 +290,14 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 
 .execution-agent-conversation {
     display: grid;
-    grid-template-columns: 4rem minmax(0, 1fr);
+    grid-template-columns: 3.8rem minmax(0, 1fr);
     align-items: center;
-    gap: 0.65rem;
-    min-height: 6.4rem;
-    margin-top: 0.75rem;
-    padding: 0.65rem;
+    gap: 0.6rem;
+    min-height: 6.25rem;
+    margin-top: 0.7rem;
+    padding: 0.6rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 0.75rem;
+    border-radius: 0.7rem;
     background:
         radial-gradient(
             circle at 18% 45%,
@@ -268,8 +310,8 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 .execution-avatar {
     position: relative;
     display: grid;
-    width: 3.8rem;
-    height: 3.8rem;
+    width: 3.55rem;
+    height: 3.55rem;
     place-items: center;
     overflow: hidden;
     border: 1px solid color-mix(in oklch, var(--primary) 48%, var(--border));
@@ -303,7 +345,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 .execution-chat-bubble {
     position: relative;
     min-width: 0;
-    padding: 0.65rem 0.7rem;
+    padding: 0.6rem 0.65rem;
     border: 1px solid var(--border-subtle);
     border-radius: 0.65rem;
     background: color-mix(in oklch, var(--card) 72%, transparent);
@@ -342,9 +384,9 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 
 .execution-agent-meta-row {
     min-width: 0;
-    padding: 0.55rem 0.65rem;
+    padding: 0.5rem 0.6rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 0.6rem;
+    border-radius: 0.55rem;
     background: color-mix(in oklch, var(--foreground) 2%, transparent);
 }
 
@@ -473,13 +515,64 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     );
 }
 
+.execution-context-panel {
+    flex-shrink: 0;
+    overflow: hidden;
+    padding: 0.7rem;
+    border: 1px solid color-mix(in oklch, var(--primary) 12%, var(--border));
+    border-radius: 0.7rem;
+    background: color-mix(in oklch, var(--background) 42%, transparent);
+}
+
+.execution-context-grid {
+    display: grid;
+    grid-template-columns:
+        minmax(0, 1.5fr)
+        minmax(0, 1fr)
+        minmax(0, 1fr)
+        minmax(0, 0.8fr);
+    gap: 0;
+    margin-top: 0.6rem;
+}
+
+.execution-context-item {
+    min-width: 0;
+    padding: 0 0.65rem;
+    border-left: 1px solid var(--border-subtle);
+}
+
+.execution-context-item:first-child {
+    padding-left: 0;
+    border-left: 0;
+}
+
+.execution-context-policy-grid {
+    display: grid;
+    grid-template-columns: 1.35fr 0.75fr 1.2fr;
+    gap: 0;
+    margin-top: 0.65rem;
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.execution-context-policy-grid > div {
+    min-width: 0;
+    padding: 0 0.65rem;
+    border-left: 1px solid var(--border-subtle);
+}
+
+.execution-context-policy-grid > div:first-child {
+    padding-left: 0;
+    border-left: 0;
+}
+
 .execution-ops-card {
     position: relative;
     min-width: 0;
     overflow: hidden;
-    padding: 0.8rem;
+    padding: 0.72rem;
     border: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
-    border-radius: 0.7rem;
+    border-radius: 0.65rem;
     background: linear-gradient(
         145deg,
         color-mix(in oklch, var(--card) 76%, transparent),
@@ -507,28 +600,70 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     border-color: color-mix(in oklch, var(--primary) 18%, var(--border));
 }
 
-.execution-ops-heading {
-    display: flex;
+.execution-data-row {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.execution-git-grid,
+.execution-validation-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    margin-top: 0.65rem;
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.execution-git-grid > div,
+.execution-validation-grid > div {
+    min-width: 0;
+    padding: 0 0.55rem;
+    border-left: 1px solid var(--border-subtle);
+}
+
+.execution-git-grid > div:first-child,
+.execution-validation-grid > div:first-child {
+    padding-left: 0;
+    border-left: 0;
+}
+
+.execution-inline-link {
+    display: inline-flex;
     align-items: center;
-    gap: 0.45rem;
+    gap: 0.3rem;
+    margin-top: 0.55rem;
+    color: var(--primary);
+    font-size: 0.625rem;
+    font-weight: 500;
+    transition: color 160ms ease;
+}
+
+.execution-inline-link:hover {
     color: color-mix(in oklch, var(--primary) 80%, white);
-    font-size: 0.6875rem;
-    letter-spacing: 0.07em;
+}
+
+.execution-inline-link:focus-visible,
+.execution-card-action:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
 }
 
 .execution-card-action {
     display: flex;
-    min-height: 1.85rem;
+    min-height: 1.75rem;
     align-items: center;
     justify-content: center;
     gap: 0.35rem;
-    margin-top: 0.65rem;
-    padding: 0.28rem 0.5rem;
+    margin-top: 0.55rem;
+    padding: 0.25rem 0.45rem;
     border: 1px solid color-mix(in oklch, var(--primary) 15%, var(--border));
     border-radius: 0.45rem;
     background: color-mix(in oklch, var(--primary) 4%, transparent);
     color: var(--primary);
-    font-size: 0.6875rem;
+    font-size: 0.625rem;
     font-weight: 500;
     transition:
         border-color 160ms ease,
@@ -540,9 +675,12 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     background: color-mix(in oklch, var(--primary) 8%, transparent);
 }
 
-.execution-card-action:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
+.execution-token-layout {
+    display: grid;
+    grid-template-columns: minmax(8rem, 0.7fr) minmax(0, 1.3fr);
+    gap: 1rem;
+    align-items: center;
+    margin-top: 0.65rem;
 }
 
 .execution-token-bar {
@@ -554,6 +692,24 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
         color-mix(in oklch, var(--secondary-foreground) 72%, var(--primary))
     );
     box-shadow: 0 0 8px color-mix(in oklch, var(--primary) 28%, transparent);
+}
+
+.execution-health-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(3.5rem, 0.65fr));
+    gap: 0;
+    margin-top: 0.65rem;
+    padding: 0.6rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.6rem;
+    background: color-mix(in oklch, var(--background) 30%, transparent);
+}
+
+.execution-health-metric {
+    min-width: 0;
+    padding-left: 0.65rem;
+    border-left: 1px solid var(--border-subtle);
+    text-align: center;
 }
 
 @keyframes execution-energy-flow {
@@ -584,6 +740,22 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     }
 }
 
+@keyframes execution-energy-flow-vertical {
+    to {
+        background-position: 0 -220%;
+    }
+}
+
+@keyframes execution-particle-flow-vertical {
+    from {
+        top: -8%;
+    }
+
+    to {
+        top: calc(100% - 1.7rem);
+    }
+}
+
 @media (max-width: 79.999rem) {
     div:has(> div > [data-aios-execution-office='true']) {
         overflow: visible;
@@ -606,6 +778,33 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     .execution-workflow-panel,
     .execution-operations-panel {
         overflow: visible;
+    }
+}
+
+@media (max-width: 63.999rem) {
+    .execution-command-header {
+        grid-template-columns: minmax(0, 1fr);
+        align-items: flex-start;
+    }
+
+    .execution-command-meta {
+        width: 100%;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .execution-command-meta__item:first-child {
+        padding-left: 0;
+        border-left: 0;
+    }
+
+    .execution-roadmap-actions {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .execution-roadmap-actions__controls {
+        width: 100%;
+        justify-content: flex-start;
     }
 
     .execution-workflow-grid {
@@ -710,13 +909,21 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
         left: 50%;
         transform: translateX(-50%) rotate(135deg);
     }
+
+    .execution-context-grid,
+    .execution-context-policy-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        row-gap: 0.75rem;
+    }
+
+    .execution-context-item:nth-child(odd),
+    .execution-context-policy-grid > div:nth-child(odd) {
+        padding-left: 0;
+        border-left: 0;
+    }
 }
 
 @media (max-width: 47.999rem) {
-    .execution-command-header {
-        align-items: flex-start;
-    }
-
     .execution-command-body,
     .execution-workflow-panel {
         padding: 0.65rem;
@@ -729,33 +936,47 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     }
 
     .execution-agent-conversation {
-        grid-template-columns: 3.6rem minmax(0, 1fr);
-        padding: 0.6rem;
+        grid-template-columns: 3.35rem minmax(0, 1fr);
+        padding: 0.55rem;
     }
 
     .execution-avatar {
-        width: 3.35rem;
-        height: 3.35rem;
+        width: 3.1rem;
+        height: 3.1rem;
     }
 
-    .execution-operations-pair {
+    .execution-operations-pair,
+    .execution-context-grid,
+    .execution-context-policy-grid,
+    .execution-token-layout {
         grid-template-columns: minmax(0, 1fr);
     }
-}
 
-@keyframes execution-energy-flow-vertical {
-    to {
-        background-position: 0 -220%;
-    }
-}
-
-@keyframes execution-particle-flow-vertical {
-    from {
-        top: -8%;
+    .execution-context-item,
+    .execution-context-policy-grid > div {
+        padding: 0.55rem 0 0;
+        border-top: 1px solid var(--border-subtle);
+        border-left: 0;
     }
 
-    to {
-        top: calc(100% - 1.7rem);
+    .execution-context-item:first-child,
+    .execution-context-policy-grid > div:first-child {
+        padding-top: 0;
+        border-top: 0;
+    }
+
+    .execution-git-grid,
+    .execution-validation-grid,
+    .execution-health-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        row-gap: 0.75rem;
+    }
+
+    .execution-git-grid > div:nth-child(odd),
+    .execution-validation-grid > div:nth-child(odd),
+    .execution-health-metric:nth-child(3) {
+        padding-left: 0;
+        border-left: 0;
     }
 }
 

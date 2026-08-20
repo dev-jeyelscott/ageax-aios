@@ -10,7 +10,7 @@ use App\ProjectStatus;
 use App\Services\AgentRunRecorder;
 use Inertia\Testing\AssertableInertia as Assert;
 
-test('the project office exposes the latest safe agent message for live workflow bubbles', function () {
+test('the project office exposes the latest safe agent message and immutable execution identity for live workflow bubbles', function () {
     $user = User::factory()->create();
     $project = Project::create([
         'name' => 'Command Center Example',
@@ -31,8 +31,24 @@ test('the project office exposes the latest safe agent message for live workflow
         'project_id' => $project->id,
         'agent_worker_id' => $worker->id,
         'role' => AgentRole::Coder,
+        'harness' => 'claude_code',
         'status' => AgentRunStatus::Running,
         'prompt_hash' => hash('sha256', 'command-center'),
+        'configuration_snapshot' => [
+            'context_schema_version' => 2,
+            'context_hash' => hash('sha256', 'command-center-context'),
+            'agent' => [
+                'id' => 42,
+                'name' => 'Snapshot Coder',
+                'role' => AgentRole::Coder->value,
+                'harness' => 'claude_code',
+                'model' => 'claude-sonnet-5',
+                'reasoning_setting' => 'high',
+                'configuration_version' => 7,
+            ],
+            'skills' => [],
+        ],
+        'context_schema_version' => 2,
         'started_at' => now(),
     ]);
 
@@ -59,15 +75,38 @@ test('the project office exposes the latest safe agent message for live workflow
                 'project.office_workers.0.run.latest_message',
                 'Inspecting the project execution UI.',
             )
+            ->where(
+                'project.office_workers.0.run.configuration.harness',
+                'claude_code',
+            )
+            ->where(
+                'project.office_workers.0.run.configuration.model',
+                'claude-sonnet-5',
+            )
+            ->where(
+                'project.office_workers.0.run.configuration.reasoning_setting',
+                'high',
+            )
+            ->where(
+                'project.office_workers.0.run.configuration.configuration_version',
+                7,
+            )
+            ->where(
+                'project.office_workers.0.run.configuration.source',
+                'snapshot',
+            )
             ->missing('project.office_workers.0.run.live_output'));
 });
 
-test('the project office command center keeps the graph state driven motion safe and organized in a sixty forty layout', function () {
+test('the project office command center matches the workflow first sixty forty operational layout', function () {
     $office = file_get_contents(
         resource_path('js/components/agent-office.tsx'),
     );
     $officeStyles = file_get_contents(
         resource_path('js/components/agent-office.css'),
+    );
+    $controller = file_get_contents(
+        app_path('Http/Controllers/ProjectController.php'),
     );
 
     expect($office)
@@ -95,23 +134,39 @@ test('the project office command center keeps the graph state driven motion safe
         ->toContain('/action-gif/coder-idle.gif')
         ->toContain('/action-gif/reviewer-idle.gif')
         ->toContain('Harness / Model')
+        ->toContain('worker.run?.configuration')
+        ->toContain("source: 'bound_agent'")
         ->toContain("? 'Recent Task'")
-        ->toContain('Roadmap actions')
+        ->toContain('Roadmap Actions')
         ->toContain('requeueRoadmap.form({')
         ->toContain('storeRoadmap.form(projectId)')
         ->toContain('Upload new roadmap')
+        ->toContain('Execution Context')
+        ->toContain('Task Progress')
+        ->toContain('Active Run')
+        ->toContain('Last Handoff')
+        ->toContain('Workflow Scope')
+        ->toContain('Deterministic Mode')
+        ->toContain('Handoff Policy')
         ->toContain('Current Operation')
         ->toContain('Next Stage')
         ->toContain('Repository · Git Evidence')
         ->toContain('Validation State')
+        ->toContain('Static Analysis')
         ->toContain('Execution / Token Usage')
         ->toContain('Health & Warnings')
+        ->toContain('Blocked')
         ->toContain('data-aios-execution-office')
         ->toContain('data-active-stage=')
         ->not->toContain('AgeaxRobotVisual')
         ->not->toContain('AgeaxRobot')
         ->not->toContain('@react-three')
         ->not->toContain('<Canvas');
+
+    expect($controller)
+        ->toContain("'configuration_snapshot'")
+        ->toContain("'configuration' => \$this->officeRunConfiguration(\$run)")
+        ->toContain("'source' => 'snapshot'");
 
     expect($officeStyles)
         ->toContain(
@@ -123,7 +178,12 @@ test('the project office command center keeps the graph state driven motion safe
         ->toContain(
             'grid-template-columns: minmax(0, 3fr) minmax(24rem, 2fr);',
         )
+        ->toContain('.execution-roadmap-actions')
         ->toContain('.execution-workflow-grid')
+        ->toContain('.execution-context-panel')
+        ->toContain('.execution-git-grid')
+        ->toContain('.execution-validation-grid')
+        ->toContain('.execution-health-grid')
         ->toContain('.workflow-connector--active')
         ->toContain('.workflow-connector--complete')
         ->toContain('.workflow-connector--paused')
@@ -131,6 +191,7 @@ test('the project office command center keeps the graph state driven motion safe
         ->toContain('execution-particle-flow')
         ->toContain('@media (max-width: 79.999rem)')
         ->toContain('grid-template-columns: minmax(0, 1fr);')
+        ->toContain('@media (max-width: 63.999rem)')
         ->toContain('@media (max-width: 47.999rem)')
         ->toContain('@media (prefers-reduced-motion: reduce)');
 });
