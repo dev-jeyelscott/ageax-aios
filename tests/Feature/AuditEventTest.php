@@ -2,6 +2,7 @@
 
 use App\Models\AuditEvent;
 use App\Models\Project;
+use App\ProjectStatus;
 use App\Services\AuditLogger;
 use LogicException;
 
@@ -31,7 +32,12 @@ test('audit events are append-only through the application model', function () {
 });
 
 test('audit logger redacts internal notes and private environment evidence', function () {
-    $project = Project::factory()->create();
+    $project = Project::factory()->create([
+        'name' => 'Audit Sanitization Project',
+        'path' => sys_get_temp_dir().'/aios-audit-'.fake()->uuid(),
+        'status' => ProjectStatus::Paused,
+        'git_status' => 'clean',
+    ]);
 
     $event = app(AuditLogger::class)->record(
         'ticket.security_audit_test',
