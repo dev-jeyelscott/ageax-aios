@@ -1,6 +1,17 @@
-import { Link } from '@inertiajs/react';
-import { Activity, AlertTriangle, CheckCircle2, CircleDot } from 'lucide-react';
-import { useMemo } from 'react';
+import { Link, usePage } from '@inertiajs/react';
+import {
+    Activity,
+    AlertTriangle,
+    CheckCircle2,
+    CircleDot,
+    Clock,
+    Cpu,
+    GitBranch,
+    GitCommitHorizontal,
+    ShieldCheck,
+    Workflow,
+} from 'lucide-react';
+import { Fragment, useMemo } from 'react';
 import {
     showAgentRun,
     showTask,
@@ -66,12 +77,71 @@ export type OfficeWorkflow = {
     task: OfficeTask | null;
 };
 
-type OfficePresentation = {
+type GitEvidence = {
+    task: {
+        id: number;
+        key: string;
+        title: string;
+    };
+    attempt_number: number;
+    status: string;
+    base_sha: string | null;
+    head_sha: string | null;
+    commit_sha: string | null;
+    changed_files: string[] | null;
+    validation_results: {
+        passed?: boolean;
+        checks?: Record<string, boolean>;
+    } | null;
+};
+
+type HarnessUsage = {
+    run_count: number;
+    token_usage: number;
+};
+
+type TokenObservability = {
+    rolling_average: number | null;
+    baseline_average: number | null;
+    change_percentage: number | null;
+    run_count: number;
+    warning_threshold: number;
+};
+
+type OverviewProject = {
+    id: number;
+    status: string;
+    git_status: string;
+    git_head_sha: string | null;
+    tasks: OfficeTask[];
+    git_evidence: GitEvidence | null;
+    token_usage_total: number;
+    token_observability: Record<string, TokenObservability>;
+    harness_usage: Record<string, HarnessUsage>;
+    recent_agent_runs: {
+        id: number;
+        role: string;
+        status: string;
+        exit_code: number | null;
+    }[];
+};
+
+type ConnectorState = 'active' | 'complete' | 'idle' | 'paused';
+
+type WorkerPresentation = {
     label: string;
     dotClass: string;
-    textClass: string;
-    ringClass: string;
+    badgeClass: string;
 };
+
+type ValidationPresentation = {
+    label: string;
+    dotClass: string;
+    badgeClass: string;
+    summary: string;
+};
+
+const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'] as const;
 
 const roleLabels: Record<string, string> = {
     project_manager: 'Project Manager',
@@ -79,21 +149,10 @@ const roleLabels: Record<string, string> = {
     reviewer: 'Reviewer',
 };
 
-const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'] as const;
-
-const roleThumbnails: Record<string, { idle: string; active: string }> = {
-    project_manager: {
-        idle: '/action-gif/pm-idle.gif',
-        active: '/action-gif/pm-thinking.gif',
-    },
-    coder: {
-        idle: '/action-gif/coder-idle.gif',
-        active: '/action-gif/coder-coding.gif',
-    },
-    reviewer: {
-        idle: '/action-gif/reviewer-idle.gif',
-        active: '/action-gif/reviewer-reviewing.gif',
-    },
+const roleThumbnails: Record<string, string> = {
+    project_manager: '/action-gif/pm-idle.gif',
+    coder: '/action-gif/coder-idle.gif',
+    reviewer: '/action-gif/reviewer-idle.gif',
 };
 
 const implementationStatuses = new Set([
@@ -104,49 +163,11 @@ const implementationStatuses = new Set([
 
 const reviewStatuses = new Set(['ready_for_review', 'reviewing']);
 
-const attentionStatuses = new Set(['blocked', 'interrupted', 'failed']);
-
-export function officePresentation(status: string): OfficePresentation {
-    switch (status) {
-        case 'working':
-            return {
-                label: 'Working',
-                dotClass: 'bg-success',
-                textClass: 'text-success-foreground',
-                ringClass: 'border-primary/45 shadow-glow-md',
-            };
-        case 'recovering':
-            return {
-                label: 'Recovering',
-                dotClass: 'bg-warning',
-                textClass: 'text-warning-foreground',
-                ringClass: 'border-warning/45',
-            };
-        case 'interrupted':
-        case 'failed':
-        case 'blocked':
-            return {
-                label: 'Needs attention',
-                dotClass: 'bg-destructive',
-                textClass: 'text-destructive-foreground',
-                ringClass: 'border-destructive/45',
-            };
-        case 'idle':
-            return {
-                label: 'Available',
-                dotClass: 'bg-muted-foreground',
-                textClass: 'text-muted-foreground',
-                ringClass: 'border-border',
-            };
-        default:
-            return {
-                label: 'Status unavailable',
-                dotClass: 'bg-muted-foreground/70',
-                textClass: 'text-muted-foreground',
-                ringClass: 'border-border',
-            };
-    }
-}
+const attentionStatuses = new Set([
+    'blocked',
+    'interrupted',
+    'failed',
+]);
 
 function labelForRole(role: string): string {
     return (
@@ -164,16 +185,90 @@ function labelForHarness(harness: string): string {
         case 'codex':
             return 'Codex';
         default:
-            return harness.replaceAll('_', ' ');
+            return harness
+                .replaceAll('_', ' ')
+                .replace(/\b\w/g, (letter) => letter.toUpperCase());
     }
+}
+
+function humanize(value: string): string {
+    return value
+        .replaceAll('_', ' ')
+        .replaceAll('.', ' ')
+        .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatTokens(tokens: number): string {
+    return new Intl.NumberFormat().format(tokens);
+}
+
+function shortSha(value: string | null): string {
+    return value ? value.slice(0, 10) : 'Not recorded';
+}
+
+function formatEvidenceTime(value: string | null): string {
+    if (!value) {
+        return 'No timestamp';
+    }
+
+    const parsed = new Date(value);
+
+    if (Number.isNaN(parsed.getTime())) {
+        return 'No timestamp';
+    }
+
+    return parsed.toLocaleString();
+}
+
+function formatRunDuration(
+    startedAt: string | null,
+    finishedAt: string | null,
+): string {
+    if (!startedAt) {
+        return 'Not recorded';
+    }
+
+    if (!finishedAt) {
+        return 'In progress';
+    }
+
+    const started = new Date(startedAt).getTime();
+    const finished = new Date(finishedAt).getTime();
+
+    if (!Number.isFinite(started) || !Number.isFinite(finished)) {
+        return 'Not recorded';
+    }
+
+    const totalSeconds = Math.max(
+        0,
+        Math.round((finished - started) / 1_000),
+    );
+
+    if (totalSeconds < 60) {
+        return `${totalSeconds}s`;
+    }
+
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    if (totalMinutes < 60) {
+        return `${totalMinutes}m ${seconds.toString().padStart(2, '0')}s`;
+    }
+
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
 }
 
 function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
     const claimedIds = new Set<number>();
+
     const selected = preferredRoleOrder.flatMap((role) => {
         const worker = workers.find(
             (candidate) =>
-                candidate.role === role && !claimedIds.has(candidate.id),
+                candidate.role === role &&
+                !claimedIds.has(candidate.id),
         );
 
         if (!worker) {
@@ -185,35 +280,13 @@ function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
         return [worker];
     });
 
-    for (const worker of workers) {
-        if (selected.length === preferredRoleOrder.length) {
-            break;
-        }
-
-        if (!claimedIds.has(worker.id)) {
-            selected.push(worker);
-            claimedIds.add(worker.id);
-        }
-    }
-
-    return selected.slice(0, preferredRoleOrder.length);
+    return selected;
 }
 
-function thumbnailForWorker(worker: OfficeWorker): string | null {
-    const thumbnails = roleThumbnails[worker.role];
-
-    if (!thumbnails) {
-        return null;
-    }
-
-    const active = ['working', 'recovering', 'reviewing'].includes(
-        worker.status,
-    );
-
-    return active ? thumbnails.active : thumbnails.idle;
-}
-
-function messageForWorker(worker: OfficeWorker): string | null {
+function workerMessage(
+    worker: OfficeWorker,
+    active: boolean,
+): string {
     if (worker.run?.latest_message) {
         return worker.run.latest_message;
     }
@@ -223,11 +296,20 @@ function messageForWorker(worker: OfficeWorker): string | null {
     }
 
     if (worker.status === 'recovering') {
-        return 'Recovering the current execution from durable AIOS evidence.';
+        return 'Recovering execution from durable AIOS evidence.';
     }
 
-    if (worker.activity_mode === 'current' && worker.task) {
-        return `${labelForRole(worker.role)} is working on ${worker.task.key}.`;
+    if (active && worker.task) {
+        switch (worker.role) {
+            case 'coder':
+                return `Implementing ${worker.task.key} · ${worker.task.title}.`;
+            case 'reviewer':
+                return `Reviewing ${worker.task.key} against persisted implementation evidence.`;
+            case 'project_manager':
+                return 'Processing the current planning or triage operation.';
+            default:
+                return `Working on ${worker.task.key}.`;
+        }
     }
 
     if (
@@ -235,28 +317,307 @@ function messageForWorker(worker: OfficeWorker): string | null {
         worker.run?.status === 'completed' &&
         worker.task
     ) {
-        return `Completed ${worker.task.key}.`;
+        return `Completed ${worker.task.key} · ${worker.task.title}.`;
+    }
+
+    switch (worker.role) {
+        case 'project_manager':
+            return 'Standing by for roadmap analysis or ticket triage.';
+        case 'coder':
+            return 'Waiting for the next eligible implementation task.';
+        case 'reviewer':
+            return 'Standing by for the next deterministic review handoff.';
+        default:
+            return 'Waiting for the next AIOS-controlled operation.';
+    }
+}
+
+function workerPresentation(
+    worker: OfficeWorker,
+    active: boolean,
+    projectStatus: string,
+): WorkerPresentation {
+    if (projectStatus !== 'running') {
+        return {
+            label: 'Paused',
+            dotClass: 'bg-warning',
+            badgeClass:
+                'border-warning/25 bg-warning/8 text-warning-foreground',
+        };
+    }
+
+    if (
+        attentionStatuses.has(worker.status) ||
+        worker.run?.status === 'failed' ||
+        Boolean(worker.run?.failure_reason) ||
+        (worker.task && attentionStatuses.has(worker.task.status))
+    ) {
+        return {
+            label: 'Blocked',
+            dotClass: 'bg-destructive',
+            badgeClass:
+                'border-destructive/25 bg-destructive/8 text-destructive-foreground',
+        };
+    }
+
+    if (worker.status === 'recovering') {
+        return {
+            label: 'Recovering',
+            dotClass: 'bg-warning',
+            badgeClass:
+                'border-warning/25 bg-warning/8 text-warning-foreground',
+        };
+    }
+
+    if (active) {
+        if (
+            worker.role === 'coder' &&
+            worker.task?.status === 'validating'
+        ) {
+            return {
+                label: 'Validating',
+                dotClass: 'bg-primary',
+                badgeClass:
+                    'border-primary/30 bg-primary/8 text-primary',
+            };
+        }
+
+        if (worker.role === 'reviewer') {
+            return {
+                label: 'Reviewing',
+                dotClass: 'bg-secondary-foreground',
+                badgeClass:
+                    'border-secondary-foreground/30 bg-secondary/20 text-secondary-foreground',
+            };
+        }
+
+        if (worker.role === 'project_manager') {
+            return {
+                label: 'Planning',
+                dotClass: 'bg-primary',
+                badgeClass:
+                    'border-primary/30 bg-primary/8 text-primary',
+            };
+        }
+
+        return {
+            label: 'Working',
+            dotClass: 'bg-success',
+            badgeClass:
+                'border-success/25 bg-success/8 text-success-foreground',
+        };
+    }
+
+    if (
+        worker.role === 'reviewer' &&
+        worker.task?.status === 'ready_for_review'
+    ) {
+        return {
+            label: 'Waiting',
+            dotClass: 'bg-primary',
+            badgeClass:
+                'border-primary/20 bg-primary/5 text-primary',
+        };
+    }
+
+    return {
+        label: 'Available',
+        dotClass: 'bg-muted-foreground',
+        badgeClass:
+            'border-border bg-background/55 text-muted-foreground',
+    };
+}
+
+function fallbackTaskForRole(
+    role: string,
+    tasks: OfficeTask[],
+): OfficeTask | null {
+    if (role === 'coder') {
+        return (
+            tasks.find((task) =>
+                [
+                    'queued',
+                    'coding',
+                    'validating',
+                    'changes_required',
+                ].includes(task.status),
+            ) ?? null
+        );
+    }
+
+    if (role === 'reviewer') {
+        return (
+            tasks.find((task) =>
+                ['ready_for_review', 'reviewing'].includes(task.status),
+            ) ?? null
+        );
     }
 
     return null;
 }
 
-function EmptyAgentNode({ role }: { role: string }) {
+function validationPresentation(
+    evidence: GitEvidence | null,
+    workflow: OfficeWorkflow | null,
+): ValidationPresentation {
+    if (evidence?.validation_results?.passed === true) {
+        const checks = Object.values(
+            evidence.validation_results.checks ?? {},
+        );
+        const passed = checks.filter(Boolean).length;
+
+        return {
+            label: 'Passed',
+            dotClass: 'bg-success',
+            badgeClass:
+                'border-success/25 bg-success/8 text-success-foreground',
+            summary:
+                checks.length > 0
+                    ? `${passed}/${checks.length} recorded checks passed`
+                    : 'Deterministic validation passed',
+        };
+    }
+
+    if (evidence?.validation_results?.passed === false) {
+        return {
+            label: 'Failed',
+            dotClass: 'bg-destructive',
+            badgeClass:
+                'border-destructive/25 bg-destructive/8 text-destructive-foreground',
+            summary: 'Deterministic validation recorded a failure',
+        };
+    }
+
+    if (
+        workflow?.mode === 'current' &&
+        workflow.task?.status === 'validating'
+    ) {
+        return {
+            label: 'Running',
+            dotClass: 'bg-primary',
+            badgeClass:
+                'border-primary/25 bg-primary/8 text-primary',
+            summary: 'AIOS deterministic validation is in progress',
+        };
+    }
+
+    if (
+        workflow?.mode === 'current' &&
+        workflow.task &&
+        ['coding', 'changes_required'].includes(workflow.task.status)
+    ) {
+        return {
+            label: 'Pending',
+            dotClass: 'bg-warning',
+            badgeClass:
+                'border-warning/25 bg-warning/8 text-warning-foreground',
+            summary: 'Validation has not completed for the active attempt',
+        };
+    }
+
+    return {
+        label: 'Not recorded',
+        dotClass: 'bg-muted-foreground',
+        badgeClass:
+            'border-border bg-background/55 text-muted-foreground',
+        summary: 'No deterministic validation evidence recorded',
+    };
+}
+
+function nextStageFor(
+    workflow: OfficeWorkflow | null,
+    projectStatus: string,
+): {
+    stage: string;
+    detail: string;
+    trigger: string;
+} {
+    if (projectStatus !== 'running') {
+        return {
+            stage: 'Paused',
+            detail: 'Execution is not currently advancing.',
+            trigger: 'Resume through the existing project control',
+        };
+    }
+
+    if (workflow?.mode !== 'current') {
+        return {
+            stage: 'AIOS scheduler',
+            detail: 'Waiting for the next eligible durable operation.',
+            trigger: 'AIOS task ordering and worker eligibility',
+        };
+    }
+
+    switch (workflow.role) {
+        case 'project_manager':
+            return {
+                stage: 'Coder',
+                detail: 'Implementation',
+                trigger:
+                    'After AIOS validates and persists eligible PM output',
+            };
+        case 'coder':
+            return {
+                stage: 'Reviewer',
+                detail: 'Validation & review',
+                trigger:
+                    'After implementation validation and the phase review barrier permit review',
+            };
+        case 'reviewer':
+            return {
+                stage: 'AIOS decision',
+                detail: 'Approve or changes required',
+                trigger:
+                    'After AIOS validates the structured review result',
+            };
+        default:
+            return {
+                stage: 'AIOS scheduler',
+                detail: 'Next eligible workflow stage',
+                trigger: 'AIOS-controlled deterministic ordering',
+            };
+    }
+}
+
+function EmptyAgentNode({
+    role,
+    index,
+}: {
+    role: string;
+    index: number;
+}) {
     return (
-        <article className="relative min-h-56 rounded-2xl border border-dashed border-border bg-surface-recessed/40 p-4">
-            <div className="flex h-full min-h-48 flex-col items-center justify-center text-center">
-                <div className="grid size-16 place-items-center rounded-2xl border border-border bg-background/70 font-mono text-xs text-muted-foreground">
-                    {labelForRole(role)
-                        .split(' ')
-                        .map((part) => part[0])
-                        .join('')}
+        <article
+            data-workflow-role={role}
+            className="execution-agent-card execution-agent-card--empty"
+        >
+            <div className="flex items-start gap-2">
+                <span className="execution-step-number">
+                    {index.toString().padStart(2, '0')}
+                </span>
+                <div>
+                    <p className="execution-role-label">
+                        {labelForRole(role)}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-foreground">
+                        Worker unavailable
+                    </p>
                 </div>
-                <p className="mt-3 text-sm font-medium text-foreground">
-                    {labelForRole(role)}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                    Worker not provisioned
-                </p>
+            </div>
+
+            <div className="grid flex-1 place-items-center text-center">
+                <div>
+                    <div className="mx-auto grid size-16 place-items-center rounded-full border border-dashed border-border bg-background/70 font-mono text-xs text-muted-foreground">
+                        {labelForRole(role)
+                            .split(' ')
+                            .map((part) => part[0])
+                            .join('')}
+                    </div>
+
+                    <p className="mt-3 text-xs text-muted-foreground">
+                        No durable worker slot was returned for this role.
+                    </p>
+                </div>
             </div>
         </article>
     );
@@ -267,41 +628,60 @@ function AgentNode({
     worker,
     agent,
     active,
+    index,
+    projectStatus,
+    fallbackTask,
 }: {
     projectId: number;
     worker: OfficeWorker;
     agent: OfficeAgent | undefined;
     active: boolean;
+    index: number;
+    projectStatus: string;
+    fallbackTask: OfficeTask | null;
 }) {
-    const presentation = officePresentation(worker.status);
-    const thumbnail = thumbnailForWorker(worker);
-    const message = messageForWorker(worker);
-    const taskLabel =
-        worker.activity_mode === 'current' ? 'Current task' : 'Recent task';
+    const presentation = workerPresentation(
+        worker,
+        active,
+        projectStatus,
+    );
+    const thumbnail = roleThumbnails[worker.role] ?? null;
+    const message = workerMessage(worker, active);
+    const displayedTask = worker.task ?? fallbackTask;
+    const timestamp =
+        worker.run?.finished_at ??
+        worker.run?.started_at ??
+        worker.last_heartbeat_at;
 
     return (
         <article
-            className={`relative min-w-0 overflow-hidden rounded-2xl border bg-card/55 p-3 shadow-panel transition ${
+            data-workflow-role={worker.role}
+            data-active={active ? 'true' : 'false'}
+            className={`execution-agent-card ${
                 active
-                    ? 'agent-card-active border-primary/35'
-                    : 'border-border/70'
+                    ? 'execution-agent-card--active agent-card-active'
+                    : ''
             }`}
         >
-            <div className="glow-line-accent opacity-50" />
-
             <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="font-mono text-2xs tracking-[0.15em] text-primary uppercase">
-                        {labelForRole(worker.role)}
-                    </p>
-                    <h3 className="mt-0.5 truncate text-sm font-semibold text-foreground">
-                        {agent?.name ?? 'Unbound agent'}
-                    </h3>
+                <div className="flex min-w-0 items-start gap-2.5">
+                    <span className="execution-step-number">
+                        {index.toString().padStart(2, '0')}
+                    </span>
+
+                    <div className="min-w-0">
+                        <p className="execution-role-label">
+                            {labelForRole(worker.role)}
+                        </p>
+                        <h3 className="mt-0.5 truncate text-sm font-semibold text-foreground">
+                            {agent?.name ?? 'Unbound agent'}
+                        </h3>
+                    </div>
                 </div>
 
-                <div
-                    className={`flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-background/70 px-2 py-1 font-mono text-2xs ${presentation.textClass}`}
-                    title={`Worker status: ${worker.status}`}
+                <Badge
+                    variant="outline"
+                    className={`shrink-0 gap-1.5 rounded-full px-2.5 py-1 font-mono text-2xs ${presentation.badgeClass}`}
                 >
                     <span
                         className={`size-1.5 rounded-full ${presentation.dotClass} ${
@@ -309,101 +689,133 @@ function AgentNode({
                         }`}
                     />
                     {presentation.label}
+                </Badge>
+            </div>
+
+            <div className="execution-agent-conversation">
+                <div
+                    className={`execution-avatar ${
+                        active ? 'execution-avatar--active' : ''
+                    }`}
+                >
+                    {thumbnail ? (
+                        <img
+                            src={thumbnail}
+                            alt={`${labelForRole(worker.role)} avatar thumbnail`}
+                            className="h-full w-full object-cover object-top"
+                            decoding="async"
+                        />
+                    ) : (
+                        <span className="font-mono text-sm text-primary">
+                            {labelForRole(worker.role)
+                                .split(' ')
+                                .map((part) => part[0])
+                                .join('')}
+                        </span>
+                    )}
+                </div>
+
+                <div
+                    aria-live={active ? 'polite' : 'off'}
+                    className={`execution-chat-bubble ${
+                        active ? 'execution-chat-bubble--active' : ''
+                    }`}
+                >
+                    <span
+                        aria-hidden="true"
+                        className="execution-chat-tail"
+                    />
+
+                    <p className="relative line-clamp-3 text-xs leading-relaxed text-foreground">
+                        {message}
+                    </p>
+
+                    <time
+                        dateTime={timestamp ?? undefined}
+                        className="relative mt-1.5 block font-mono text-[10px] text-muted-foreground"
+                    >
+                        {formatEvidenceTime(timestamp)}
+                    </time>
                 </div>
             </div>
 
-            <div className="relative mt-3 min-h-32 rounded-xl border border-border-subtle bg-surface-sunken/80 p-3">
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,color-mix(in_oklch,var(--primary)_13%,transparent),transparent_62%)]" />
+            <div className="mt-3 grid gap-2">
+                <div className="execution-agent-meta-row">
+                    <div className="flex min-w-0 items-center gap-2">
+                        <Cpu className="size-3.5 shrink-0 text-primary" />
 
-                <div className="relative flex min-h-28 items-end gap-3">
-                    <div
-                        className={`relative grid size-20 shrink-0 place-items-center overflow-hidden rounded-2xl border bg-background/80 ${presentation.ringClass}`}
-                    >
-                        {thumbnail ? (
-                            <img
-                                src={thumbnail}
-                                alt=""
-                                aria-hidden="true"
-                                className="h-full w-full object-cover object-top"
-                            />
-                        ) : (
-                            <span className="font-mono text-sm text-primary">
-                                {labelForRole(worker.role)
-                                    .split(' ')
-                                    .map((part) => part[0])
-                                    .join('')}
-                            </span>
-                        )}
+                        <div className="min-w-0">
+                            <p className="execution-meta-label">
+                                Harness / Model
+                            </p>
+                            <p className="mt-0.5 truncate text-xs font-medium text-foreground">
+                                {agent
+                                    ? `${labelForHarness(agent.harness)} · ${
+                                          agent.model ?? 'default model'
+                                      }`
+                                    : 'Not recorded'}
+                            </p>
+                        </div>
                     </div>
+                </div>
 
-                    <div className="min-w-0 flex-1 self-center">
-                        {message ? (
-                            <div
-                                aria-live={active ? 'polite' : 'off'}
-                                className={`relative rounded-2xl rounded-bl-md border px-3 py-2 text-xs leading-relaxed ${
-                                    active
-                                        ? 'border-primary/30 bg-primary/8 text-foreground shadow-glow-sm'
-                                        : 'border-border-subtle bg-background/65 text-muted-foreground'
-                                }`}
+                <div className="execution-agent-meta-row">
+                    <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                            <p className="execution-meta-label">
+                                {worker.task
+                                    ? worker.activity_mode === 'recent'
+                                        ? 'Recent Task'
+                                        : 'Current Task'
+                                    : worker.role === 'reviewer'
+                                      ? 'Next Task'
+                                      : worker.role === 'coder'
+                                        ? 'Next Eligible Task'
+                                        : 'Workflow Scope'}
+                            </p>
+
+                            {displayedTask && (
+                                <Badge
+                                    variant="outline"
+                                    className="border-border bg-background/50 px-1.5 py-0 font-mono text-[9px] text-muted-foreground"
+                                >
+                                    {humanize(displayedTask.status)}
+                                </Badge>
+                            )}
+                        </div>
+
+                        {displayedTask ? (
+                            <Link
+                                href={
+                                    showTask({
+                                        project: projectId,
+                                        task: displayedTask.id,
+                                    }).url
+                                }
+                                className="mt-1 block truncate text-xs font-medium text-foreground transition hover:text-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
                             >
-                                <span
-                                    aria-hidden="true"
-                                    className={`absolute bottom-2 -left-1.5 size-3 rotate-45 border-b border-l bg-inherit ${
-                                        active
-                                            ? 'border-primary/30'
-                                            : 'border-border-subtle'
-                                    }`}
-                                />
-                                <p className="relative line-clamp-3">
-                                    {message}
-                                </p>
-                            </div>
+                                <span className="font-mono text-primary">
+                                    {displayedTask.key}
+                                </span>{' '}
+                                · {displayedTask.title}
+                            </Link>
                         ) : (
-                            <p className="text-xs text-muted-foreground">
-                                {active
-                                    ? 'Execution active. Waiting for the next agent message…'
-                                    : 'No live message.'}
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                {worker.role === 'project_manager'
+                                    ? 'Roadmap analysis and ticket triage'
+                                    : 'No eligible task recorded'}
                             </p>
                         )}
                     </div>
                 </div>
             </div>
 
-            <div className="mt-3 min-w-0 rounded-xl border border-border-subtle bg-foreground/2 px-3 py-2">
-                <p className="font-mono text-2xs text-muted-foreground uppercase">
-                    {worker.task ? taskLabel : 'Task'}
-                </p>
-
-                {worker.task ? (
-                    <Link
-                        href={
-                            showTask({
-                                project: projectId,
-                                task: worker.task.id,
-                            }).url
-                        }
-                        className="mt-1 block truncate text-xs font-medium text-foreground transition hover:text-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-                    >
-                        <span className="font-mono text-primary">
-                            {worker.task.key}
-                        </span>{' '}
-                        · {worker.task.title}
-                    </Link>
-                ) : (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        No task currently assigned
-                    </p>
-                )}
-            </div>
-
-            <div className="mt-2 flex min-w-0 items-center justify-between gap-2 text-2xs text-muted-foreground">
-                <span className="truncate">
-                    {agent
-                        ? `${labelForHarness(agent.harness)} · ${agent.model ?? 'default model'}`
-                        : 'No agent configuration'}
+            <div className="mt-auto flex items-center justify-between gap-2 border-t border-border-subtle pt-2.5">
+                <span className="font-mono text-2xs text-muted-foreground">
+                    Run ID
                 </span>
 
-                {worker.run && (
+                {worker.run ? (
                     <Link
                         href={
                             showAgentRun({
@@ -411,10 +823,14 @@ function AgentNode({
                                 run: worker.run.id,
                             }).url
                         }
-                        className="shrink-0 font-mono text-primary hover:text-primary/80"
+                        className="font-mono text-xs text-primary transition hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
                     >
-                        Run #{worker.run.id}
+                        #{worker.run.id}
                     </Link>
+                ) : (
+                    <span className="font-mono text-2xs text-muted-foreground">
+                        Not recorded
+                    </span>
                 )}
             </div>
         </article>
@@ -422,60 +838,648 @@ function AgentNode({
 }
 
 function WorkflowConnector({
-    active,
+    state,
     label,
 }: {
-    active: boolean;
+    state: ConnectorState;
     label: string;
 }) {
     return (
         <div
-            aria-label={`${label} ${active ? 'active' : 'inactive'}`}
-            className="relative mx-auto flex h-12 w-12 shrink-0 items-center justify-center lg:h-auto lg:w-full"
+            role="img"
+            aria-label={`${label}: ${state}`}
+            data-connector-state={state}
+            className={`workflow-connector workflow-connector--${state}`}
         >
-            <div className="relative h-px w-12 rotate-90 lg:w-full lg:rotate-0">
-                <span className="absolute inset-0 rounded-full bg-border" />
-                {active && (
-                    <span className="pipeline-flow absolute inset-0 rounded-full" />
-                )}
-                <span
-                    aria-hidden="true"
-                    className={`absolute top-1/2 -right-px size-2 -translate-y-1/2 rotate-45 border-t border-r ${
-                        active
-                            ? 'border-primary shadow-glow-sm'
-                            : 'border-border'
-                    }`}
-                />
+            <div className="workflow-connector__rail">
+                <span className="workflow-connector__base" />
+                <span className="workflow-connector__energy" />
+                <span className="workflow-connector__particle" />
+                <span className="workflow-connector__arrow" />
             </div>
-
-            <span
-                className={`absolute top-1/2 left-1/2 hidden -translate-x-1/2 translate-y-2.5 rounded-full border px-2 py-0.5 font-mono text-[9px] tracking-[0.08em] whitespace-nowrap uppercase lg:block ${
-                    active
-                        ? 'border-primary/25 bg-background text-primary'
-                        : 'border-border-subtle bg-background/80 text-muted-foreground'
-                }`}
-            >
-                {active ? 'handoff active' : label}
-            </span>
         </div>
     );
 }
 
-function nextStageFor(workflow: OfficeWorkflow | null): string {
-    if (workflow?.mode !== 'current') {
-        return 'Waiting for eligible work';
-    }
+function RoadmapProgressCard({
+    projectId,
+    tasks,
+    completed,
+    total,
+}: {
+    projectId: number;
+    tasks: OfficeTask[];
+    completed: number;
+    total: number;
+}) {
+    const progress =
+        total === 0 ? 0 : Math.round((completed / total) * 100);
 
-    switch (workflow.role) {
-        case 'project_manager':
-            return 'Coder implementation';
-        case 'coder':
-            return 'Reviewer handoff';
-        case 'reviewer':
-            return 'AIOS completion decision';
-        default:
-            return 'AIOS-controlled next stage';
-    }
+    const nextTask =
+        tasks.find(
+            (task) => !['done', 'cancelled'].includes(task.status),
+        ) ?? null;
+
+    return (
+        <section className="execution-ops-card">
+            <div className="execution-ops-heading">
+                <Workflow className="size-3.5 text-primary" />
+                <span>Roadmap Progress</span>
+            </div>
+
+            <div className="mt-3">
+                <p className="text-3xl font-semibold tracking-tight text-primary">
+                    {progress}%
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                    {completed} of {total} tasks complete
+                </p>
+            </div>
+
+            <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                    className="progress-flow h-full rounded-full"
+                    style={{ width: `${progress}%` }}
+                />
+            </div>
+
+            <div className="mt-3 min-w-0">
+                <p className="execution-meta-label">
+                    Next unfinished task
+                </p>
+
+                {nextTask ? (
+                    <>
+                        <p className="mt-1 truncate text-xs font-medium text-foreground">
+                            <span className="font-mono text-primary">
+                                {nextTask.key}
+                            </span>{' '}
+                            · {nextTask.title}
+                        </p>
+
+                        <Link
+                            href={
+                                showTask({
+                                    project: projectId,
+                                    task: nextTask.id,
+                                }).url
+                            }
+                            className="execution-card-action"
+                        >
+                            View task details
+                        </Link>
+                    </>
+                ) : (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        {total === 0
+                            ? 'No roadmap tasks recorded.'
+                            : 'Roadmap execution complete.'}
+                    </p>
+                )}
+            </div>
+        </section>
+    );
+}
+
+function CurrentOperationCard({
+    projectId,
+    workflow,
+    workers,
+}: {
+    projectId: number;
+    workflow: OfficeWorkflow | null;
+    workers: OfficeWorker[];
+}) {
+    const worker = workflow
+        ? workers.find(
+              (candidate) => candidate.id === workflow.worker_id,
+          )
+        : undefined;
+
+    return (
+        <section className="execution-ops-card">
+            <div className="execution-ops-heading">
+                <Activity className="size-3.5 text-primary" />
+                <span>Current Operation</span>
+            </div>
+
+            <div className="mt-3">
+                <p className="execution-meta-label">Active Stage</p>
+                <p className="mt-1 text-sm font-semibold text-foreground">
+                    {workflow?.mode === 'current'
+                        ? labelForRole(workflow.role)
+                        : 'No active stage'}
+                </p>
+            </div>
+
+            <div className="mt-3 min-w-0">
+                <p className="execution-meta-label">Current Task</p>
+
+                {workflow?.task ? (
+                    <p className="mt-1 line-clamp-2 text-xs font-medium text-foreground">
+                        <span className="font-mono text-primary">
+                            {workflow.task.key}
+                        </span>{' '}
+                        · {workflow.task.title}
+                    </p>
+                ) : (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        Not recorded
+                    </p>
+                )}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border-subtle pt-2.5">
+                <div>
+                    <p className="execution-meta-label">Started</p>
+                    <p className="mt-1 truncate text-2xs text-muted-foreground">
+                        {formatEvidenceTime(
+                            worker?.run?.started_at ?? null,
+                        )}
+                    </p>
+                </div>
+
+                <div>
+                    <p className="execution-meta-label">Duration</p>
+                    <p className="mt-1 text-2xs text-muted-foreground">
+                        {formatRunDuration(
+                            worker?.run?.started_at ?? null,
+                            worker?.run?.finished_at ?? null,
+                        )}
+                    </p>
+                </div>
+            </div>
+
+            {workflow?.task && (
+                <Link
+                    href={
+                        showTask({
+                            project: projectId,
+                            task: workflow.task.id,
+                        }).url
+                    }
+                    className="execution-card-action"
+                >
+                    View task details
+                </Link>
+            )}
+        </section>
+    );
+}
+
+function NextStageCard({
+    workflow,
+    projectStatus,
+}: {
+    workflow: OfficeWorkflow | null;
+    projectStatus: string;
+}) {
+    const nextStage = nextStageFor(workflow, projectStatus);
+
+    return (
+        <section className="execution-ops-card">
+            <div className="execution-ops-heading">
+                <CircleDot className="size-3.5 text-primary" />
+                <span>Next Stage</span>
+            </div>
+
+            <div className="mt-3">
+                <p className="text-sm font-semibold text-foreground">
+                    {nextStage.stage}
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                    {nextStage.detail}
+                </p>
+            </div>
+
+            <div className="mt-4 border-t border-border-subtle pt-2.5">
+                <p className="execution-meta-label">Trigger</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {nextStage.trigger}
+                </p>
+            </div>
+        </section>
+    );
+}
+
+function RepositoryEvidenceCard({
+    projectId,
+    evidence,
+    gitStatus,
+    repositoryHeadSha,
+}: {
+    projectId: number;
+    evidence: GitEvidence | null;
+    gitStatus: string;
+    repositoryHeadSha: string | null;
+}) {
+    const changedFiles =
+        evidence?.changed_files === null ||
+        evidence?.changed_files === undefined
+            ? 'Not recorded'
+            : evidence.changed_files.length.toString();
+
+    return (
+        <section className="execution-ops-card execution-ops-card--repository">
+            <div className="flex items-start justify-between gap-3">
+                <div className="execution-ops-heading">
+                    <GitBranch className="size-3.5 text-primary" />
+                    <span>Repository · Git Evidence</span>
+                </div>
+
+                <div className="text-right">
+                    <p className="execution-meta-label">Branch</p>
+                    <p className="mt-0.5 font-mono text-2xs text-muted-foreground">
+                        Not recorded
+                    </p>
+                </div>
+            </div>
+
+            <dl className="mt-3 grid grid-cols-3 gap-2">
+                {[
+                    ['Base', evidence?.base_sha ?? null],
+                    [
+                        'Head',
+                        evidence?.head_sha ??
+                            repositoryHeadSha ??
+                            null,
+                    ],
+                    ['Commit', evidence?.commit_sha ?? null],
+                ].map(([label, value]) => (
+                    <div
+                        key={label}
+                        className="rounded-lg border border-border-subtle bg-background/35 px-2 py-2"
+                    >
+                        <dt className="execution-meta-label">
+                            {label}
+                        </dt>
+                        <dd
+                            title={value ?? undefined}
+                            className="mt-1 truncate font-mono text-2xs text-primary"
+                        >
+                            {shortSha(value)}
+                        </dd>
+                    </div>
+                ))}
+            </dl>
+
+            <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-2.5">
+                <div>
+                    <p className="execution-meta-label">
+                        Changed Files
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-foreground">
+                        {changedFiles}
+                    </p>
+                </div>
+
+                <div>
+                    <p className="execution-meta-label">
+                        Working Tree
+                    </p>
+                    <p
+                        className={`mt-1 text-xs font-medium ${
+                            gitStatus === 'clean'
+                                ? 'text-success-foreground'
+                                : 'text-warning-foreground'
+                        }`}
+                    >
+                        {humanize(gitStatus)}
+                    </p>
+                </div>
+
+                <div>
+                    <p className="execution-meta-label">Attempt</p>
+                    <p className="mt-1 text-xs font-medium text-foreground">
+                        {evidence
+                            ? `#${evidence.attempt_number}`
+                            : 'Not recorded'}
+                    </p>
+                </div>
+            </div>
+
+            {evidence && (
+                <Link
+                    href={
+                        showTask({
+                            project: projectId,
+                            task: evidence.task.id,
+                        }).url
+                    }
+                    className="execution-card-action"
+                >
+                    <GitCommitHorizontal className="size-3.5" />
+                    View diff & evidence
+                </Link>
+            )}
+        </section>
+    );
+}
+
+function ValidationStateCard({
+    projectId,
+    evidence,
+    workflow,
+}: {
+    projectId: number;
+    evidence: GitEvidence | null;
+    workflow: OfficeWorkflow | null;
+}) {
+    const presentation = validationPresentation(
+        evidence,
+        workflow,
+    );
+    const task = evidence?.task ?? workflow?.task ?? null;
+
+    return (
+        <section className="execution-ops-card">
+            <div className="execution-ops-heading">
+                <ShieldCheck className="size-3.5 text-primary" />
+                <span>Validation State</span>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+                <span className="text-xs text-muted-foreground">
+                    Status
+                </span>
+
+                <Badge
+                    variant="outline"
+                    className={`gap-1.5 font-mono text-2xs ${presentation.badgeClass}`}
+                >
+                    <span
+                        className={`size-1.5 rounded-full ${presentation.dotClass}`}
+                    />
+                    {presentation.label}
+                </Badge>
+            </div>
+
+            <div className="mt-3 border-t border-border-subtle pt-2.5">
+                <p className="execution-meta-label">Evidence</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {presentation.summary}
+                </p>
+            </div>
+
+            <div className="mt-3 flex items-center justify-between border-t border-border-subtle pt-2.5">
+                <span className="execution-meta-label">Checks</span>
+                <span className="font-mono text-2xs text-muted-foreground">
+                    {evidence?.validation_results?.checks
+                        ? Object.keys(
+                              evidence.validation_results.checks,
+                          ).length
+                        : '—'}
+                </span>
+            </div>
+
+            {task && (
+                <Link
+                    href={
+                        showTask({
+                            project: projectId,
+                            task: task.id,
+                        }).url
+                    }
+                    className="execution-card-action"
+                >
+                    View validation
+                </Link>
+            )}
+        </section>
+    );
+}
+
+function TokenUsageCard({
+    total,
+    harnessUsage,
+    observability,
+}: {
+    total: number;
+    harnessUsage: Record<string, HarnessUsage>;
+    observability: Record<string, TokenObservability>;
+}) {
+    const harnesses = ['claude_code', 'codex']
+        .map((harness) => ({
+            key: harness,
+            usage: harnessUsage[harness] ?? {
+                run_count: 0,
+                token_usage: 0,
+            },
+        }))
+        .filter(
+            ({ usage }) =>
+                usage.run_count > 0 ||
+                usage.token_usage > 0 ||
+                Object.keys(harnessUsage).length === 0,
+        );
+
+    const barTotal = Math.max(
+        1,
+        harnesses.reduce(
+            (sum, entry) => sum + entry.usage.token_usage,
+            0,
+        ),
+    );
+
+    return (
+        <section className="execution-ops-card execution-ops-card--tokens">
+            <div className="execution-ops-heading">
+                <Activity className="size-3.5 text-primary" />
+                <span>Execution / Token Usage</span>
+            </div>
+
+            <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(11rem,0.75fr)_minmax(0,1.25fr)_minmax(11rem,0.8fr)]">
+                <div>
+                    <p className="execution-meta-label">
+                        Total Observed
+                    </p>
+                    <p className="mt-1 text-2xl font-semibold text-foreground">
+                        {formatTokens(total)}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                        persisted tokens
+                    </p>
+                </div>
+
+                <div className="grid gap-2.5">
+                    {harnesses.length > 0 ? (
+                        harnesses.map(({ key, usage }) => {
+                            const percentage = Math.round(
+                                (usage.token_usage / barTotal) * 100,
+                            );
+
+                            return (
+                                <div key={key}>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-xs font-medium text-foreground">
+                                            {labelForHarness(key)}
+                                        </span>
+
+                                        <span className="font-mono text-2xs text-primary">
+                                            {formatTokens(
+                                                usage.token_usage,
+                                            )}{' '}
+                                            tokens
+                                        </span>
+                                    </div>
+
+                                    <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                                        <div
+                                            className="execution-token-bar h-full rounded-full"
+                                            style={{
+                                                width: `${percentage}%`,
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            );
+                        })
+                    ) : (
+                        <p className="text-xs text-muted-foreground">
+                            No harness usage recorded.
+                        </p>
+                    )}
+                </div>
+
+                <div className="border-t border-border-subtle pt-3 xl:border-t-0 xl:border-l xl:pt-0 xl:pl-4">
+                    <p className="execution-meta-label">
+                        Rolling Role Averages
+                    </p>
+
+                    <div className="mt-2 grid gap-1.5">
+                        {preferredRoleOrder.map((role) => {
+                            const observation =
+                                observability[role];
+
+                            return (
+                                <div
+                                    key={role}
+                                    className="flex items-center justify-between gap-2"
+                                >
+                                    <span className="truncate text-2xs text-muted-foreground">
+                                        {labelForRole(role)}
+                                    </span>
+
+                                    <span className="shrink-0 font-mono text-2xs text-foreground">
+                                        {observation?.rolling_average ===
+                                        null
+                                            ? 'No runs'
+                                            : observation?.rolling_average !==
+                                                undefined
+                                              ? `${formatTokens(
+                                                    observation.rolling_average,
+                                                )} avg`
+                                              : 'Not recorded'}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+function HealthCard({
+    errors,
+    warnings,
+}: {
+    errors: string[];
+    warnings: string[];
+}) {
+    const healthy = errors.length === 0 && warnings.length === 0;
+
+    return (
+        <section className="execution-ops-card">
+            <div className="execution-ops-heading">
+                <Activity className="size-3.5 text-success-foreground" />
+                <span>Health & Warnings</span>
+            </div>
+
+            <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 rounded-xl border border-border-subtle bg-background/30 p-3">
+                <div className="flex min-w-0 items-center gap-2">
+                    <div
+                        className={`grid size-8 shrink-0 place-items-center rounded-full border ${
+                            healthy
+                                ? 'border-success/25 bg-success/8 text-success-foreground'
+                                : errors.length > 0
+                                  ? 'border-destructive/25 bg-destructive/8 text-destructive-foreground'
+                                  : 'border-warning/25 bg-warning/8 text-warning-foreground'
+                        }`}
+                    >
+                        {healthy ? (
+                            <CheckCircle2 className="size-4" />
+                        ) : (
+                            <AlertTriangle className="size-4" />
+                        )}
+                    </div>
+
+                    <div className="min-w-0">
+                        <p className="execution-meta-label">
+                            System Health
+                        </p>
+                        <p
+                            className={`mt-0.5 truncate text-xs font-medium ${
+                                healthy
+                                    ? 'text-success-foreground'
+                                    : errors.length > 0
+                                      ? 'text-destructive-foreground'
+                                      : 'text-warning-foreground'
+                            }`}
+                        >
+                            {healthy
+                                ? 'Operational'
+                                : errors.length > 0
+                                  ? 'Needs attention'
+                                  : 'Warning'}
+                        </p>
+                    </div>
+                </div>
+
+                <div className="border-l border-border-subtle pl-3 text-center">
+                    <p className="execution-meta-label">Warnings</p>
+                    <p
+                        className={`mt-1 text-xl font-semibold ${
+                            warnings.length > 0
+                                ? 'text-warning-foreground'
+                                : 'text-foreground'
+                        }`}
+                    >
+                        {warnings.length}
+                    </p>
+                </div>
+
+                <div className="border-l border-border-subtle pl-3 text-center">
+                    <p className="execution-meta-label">Errors</p>
+                    <p
+                        className={`mt-1 text-xl font-semibold ${
+                            errors.length > 0
+                                ? 'text-destructive-foreground'
+                                : 'text-foreground'
+                        }`}
+                    >
+                        {errors.length}
+                    </p>
+                </div>
+            </div>
+
+            {!healthy && (
+                <div className="mt-2 grid gap-1">
+                    {[...errors, ...warnings]
+                        .slice(0, 2)
+                        .map((message) => (
+                            <p
+                                key={message}
+                                className="truncate text-2xs text-muted-foreground"
+                            >
+                                {message}
+                            </p>
+                        ))}
+                </div>
+            )}
+        </section>
+    );
 }
 
 export function AgentOffice({
@@ -502,6 +1506,10 @@ export function AgentOffice({
         total: number;
     };
 }) {
+    const pageProject = usePage().props.project as
+        | OverviewProject
+        | undefined;
+
     const displayedWorkers = useMemo(
         () => selectOfficeWorkers(workers),
         [workers],
@@ -537,175 +1545,279 @@ export function AgentOffice({
         return agentMap;
     }, [agents, workerBindings]);
 
-    const currentWorkflow = workflow?.mode === 'current' ? workflow : null;
+    const tasks = pageProject?.tasks ?? [];
+    const currentWorkflow =
+        workflow?.mode === 'current' ? workflow : null;
+    const activeWorkerId = currentWorkflow?.worker_id ?? null;
     const workflowStatus = currentWorkflow?.task?.status;
-    const pmToCoderActive =
+
+    const projectPaused = projectStatus !== 'running';
+
+    let pmToCoderState: ConnectorState = 'idle';
+    let coderToReviewerState: ConnectorState = 'idle';
+
+    if (projectPaused) {
+        pmToCoderState = 'paused';
+        coderToReviewerState = 'paused';
+    } else if (
+        currentWorkflow?.role === 'reviewer' ||
+        (workflowStatus !== undefined &&
+            reviewStatuses.has(workflowStatus))
+    ) {
+        pmToCoderState = 'complete';
+        coderToReviewerState = 'active';
+    } else if (
         currentWorkflow?.role === 'coder' ||
         (workflowStatus !== undefined &&
-            implementationStatuses.has(workflowStatus));
-    const coderToReviewerActive =
-        currentWorkflow?.role === 'reviewer' ||
-        (workflowStatus !== undefined && reviewStatuses.has(workflowStatus));
-    const activeWorkerId = currentWorkflow?.worker_id ?? null;
-    const progress =
-        taskProgress.total === 0
-            ? 0
-            : Math.round((taskProgress.completed / taskProgress.total) * 100);
-    const needsAttention = displayedWorkers.some(
-        (worker) =>
+            implementationStatuses.has(workflowStatus))
+    ) {
+        pmToCoderState = 'active';
+        coderToReviewerState = 'idle';
+    }
+
+    const validation = validationPresentation(
+        pageProject?.git_evidence ?? null,
+        workflow,
+    );
+
+    const healthErrors = new Set<string>();
+    const healthWarnings = new Set<string>();
+
+    for (const worker of displayedWorkers) {
+        if (
             attentionStatuses.has(worker.status) ||
             worker.run?.status === 'failed' ||
-            Boolean(worker.run?.failure_reason),
-    );
-    const currentOperation = workflow?.task
-        ? `${workflow.task.key}: ${workflow.task.title}`
-        : workflow
-          ? `${labelForRole(workflow.role)} · Run #${workflow.run_id}`
-          : taskProgress.total > 0 &&
-              taskProgress.completed === taskProgress.total
-            ? 'Roadmap execution complete'
-            : 'No active execution';
+            Boolean(worker.run?.failure_reason)
+        ) {
+            healthErrors.add(
+                `${labelForRole(worker.role)} requires attention`,
+            );
+        }
+    }
+
+    if (validation.label === 'Failed') {
+        healthErrors.add('Deterministic validation failed');
+    }
+
+    if (projectStatus !== 'running') {
+        healthWarnings.add(
+            `Project execution is ${humanize(projectStatus)}`,
+        );
+    }
+
+    if (gitStatus !== 'clean') {
+        healthWarnings.add(
+            `Repository state is ${humanize(gitStatus)}`,
+        );
+    }
+
+    if (
+        pageProject?.recent_agent_runs.some(
+            (run) =>
+                run.status === 'failed' ||
+                (run.exit_code !== null && run.exit_code !== 0),
+        )
+    ) {
+        healthWarnings.add(
+            'Recent execution failure exists in persisted run history',
+        );
+    }
+
+    const activeStageLabel = projectPaused
+        ? 'PAUSED'
+        : currentWorkflow
+          ? `${labelForRole(currentWorkflow.role).toUpperCase()} ACTIVE`
+          : healthErrors.size > 0
+            ? 'ATTENTION'
+            : 'IDLE';
 
     return (
         <section
             data-aios-execution-office="true"
+            data-active-stage={
+                currentWorkflow?.role ?? 'none'
+            }
             aria-labelledby="agent-office-title"
-            className="relative flex min-h-full flex-col overflow-hidden rounded-2xl border border-primary/15 bg-background/95 text-foreground shadow-panel"
+            className="execution-command-center"
         >
-            <div className="pointer-events-none absolute -top-28 left-1/4 size-64 rounded-full bg-primary/8 blur-3xl" />
-            <div className="pointer-events-none absolute -right-24 bottom-0 size-64 rounded-full bg-secondary/15 blur-3xl" />
-
-            <header className="relative shrink-0 border-b border-primary/10 bg-[linear-gradient(110deg,var(--sidebar),var(--background),color-mix(in_oklch,var(--primary)_15%,transparent))] px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0">
-                        <div className="flex items-center gap-2 font-mono text-2xs tracking-[0.18em] text-primary uppercase">
-                            <Activity className="size-3.5" aria-hidden="true" />
-                            Live execution
-                        </div>
-                        <h2
-                            id="agent-office-title"
-                            className="mt-1 truncate text-base font-semibold tracking-tight"
-                        >
-                            PM → Coder → Reviewer
-                        </h2>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                            {projectName} · AIOS-controlled deterministic
-                            workflow
-                        </p>
+            <header className="execution-command-header">
+                <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                        <Activity
+                            className="size-4 text-primary"
+                            aria-hidden="true"
+                        />
+                        <span className="font-mono text-2xs tracking-[0.18em] text-primary uppercase">
+                            Live Execution
+                        </span>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge
-                            variant="outline"
-                            className="border-success/20 bg-success/5 font-mono text-2xs text-success-foreground"
-                        >
-                            <CircleDot className="mr-1 size-3" />
-                            {projectStatus}
-                        </Badge>
-                        <Badge
-                            variant="outline"
-                            className="border-primary/20 bg-primary/5 font-mono text-2xs text-primary"
-                        >
-                            Git · {gitStatus}
-                        </Badge>
-                    </div>
+                    <h2
+                        id="agent-office-title"
+                        className="mt-1 text-base font-semibold tracking-tight text-foreground"
+                    >
+                        PM → Coder → Reviewer
+                    </h2>
+
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                        Deterministic workflow with verifiable AIOS
+                        handoffs · {projectName}
+                    </p>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Badge
+                        variant="outline"
+                        className={`gap-1.5 rounded-full px-3 py-1 font-mono text-2xs ${
+                            projectPaused
+                                ? 'border-warning/25 bg-warning/8 text-warning-foreground'
+                                : healthErrors.size > 0
+                                  ? 'border-destructive/25 bg-destructive/8 text-destructive-foreground'
+                                  : currentWorkflow
+                                    ? 'border-success/25 bg-success/8 text-success-foreground'
+                                    : 'border-border bg-background/55 text-muted-foreground'
+                        }`}
+                    >
+                        <span
+                            className={`size-1.5 rounded-full ${
+                                projectPaused
+                                    ? 'bg-warning'
+                                    : healthErrors.size > 0
+                                      ? 'bg-destructive'
+                                      : currentWorkflow
+                                        ? 'status-glow-pulse bg-success'
+                                        : 'bg-muted-foreground'
+                            }`}
+                        />
+                        {activeStageLabel}
+                    </Badge>
+
+                    <Badge
+                        variant="outline"
+                        className={`rounded-full px-3 py-1 font-mono text-2xs ${
+                            gitStatus === 'clean'
+                                ? 'border-primary/20 bg-primary/5 text-primary'
+                                : 'border-warning/25 bg-warning/8 text-warning-foreground'
+                        }`}
+                    >
+                        Git · {humanize(gitStatus)}
+                    </Badge>
                 </div>
             </header>
 
-            <div className="relative flex flex-1 flex-col p-3 sm:p-4">
-                <div className="grid flex-1 items-center gap-1 lg:grid-cols-[minmax(0,1fr)_minmax(4rem,7rem)_minmax(0,1fr)_minmax(4rem,7rem)_minmax(0,1fr)] lg:gap-3">
+            <div className="execution-command-body">
+                <div
+                    className="execution-workflow-grid"
+                    aria-label="Project Manager to Coder to Reviewer execution workflow"
+                >
                     {preferredRoleOrder.map((role, index) => {
                         const worker = workerByRole.get(role);
+
                         const node = worker ? (
                             <AgentNode
-                                key={worker.id}
                                 projectId={projectId}
                                 worker={worker}
-                                agent={agentByWorkerId.get(worker.id)}
-                                active={worker.id === activeWorkerId}
+                                agent={agentByWorkerId.get(
+                                    worker.id,
+                                )}
+                                active={
+                                    worker.id === activeWorkerId
+                                }
+                                index={index + 1}
+                                projectStatus={projectStatus}
+                                fallbackTask={fallbackTaskForRole(
+                                    role,
+                                    tasks,
+                                )}
                             />
                         ) : (
-                            <EmptyAgentNode key={role} role={role} />
+                            <EmptyAgentNode
+                                role={role}
+                                index={index + 1}
+                            />
                         );
 
-                        if (index === 0) {
-                            return node;
-                        }
+                        return (
+                            <Fragment key={role}>
+                                {index === 1 && (
+                                    <WorkflowConnector
+                                        state={pmToCoderState}
+                                        label="Project Manager to Coder"
+                                    />
+                                )}
 
-                        const connector =
-                            index === 1 ? (
-                                <WorkflowConnector
-                                    key="pm-coder-connector"
-                                    active={pmToCoderActive}
-                                    label="PM to Coder"
-                                />
-                            ) : (
-                                <WorkflowConnector
-                                    key="coder-reviewer-connector"
-                                    active={coderToReviewerActive}
-                                    label="Coder to Reviewer"
-                                />
-                            );
+                                {index === 2 && (
+                                    <WorkflowConnector
+                                        state={
+                                            coderToReviewerState
+                                        }
+                                        label="Coder to Reviewer"
+                                    />
+                                )}
 
-                        return [connector, node];
+                                {node}
+                            </Fragment>
+                        );
                     })}
                 </div>
 
-                <div className="mt-4 grid shrink-0 gap-2 border-t border-border-subtle pt-3 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_auto]">
-                    <div className="min-w-0 rounded-xl border border-border-subtle bg-foreground/2 px-3 py-2">
-                        <p className="font-mono text-2xs text-muted-foreground uppercase">
-                            Current operation
-                        </p>
-                        <p className="mt-1 truncate text-xs font-medium text-foreground">
-                            {currentOperation}
-                        </p>
-                    </div>
+                <div className="execution-primary-grid">
+                    <RoadmapProgressCard
+                        projectId={projectId}
+                        tasks={tasks}
+                        completed={taskProgress.completed}
+                        total={taskProgress.total}
+                    />
 
-                    <div className="min-w-0 rounded-xl border border-border-subtle bg-foreground/2 px-3 py-2">
-                        <p className="font-mono text-2xs text-muted-foreground uppercase">
-                            Next stage
-                        </p>
-                        <p className="mt-1 truncate text-xs font-medium text-foreground">
-                            {nextStageFor(workflow)}
-                        </p>
-                    </div>
+                    <CurrentOperationCard
+                        projectId={projectId}
+                        workflow={workflow}
+                        workers={displayedWorkers}
+                    />
 
-                    <div className="rounded-xl border border-border-subtle bg-foreground/2 px-3 py-2 md:min-w-44">
-                        <div className="flex items-center justify-between gap-3">
-                            <p className="font-mono text-2xs text-muted-foreground uppercase">
-                                Roadmap
-                            </p>
-                            <span className="font-mono text-2xs text-primary">
-                                {progress}%
-                            </span>
-                        </div>
-                        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
-                            <div
-                                className="progress-flow h-full rounded-full transition-[width]"
-                                style={{ width: `${progress}%` }}
-                            />
-                        </div>
-                        <p className="mt-1 text-2xs text-muted-foreground">
-                            {taskProgress.completed}/{taskProgress.total}{' '}
-                            complete
-                        </p>
-                    </div>
+                    <NextStageCard
+                        workflow={workflow}
+                        projectStatus={projectStatus}
+                    />
+
+                    <RepositoryEvidenceCard
+                        projectId={projectId}
+                        evidence={
+                            pageProject?.git_evidence ?? null
+                        }
+                        gitStatus={gitStatus}
+                        repositoryHeadSha={
+                            pageProject?.git_head_sha ?? null
+                        }
+                    />
+
+                    <ValidationStateCard
+                        projectId={projectId}
+                        evidence={
+                            pageProject?.git_evidence ?? null
+                        }
+                        workflow={workflow}
+                    />
                 </div>
 
-                {needsAttention && (
-                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/8 px-3 py-2 text-xs text-destructive-foreground">
-                        <AlertTriangle className="size-3.5 shrink-0" />
-                        One or more workflow agents require operator attention.
-                    </div>
-                )}
+                <div className="execution-secondary-grid">
+                    <TokenUsageCard
+                        total={
+                            pageProject?.token_usage_total ?? 0
+                        }
+                        harnessUsage={
+                            pageProject?.harness_usage ?? {}
+                        }
+                        observability={
+                            pageProject?.token_observability ?? {}
+                        }
+                    />
 
-                {!needsAttention && currentWorkflow === null && (
-                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-success/15 bg-success/5 px-3 py-2 text-xs text-success-foreground">
-                        <CheckCircle2 className="size-3.5 shrink-0" />
-                        Workflow is healthy and waiting for the next
-                        AIOS-controlled operation.
-                    </div>
-                )}
+                    <HealthCard
+                        errors={Array.from(healthErrors)}
+                        warnings={Array.from(healthWarnings)}
+                    />
+                </div>
             </div>
         </section>
     );

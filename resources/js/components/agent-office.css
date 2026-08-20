@@ -1,25 +1,763 @@
 /*
- * Project overview layout enhancement owned by the execution command center.
- * The unique data attribute keeps this scoped to the AGEAX project office and
- * moves detailed evidence below the primary PM -> Coder -> Reviewer graph.
+ * AGEAX AIOS Project Overview command center.
+ *
+ * This stylesheet is intentionally presentation-only. Workflow state remains
+ * sourced from the Inertia payload and controlled by AIOS.
  */
-@media (min-width: 64rem) {
-    div:has(> div > [data-aios-execution-office]) {
-        grid-template-columns: minmax(0, 1fr);
-        grid-auto-rows: max-content;
-        align-content: start;
-        overflow-y: auto;
+
+div:has(> div > [data-aios-execution-office='true']) {
+    display: block;
+    min-height: 0;
+    overflow: hidden;
+}
+
+div:has(> div > [data-aios-execution-office='true']) > div {
+    min-height: 0;
+    height: 100%;
+}
+
+div:has(> div > [data-aios-execution-office='true']) > aside {
+    display: none !important;
+}
+
+.execution-command-center {
+    position: relative;
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--primary) 16%, var(--border));
+    border-radius: 0.875rem;
+    background:
+        radial-gradient(
+            circle at 52% 18%,
+            color-mix(in oklch, var(--primary) 8%, transparent),
+            transparent 28%
+        ),
+        linear-gradient(
+            color-mix(in oklch, var(--primary) 3%, transparent) 1px,
+            transparent 1px
+        ),
+        linear-gradient(
+            90deg,
+            color-mix(in oklch, var(--primary) 3%, transparent) 1px,
+            transparent 1px
+        ),
+        color-mix(in oklch, var(--background) 97%, black);
+    background-size:
+        auto,
+        24px 24px,
+        24px 24px,
+        auto;
+    box-shadow: var(--shadow-panel);
+}
+
+.execution-command-center::before {
+    position: absolute;
+    top: -7rem;
+    left: 33%;
+    width: 22rem;
+    height: 15rem;
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--primary) 7%, transparent);
+    filter: blur(70px);
+    content: '';
+    pointer-events: none;
+}
+
+.execution-command-header {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 4.75rem;
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid
+        color-mix(in oklch, var(--primary) 12%, var(--border));
+    background: linear-gradient(
+        110deg,
+        color-mix(in oklch, var(--sidebar) 96%, transparent),
+        color-mix(in oklch, var(--background) 96%, transparent),
+        color-mix(in oklch, var(--primary) 7%, transparent)
+    );
+}
+
+.execution-command-body {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 0.65rem;
+    overflow-y: auto;
+    padding: 0.8rem;
+}
+
+.execution-workflow-grid {
+    display: grid;
+    grid-template-columns:
+        minmax(0, 1fr)
+        minmax(4rem, 6.5rem)
+        minmax(0, 1fr)
+        minmax(4rem, 6.5rem)
+        minmax(0, 1fr);
+    align-items: stretch;
+    gap: 0.7rem;
+}
+
+.execution-agent-card {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    min-width: 0;
+    min-height: 20rem;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 0.8rem;
+    border: 1px solid color-mix(in oklch, var(--border) 88%, transparent);
+    border-radius: 0.8rem;
+    background:
+        linear-gradient(
+            145deg,
+            color-mix(in oklch, var(--card) 86%, transparent),
+            color-mix(in oklch, var(--surface-sunken) 88%, transparent)
+        );
+    box-shadow:
+        inset 0 1px 0 color-mix(in oklch, white 3%, transparent),
+        0 12px 34px color-mix(in oklch, black 22%, transparent);
+    transition:
+        border-color 180ms ease,
+        box-shadow 180ms ease,
+        transform 180ms ease;
+}
+
+.execution-agent-card::after {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: radial-gradient(
+        circle at 50% 24%,
+        color-mix(in oklch, var(--primary) 5%, transparent),
+        transparent 48%
+    );
+    content: '';
+    pointer-events: none;
+}
+
+.execution-agent-card--active {
+    border-color: color-mix(in oklch, var(--primary) 75%, transparent);
+    box-shadow:
+        0 0 0 1px color-mix(in oklch, var(--primary) 22%, transparent),
+        0 0 22px color-mix(in oklch, var(--primary) 20%, transparent),
+        inset 0 0 28px color-mix(in oklch, var(--primary) 5%, transparent);
+}
+
+.execution-agent-card--empty {
+    border-style: dashed;
+    opacity: 0.82;
+}
+
+.execution-step-number {
+    display: grid;
+    width: 1.6rem;
+    height: 1.6rem;
+    flex-shrink: 0;
+    place-items: center;
+    border: 1px solid color-mix(in oklch, var(--primary) 17%, var(--border));
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--background) 75%, transparent);
+    color: var(--muted-foreground);
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+}
+
+.execution-role-label,
+.execution-ops-heading,
+.execution-meta-label {
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+}
+
+.execution-role-label {
+    color: var(--primary);
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+}
+
+.execution-meta-label {
+    color: var(--muted-foreground);
+    font-size: 0.625rem;
+    line-height: 0.9rem;
+    letter-spacing: 0.07em;
+}
+
+.execution-agent-conversation {
+    display: grid;
+    grid-template-columns: 4.75rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 7.3rem;
+    margin-top: 0.8rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.75rem;
+    background:
+        radial-gradient(
+            circle at 18% 45%,
+            color-mix(in oklch, var(--primary) 7%, transparent),
+            transparent 44%
+        ),
+        color-mix(in oklch, var(--surface-sunken) 86%, transparent);
+}
+
+.execution-avatar {
+    position: relative;
+    display: grid;
+    width: 4.5rem;
+    height: 4.5rem;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--primary) 48%, var(--border));
+    border-radius: 999px;
+    background: var(--background);
+    box-shadow:
+        0 0 0 3px color-mix(in oklch, var(--primary) 7%, transparent),
+        0 0 14px color-mix(in oklch, var(--primary) 16%, transparent);
+}
+
+[data-workflow-role='reviewer'] .execution-avatar {
+    border-color: color-mix(
+        in oklch,
+        var(--secondary-foreground) 56%,
+        var(--border)
+    );
+    box-shadow:
+        0 0 0 3px
+            color-mix(in oklch, var(--secondary-foreground) 8%, transparent),
+        0 0 14px
+            color-mix(in oklch, var(--secondary-foreground) 15%, transparent);
+}
+
+.execution-avatar--active {
+    border-color: var(--primary);
+    box-shadow:
+        0 0 0 3px color-mix(in oklch, var(--primary) 12%, transparent),
+        0 0 20px color-mix(in oklch, var(--primary) 38%, transparent);
+}
+
+.execution-chat-bubble {
+    position: relative;
+    min-width: 0;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.65rem;
+    background: color-mix(in oklch, var(--card) 72%, transparent);
+    animation: execution-chat-enter 220ms ease-out;
+}
+
+.execution-chat-bubble--active {
+    border-color: color-mix(in oklch, var(--primary) 34%, var(--border));
+    background: color-mix(in oklch, var(--primary) 8%, var(--card));
+    box-shadow:
+        inset 0 0 18px color-mix(in oklch, var(--primary) 4%, transparent),
+        0 0 14px color-mix(in oklch, var(--primary) 7%, transparent);
+}
+
+[data-workflow-role='reviewer']
+    .execution-chat-bubble:not(.execution-chat-bubble--active) {
+    border-color: color-mix(
+        in oklch,
+        var(--secondary-foreground) 20%,
+        var(--border)
+    );
+    background: color-mix(in oklch, var(--secondary) 18%, var(--card));
+}
+
+.execution-chat-tail {
+    position: absolute;
+    top: 50%;
+    left: -0.32rem;
+    width: 0.65rem;
+    height: 0.65rem;
+    transform: translateY(-50%) rotate(45deg);
+    border-bottom: 1px solid var(--border-subtle);
+    border-left: 1px solid var(--border-subtle);
+    background: inherit;
+}
+
+.execution-agent-meta-row {
+    min-width: 0;
+    padding: 0.55rem 0.65rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.6rem;
+    background: color-mix(in oklch, var(--foreground) 2%, transparent);
+}
+
+.workflow-connector {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+}
+
+.workflow-connector__rail {
+    position: relative;
+    width: 100%;
+    height: 1.15rem;
+}
+
+.workflow-connector__base,
+.workflow-connector__energy {
+    position: absolute;
+    top: 50%;
+    right: 0.5rem;
+    left: 0;
+    height: 2px;
+    transform: translateY(-50%);
+    border-radius: 999px;
+}
+
+.workflow-connector__base {
+    background: repeating-linear-gradient(
+        90deg,
+        color-mix(in oklch, var(--muted-foreground) 28%, transparent) 0,
+        color-mix(in oklch, var(--muted-foreground) 28%, transparent) 6px,
+        transparent 6px,
+        transparent 11px
+    );
+}
+
+.workflow-connector__energy {
+    opacity: 0;
+}
+
+.workflow-connector__particle {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 1.4rem;
+    height: 4px;
+    transform: translateY(-50%);
+    border-radius: 999px;
+    opacity: 0;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        var(--primary),
+        white,
+        var(--primary),
+        transparent
+    );
+    filter: blur(0.4px);
+}
+
+.workflow-connector__arrow {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    width: 0.72rem;
+    height: 0.72rem;
+    transform: translateY(-50%) rotate(45deg);
+    border-top: 2px solid
+        color-mix(in oklch, var(--muted-foreground) 34%, transparent);
+    border-right: 2px solid
+        color-mix(in oklch, var(--muted-foreground) 34%, transparent);
+}
+
+.workflow-connector--active .workflow-connector__base {
+    background: color-mix(in oklch, var(--primary) 25%, transparent);
+}
+
+.workflow-connector--active .workflow-connector__energy {
+    opacity: 1;
+    background: linear-gradient(
+        90deg,
+        color-mix(in oklch, var(--primary) 22%, transparent),
+        var(--primary),
+        color-mix(in oklch, white 84%, var(--primary)),
+        var(--primary),
+        color-mix(in oklch, var(--primary) 22%, transparent)
+    );
+    background-size: 220% 100%;
+    box-shadow:
+        0 0 6px color-mix(in oklch, var(--primary) 65%, transparent),
+        0 0 14px color-mix(in oklch, var(--primary) 35%, transparent);
+    animation: execution-energy-flow 1.25s linear infinite;
+}
+
+.workflow-connector--active .workflow-connector__particle {
+    opacity: 1;
+    box-shadow: 0 0 12px var(--primary);
+    animation: execution-particle-flow 1.4s linear infinite;
+}
+
+.workflow-connector--active .workflow-connector__arrow,
+.workflow-connector--complete .workflow-connector__arrow {
+    border-color: var(--primary);
+    filter: drop-shadow(
+        0 0 4px color-mix(in oklch, var(--primary) 85%, transparent)
+    );
+}
+
+.workflow-connector--complete .workflow-connector__base {
+    background: linear-gradient(
+        90deg,
+        color-mix(in oklch, var(--primary) 22%, transparent),
+        color-mix(in oklch, var(--primary) 60%, transparent)
+    );
+}
+
+.workflow-connector--paused .workflow-connector__base {
+    background: repeating-linear-gradient(
+        90deg,
+        color-mix(in oklch, var(--warning) 30%, transparent) 0,
+        color-mix(in oklch, var(--warning) 30%, transparent) 6px,
+        transparent 6px,
+        transparent 11px
+    );
+}
+
+.execution-primary-grid {
+    display: grid;
+    grid-template-columns:
+        minmax(11rem, 1.05fr)
+        minmax(11rem, 0.9fr)
+        minmax(11rem, 0.85fr)
+        minmax(17rem, 1.4fr)
+        minmax(11rem, 0.85fr);
+    gap: 0.55rem;
+}
+
+.execution-secondary-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(18rem, 0.9fr);
+    gap: 0.55rem;
+}
+
+.execution-ops-card {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0.7rem;
+    border: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
+    border-radius: 0.7rem;
+    background:
+        linear-gradient(
+            145deg,
+            color-mix(in oklch, var(--card) 74%, transparent),
+            color-mix(in oklch, var(--surface-sunken) 72%, transparent)
+        );
+    box-shadow: inset 0 1px 0 color-mix(in oklch, white 2%, transparent);
+}
+
+.execution-ops-card::before {
+    position: absolute;
+    top: 0;
+    right: 1rem;
+    left: 1rem;
+    height: 1px;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        color-mix(in oklch, var(--primary) 30%, transparent),
+        transparent
+    );
+    content: '';
+}
+
+.execution-ops-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: color-mix(in oklch, var(--primary) 80%, white);
+    font-size: 0.6875rem;
+    letter-spacing: 0.07em;
+}
+
+.execution-card-action {
+    display: flex;
+    min-height: 1.85rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    margin-top: 0.65rem;
+    padding: 0.28rem 0.5rem;
+    border: 1px solid color-mix(in oklch, var(--primary) 15%, var(--border));
+    border-radius: 0.45rem;
+    background: color-mix(in oklch, var(--primary) 4%, transparent);
+    color: var(--primary);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    transition:
+        border-color 160ms ease,
+        background-color 160ms ease;
+}
+
+.execution-card-action:hover {
+    border-color: color-mix(in oklch, var(--primary) 32%, var(--border));
+    background: color-mix(in oklch, var(--primary) 8%, transparent);
+}
+
+.execution-card-action:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+
+.execution-token-bar {
+    min-width: 2px;
+    background: linear-gradient(
+        90deg,
+        color-mix(in oklch, var(--primary) 75%, transparent),
+        var(--primary),
+        color-mix(in oklch, var(--secondary-foreground) 72%, var(--primary))
+    );
+    box-shadow: 0 0 8px color-mix(in oklch, var(--primary) 28%, transparent);
+}
+
+@keyframes execution-energy-flow {
+    to {
+        background-position: -220% 0;
+    }
+}
+
+@keyframes execution-particle-flow {
+    from {
+        left: -8%;
     }
 
-    div:has(> div > [data-aios-execution-office]) > aside {
-        display: grid;
+    to {
+        left: calc(100% - 1.7rem);
+    }
+}
+
+@keyframes execution-chat-enter {
+    from {
+        opacity: 0;
+        transform: translateX(-0.3rem);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@media (max-width: 79.999rem) {
+    .execution-primary-grid {
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.625rem;
-        overflow: visible;
-        padding-right: 0;
     }
 
-    div:has(> div > [data-aios-execution-office]) > aside > * {
-        margin-block: 0 !important;
+    .execution-ops-card--repository {
+        grid-column: span 2;
+    }
+
+    .execution-secondary-grid {
+        grid-template-columns: minmax(0, 1.65fr) minmax(16rem, 1fr);
+    }
+}
+
+@media (max-width: 63.999rem) {
+    div:has(> div > [data-aios-execution-office='true']) {
+        overflow: visible;
+    }
+
+    div:has(> div > [data-aios-execution-office='true']) > div {
+        height: auto;
+    }
+
+    .execution-command-center {
+        height: auto;
+        overflow: visible;
+    }
+
+    .execution-command-body {
+        overflow: visible;
+    }
+
+    .execution-workflow-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0;
+    }
+
+    .execution-agent-card {
+        min-height: 19rem;
+    }
+
+    .workflow-connector {
+        width: 100%;
+        height: 3rem;
+    }
+
+    .workflow-connector__rail {
+        width: 1.15rem;
+        height: 100%;
+    }
+
+    .workflow-connector__base,
+    .workflow-connector__energy {
+        top: 0;
+        right: auto;
+        bottom: 0.5rem;
+        left: 50%;
+        width: 2px;
+        height: auto;
+        transform: translateX(-50%);
+    }
+
+    .workflow-connector__base {
+        background: repeating-linear-gradient(
+            180deg,
+            color-mix(in oklch, var(--muted-foreground) 28%, transparent) 0,
+            color-mix(in oklch, var(--muted-foreground) 28%, transparent) 6px,
+            transparent 6px,
+            transparent 11px
+        );
+    }
+
+    .workflow-connector--active .workflow-connector__base {
+        background: color-mix(in oklch, var(--primary) 25%, transparent);
+    }
+
+    .workflow-connector--active .workflow-connector__energy {
+        background: linear-gradient(
+            180deg,
+            color-mix(in oklch, var(--primary) 22%, transparent),
+            var(--primary),
+            white,
+            var(--primary),
+            color-mix(in oklch, var(--primary) 22%, transparent)
+        );
+        background-size: 100% 220%;
+        animation: execution-energy-flow-vertical 1.25s linear infinite;
+    }
+
+    .workflow-connector--complete .workflow-connector__base {
+        background: linear-gradient(
+            180deg,
+            color-mix(in oklch, var(--primary) 22%, transparent),
+            color-mix(in oklch, var(--primary) 60%, transparent)
+        );
+    }
+
+    .workflow-connector--paused .workflow-connector__base {
+        background: repeating-linear-gradient(
+            180deg,
+            color-mix(in oklch, var(--warning) 30%, transparent) 0,
+            color-mix(in oklch, var(--warning) 30%, transparent) 6px,
+            transparent 6px,
+            transparent 11px
+        );
+    }
+
+    .workflow-connector__particle {
+        top: 0;
+        left: 50%;
+        width: 4px;
+        height: 1.4rem;
+        transform: translateX(-50%);
+        background: linear-gradient(
+            180deg,
+            transparent,
+            var(--primary),
+            white,
+            var(--primary),
+            transparent
+        );
+    }
+
+    .workflow-connector--active .workflow-connector__particle {
+        animation: execution-particle-flow-vertical 1.4s linear infinite;
+    }
+
+    .workflow-connector__arrow {
+        top: auto;
+        right: auto;
+        bottom: 0.1rem;
+        left: 50%;
+        transform: translateX(-50%) rotate(135deg);
+    }
+
+    .execution-primary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .execution-ops-card--repository {
+        grid-column: span 1;
+    }
+
+    .execution-secondary-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 47.999rem) {
+    .execution-command-header {
+        align-items: flex-start;
+    }
+
+    .execution-command-body {
+        padding: 0.65rem;
+    }
+
+    .execution-agent-conversation {
+        grid-template-columns: 4rem minmax(0, 1fr);
+        padding: 0.65rem;
+    }
+
+    .execution-avatar {
+        width: 3.8rem;
+        height: 3.8rem;
+    }
+
+    .execution-primary-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .execution-ops-card--repository {
+        grid-column: auto;
+    }
+}
+
+@keyframes execution-energy-flow-vertical {
+    to {
+        background-position: 0 -220%;
+    }
+}
+
+@keyframes execution-particle-flow-vertical {
+    from {
+        top: -8%;
+    }
+
+    to {
+        top: calc(100% - 1.7rem);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .execution-chat-bubble,
+    .workflow-connector--active .workflow-connector__energy,
+    .workflow-connector--active .workflow-connector__particle {
+        animation: none;
+    }
+
+    .workflow-connector--active .workflow-connector__energy,
+    .workflow-connector--active .workflow-connector__particle {
+        opacity: 1;
+    }
+
+    .workflow-connector--active .workflow-connector__particle {
+        left: 50%;
+    }
+
+    .execution-agent-card--active {
+        transition: none;
     }
 }
