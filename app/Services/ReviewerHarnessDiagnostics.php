@@ -583,16 +583,16 @@ final class ReviewerHarnessDiagnostics
             'machine_label' => sprintf(
                 'reviewer:project:%d:work_type:%s:complexity:%s:fallback:%d',
                 $projectId,
-                $workType?->value ?? '*',
-                $complexity?->value ?? '*',
+                $workType === null ? '*' : $workType->value,
+                $complexity === null ? '*' : $complexity->value,
                 $fallbackLevel,
             ),
             'human_label' => sprintf(
                 'Reviewer | project/repository %s (#%d) | work_type=%s | complexity=%s',
                 $projectName,
                 $projectId,
-                $workType?->value ?? 'all (broadened; includes unknown)',
-                $complexity?->value ?? 'all (broadened; includes unknown)',
+                $workType === null ? 'all (broadened; includes unknown)' : $workType->value,
+                $complexity === null ? 'all (broadened; includes unknown)' : $complexity->value,
             ),
             'fallback_level' => $fallbackLevel,
             'fallback_key' => $fallbackKey,
@@ -1281,6 +1281,7 @@ final class ReviewerHarnessDiagnostics
     }
 
     /**
+     * @param  array<string, mixed>  $cycle
      * @return array<string, mixed>
      */
     private function publicCycle(array $cycle): array
