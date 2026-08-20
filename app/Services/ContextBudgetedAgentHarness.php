@@ -8,6 +8,7 @@ use App\AgentRunStatus;
 use App\Models\Agent;
 use App\Models\AgentRun;
 use App\Models\Project;
+use App\Models\TaskAttempt;
 use Closure;
 use LogicException;
 use Throwable;
@@ -153,26 +154,107 @@ final readonly class ContextBudgetedAgentHarness
     {
         $configurationSnapshot = $run->getAttribute('configuration_snapshot');
 
-        if ($run->task_id === null || ! is_array($configurationSnapshot)) {
+        if (
+            $run->task_id === null
+            || $run->attempt_number === null
+            || ! is_array($configurationSnapshot)
+        ) {
             return null;
         }
 
-        return AgentRun::query()
+        $sourceAttemptNumber = $this->recoverySourceAttemptNumber($run);
+
+        if ($sourceAttemptNumber === null) {
+            return null;
+        }
+
+        $candidate = AgentRun::query()
             ->where('project_id', $run->project_id)
             ->where('task_id', $run->task_id)
             ->where('role', $run->getRawOriginal('role'))
             ->where('id', '<', $run->id)
-            ->where('status', AgentRunStatus::Interrupted)
-            ->whereNotNull('context_budget_snapshot')
-            ->latest('id')
-            ->limit(10)
-            ->get()
-            ->first(function (AgentRun $candidate) use ($configurationSnapshot): bool {
-                $candidateSnapshot = $candidate->getAttribute('configuration_snapshot');
+            ->where('attempt_number', $sourceAttemptNumber)
+            ->orderByDesc('id')
+            ->first();
 
-                return is_array($candidateSnapshot)
-                    && $candidateSnapshot === $configurationSnapshot;
-            });
+        if (
+            $candidate === null
+            || $candidate->getRawOriginal('status')
+                !== AgentRunStatus::Interrupted->value
+            || ! is_array(
+                $candidate->getAttribute('context_budget_snapshot'),
+            )
+        ) {
+            return null;
+        }
+
+        $candidateSnapshot = $candidate->getAttribute(
+            'configuration_snapshot',
+        );
+
+        if (
+            ! is_array($candidateSnapshot)
+            || $candidateSnapshot !== $configurationSnapshot
+        ) {
+            return null;
+        }
+
+        return $candidate;
+    }
+
+    private function recoverySourceAttemptNumber(
+        AgentRun $run,
+    ): ?int {
+        $role = AgentRole::from(
+            (string) $run->getRawOriginal('role'),
+        );
+
+        if ($role === AgentRole::Reviewer) {
+            return (int) $run->attempt_number;
+        }
+
+        if ($role !== AgentRole::Coder) {
+            return null;
+        }
+
+        $attempt = TaskAttempt::query()
+            ->where('task_id', $run->task_id)
+            ->where('number', $run->attempt_number)
+            ->first();
+
+        $validationResults = $attempt?->validation_results;
+
+        if (! is_array($validationResults)) {
+            return null;
+        }
+
+        $repositoryPreflight =
+            $validationResults['repository_preflight']
+                ?? null;
+
+        if (
+            ! is_array($repositoryPreflight)
+            || ($repositoryPreflight['mode'] ?? null)
+                !== 'recovery'
+        ) {
+            return null;
+        }
+
+        $recoveryAttemptNumber =
+            $repositoryPreflight[
+                'recovery_attempt_number'
+            ] ?? null;
+
+        if (
+            ! is_int($recoveryAttemptNumber)
+            || $recoveryAttemptNumber < 1
+            || $recoveryAttemptNumber
+                >= (int) $run->attempt_number
+        ) {
+            return null;
+        }
+
+        return $recoveryAttemptNumber;
     }
 
     /**
@@ -293,7 +375,7 @@ final readonly class ContextBudgetedAgentHarness
     {
         return str_contains($prompt, "AIOS assembled context:\n")
             || preg_match(
-                '/\\n\\n\\{(?:"context_schema_version"|"task":\\{"context_schema_version")/',
+                '/\n\n\{(?:"context_schema_version"|"task":\{"context_schema_version")/',
                 $prompt,
             ) === 1;
     }

@@ -8,6 +8,7 @@ use App\Models\AgentRun;
 use App\Models\Phase;
 use App\Models\Project;
 use App\Models\Task;
+use App\Models\TaskAttempt;
 use App\Services\AgentContextAssembler;
 use App\Services\AgentHarness;
 use App\Services\AgentHarnessResolver;
@@ -23,7 +24,9 @@ function p3016Harness(int $capacityTokens): AgentHarness
     {
         public int $executions = 0;
 
-        public function __construct(private int $capacityTokens) {}
+        public function __construct(
+            private int $capacityTokens,
+        ) {}
 
         public function identifier(): AgentHarnessIdentifier
         {
@@ -36,14 +39,21 @@ function p3016Harness(int $capacityTokens): AgentHarness
                 models: ['test-model'],
                 reasoningSettings: [],
                 defaultContextWindowTokens: $this->capacityTokens,
-                defaultMaxOutputTokens: (int) floor($this->capacityTokens * 0.2),
+                defaultMaxOutputTokens: (int) floor(
+                    $this->capacityTokens * 0.2,
+                ),
                 capacityMetadataSource: 'test-capacity',
                 capacityMetadataVersion: 1,
             );
         }
 
-        public function execute(Project $project, Agent $agent, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null): NormalizedExecutionResult
-        {
+        public function execute(
+            Project $project,
+            Agent $agent,
+            string $prompt,
+            ?Closure $onOutput = null,
+            ?Closure $onHeartbeat = null,
+        ): NormalizedExecutionResult {
             $this->executions++;
 
             return new NormalizedExecutionResult(
@@ -59,73 +69,130 @@ function p3016Project(string $name): Project
 {
     return Project::factory()->create([
         'name' => $name,
-        'path' => sys_get_temp_dir().'/aios-context-budget-run-'.fake()->uuid(),
+        'path' => sys_get_temp_dir()
+            .'/aios-context-budget-run-'
+            .fake()->uuid(),
     ]);
 }
 
 test('the resolver exposes context capacity for both registered Codex and Claude Code harnesses', function () {
-    $project = p3016Project('Registered harness capacity');
-    $codexAgent = Agent::factory()->for($project)->create([
-        'harness' => AgentHarnessIdentifier::Codex,
-        'model' => 'gpt-5.6-sol',
-    ]);
-    $claudeAgent = Agent::factory()->for($project)->create([
-        'harness' => AgentHarnessIdentifier::ClaudeCode,
-        'model' => 'claude-sonnet-5',
-    ]);
-    $resolver = app(AgentHarnessResolver::class);
+    $project = p3016Project(
+        'Registered harness capacity',
+    );
 
-    $codexHarness = $resolver->resolve($codexAgent);
-    $claudeHarness = $resolver->resolve($claudeAgent);
+    $codexAgent = Agent::factory()
+        ->for($project)
+        ->create([
+            'harness' => AgentHarnessIdentifier::Codex,
+            'model' => 'gpt-5.6-sol',
+        ]);
+
+    $claudeAgent = Agent::factory()
+        ->for($project)
+        ->create([
+            'harness' => AgentHarnessIdentifier::ClaudeCode,
+            'model' => 'claude-sonnet-5',
+        ]);
+
+    $resolver = app(
+        AgentHarnessResolver::class,
+    );
+
+    $codexHarness = $resolver->resolve(
+        $codexAgent,
+    );
+
+    $claudeHarness = $resolver->resolve(
+        $claudeAgent,
+    );
 
     expect($codexHarness)
         ->toBeInstanceOf(CodexHarness::class)
-        ->and($codexHarness->capabilities()
-            ->resolveContextCapacity($codexAgent, AgentHarnessIdentifier::Codex)['resolved_capacity_tokens'])
+        ->and(
+            $codexHarness
+                ->capabilities()
+                ->resolveContextCapacity(
+                    $codexAgent,
+                    AgentHarnessIdentifier::Codex,
+                )['resolved_capacity_tokens'],
+        )
         ->toBe(1050000)
         ->and($claudeHarness)
         ->toBeInstanceOf(ClaudeCodeHarness::class)
-        ->and($claudeHarness->capabilities()
-            ->resolveContextCapacity($claudeAgent, AgentHarnessIdentifier::ClaudeCode)['resolved_capacity_tokens'])
+        ->and(
+            $claudeHarness
+                ->capabilities()
+                ->resolveContextCapacity(
+                    $claudeAgent,
+                    AgentHarnessIdentifier::ClaudeCode,
+                )['resolved_capacity_tokens'],
+        )
         ->toBe(1000000);
 });
 
 test('a hard Context Budget block records immutable evidence and never calls the provider harness', function () {
-    $project = p3016Project('Blocked provider dispatch');
-    $agent = Agent::factory()->for($project)->create([
-        'role' => AgentRole::Coder,
-        'harness' => AgentHarnessIdentifier::Codex,
-        'model' => null,
-        'default_context' => null,
-    ]);
-    $assembled = app(AgentContextAssembler::class)->assemble(
+    $project = p3016Project(
+        'Blocked provider dispatch',
+    );
+
+    $agent = Agent::factory()
+        ->for($project)
+        ->create([
+            'role' => AgentRole::Coder,
+            'harness' => AgentHarnessIdentifier::Codex,
+            'model' => null,
+            'default_context' => null,
+        ]);
+
+    $assembled = app(
+        AgentContextAssembler::class,
+    )->assemble(
         $agent,
         AgentRole::Coder,
         [
             'task_key' => 'TASK-201',
-            'objective' => str_repeat('required ', 26000),
-            'acceptance_criteria' => ['Required.'],
+            'objective' => str_repeat(
+                'required ',
+                26000,
+            ),
+            'acceptance_criteria' => [
+                'Required.',
+            ],
         ],
     );
+
     $prompt = "Coder contract.\n\n".json_encode(
         $assembled->toArray(),
-        JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        JSON_THROW_ON_ERROR
+            | JSON_UNESCAPED_SLASHES
+            | JSON_UNESCAPED_UNICODE,
     );
+
     $run = AgentRun::create([
         'project_id' => $project->id,
         'agent_id' => $agent->id,
         'role' => AgentRole::Coder,
         'harness' => AgentHarnessIdentifier::Codex->value,
         'status' => AgentRunStatus::Running,
-        'prompt_hash' => hash('sha256', $prompt),
-        'configuration_snapshot' => $assembled->configurationSnapshot(),
-        'context_schema_version' => $assembled->contextSchemaVersion,
-        'context_cost_estimate' => $assembled->contextCostEstimate,
-        'context_cost_schema_version' => $assembled->contextCostSchemaVersion,
+        'prompt_hash' => hash(
+            'sha256',
+            $prompt,
+        ),
+        'configuration_snapshot' => $assembled
+            ->configurationSnapshot(),
+        'context_schema_version' => $assembled
+            ->contextSchemaVersion,
+        'context_cost_estimate' => $assembled
+            ->contextCostEstimate,
+        'context_cost_schema_version' => $assembled
+            ->contextCostSchemaVersion,
         'started_at' => now(),
     ]);
+
     $inner = p3016Harness(50000);
-    $gate = app(ContextBudgetedAgentHarness::class);
+    $gate = app(
+        ContextBudgetedAgentHarness::class,
+    );
 
     $result = $gate->execute(
         $inner,
@@ -144,23 +211,49 @@ test('a hard Context Budget block records immutable evidence and never calls the
             $onHeartbeat,
         ),
     );
+
     $run->refresh();
 
-    expect($result->exitCode)->toBe(-1)
-        ->and($inner->executions)->toBe(0)
-        ->and($run->context_budget_snapshot['decision'])->toBe('blocked')
-        ->and($run->context_budget_snapshot['block_reason'])->not->toBeNull()
-        ->and($project->auditEvents()->where('event_type', 'context_budget.blocked')->exists())->toBeTrue();
+    expect($result->exitCode)
+        ->toBe(-1)
+        ->and($inner->executions)
+        ->toBe(0)
+        ->and(
+            $run->context_budget_snapshot[
+                'decision'
+            ],
+        )
+        ->toBe('blocked')
+        ->and(
+            $run->context_budget_snapshot[
+                'block_reason'
+            ],
+        )
+        ->not->toBeNull()
+        ->and(
+            $project
+                ->auditEvents()
+                ->where(
+                    'event_type',
+                    'context_budget.blocked',
+                )
+                ->exists(),
+        )
+        ->toBeTrue();
 });
 
-test('recovery with the same immutable configuration reuses the persisted capacity and policy evidence', function () {
-    $project = p3016Project('Recovery budget snapshot');
+test('recovery of the exact interrupted Coder attempt reuses persisted capacity and policy evidence', function () {
+    $project = p3016Project(
+        'Recovery budget snapshot',
+    );
+
     $phase = Phase::create([
         'project_id' => $project->id,
         'position' => 1,
         'title' => 'Recovery phase',
         'objective' => 'Test recovery evidence.',
     ]);
+
     $task = Task::create([
         'project_id' => $project->id,
         'phase_id' => $phase->id,
@@ -168,29 +261,60 @@ test('recovery with the same immutable configuration reuses the persisted capaci
         'position' => 1,
         'title' => 'Recovery task',
         'objective' => 'Small recovery task.',
-        'acceptance_criteria' => ['Preserve evidence.'],
+        'acceptance_criteria' => [
+            'Preserve evidence.',
+        ],
         'implementation_prompt' => 'Implement the recovery task.',
         'context_capsule' => [],
         'status' => 'coding',
     ]);
-    $agent = Agent::factory()->for($project)->create([
-        'role' => AgentRole::Coder,
-        'harness' => AgentHarnessIdentifier::Codex,
-        'model' => null,
-    ]);
-    $assembled = app(AgentContextAssembler::class)->assemble(
+
+    $agent = Agent::factory()
+        ->for($project)
+        ->create([
+            'role' => AgentRole::Coder,
+            'harness' => AgentHarnessIdentifier::Codex,
+            'model' => null,
+        ]);
+
+    $assembled = app(
+        AgentContextAssembler::class,
+    )->assemble(
         $agent,
         AgentRole::Coder,
         [
             'task_key' => $task->key,
             'objective' => 'Small recovery task.',
-            'acceptance_criteria' => ['Preserve evidence.'],
+            'acceptance_criteria' => [
+                'Preserve evidence.',
+            ],
         ],
     );
+
     $prompt = "Coder contract.\n\n".json_encode(
         $assembled->toArray(),
-        JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        JSON_THROW_ON_ERROR
+            | JSON_UNESCAPED_SLASHES
+            | JSON_UNESCAPED_UNICODE,
     );
+
+    $baseSha = str_repeat('a', 40);
+
+    $firstAttempt = TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'base_sha' => $baseSha,
+        'status' => 'running',
+        'validation_results' => [
+            'repository_preflight' => [
+                'mode' => 'clean',
+                'base_sha' => $baseSha,
+                'recovery_attempt_number' => null,
+            ],
+        ],
+        'changed_files' => [],
+        'started_at' => now()->subMinute(),
+    ]);
 
     $first = AgentRun::create([
         'project_id' => $project->id,
@@ -199,35 +323,75 @@ test('recovery with the same immutable configuration reuses the persisted capaci
         'role' => AgentRole::Coder,
         'harness' => AgentHarnessIdentifier::Codex->value,
         'status' => AgentRunStatus::Running,
-        'prompt_hash' => hash('sha256', $prompt),
-        'configuration_snapshot' => $assembled->configurationSnapshot(),
-        'context_schema_version' => $assembled->contextSchemaVersion,
-        'context_cost_estimate' => $assembled->contextCostEstimate,
-        'context_cost_schema_version' => $assembled->contextCostSchemaVersion,
+        'attempt_number' => $firstAttempt->number,
+        'prompt_hash' => hash(
+            'sha256',
+            $prompt,
+        ),
+        'configuration_snapshot' => $assembled
+            ->configurationSnapshot(),
+        'context_schema_version' => $assembled
+            ->contextSchemaVersion,
+        'context_cost_estimate' => $assembled
+            ->contextCostEstimate,
+        'context_cost_schema_version' => $assembled
+            ->contextCostSchemaVersion,
         'started_at' => now()->subMinute(),
     ]);
-    $gate = app(ContextBudgetedAgentHarness::class);
+
+    $gate = app(
+        ContextBudgetedAgentHarness::class,
+    );
+
     $firstInner = p3016Harness(100000);
 
-    expect($gate->execute(
-        $firstInner,
-        $project,
-        $agent,
-        $prompt,
-        fn (
-            string $approvedPrompt,
-            ?Closure $onOutput,
-            ?Closure $onHeartbeat,
-        ): NormalizedExecutionResult => $firstInner->execute(
+    expect(
+        $gate->execute(
+            $firstInner,
             $project,
             $agent,
-            $approvedPrompt,
-            $onOutput,
-            $onHeartbeat,
-        ),
-    )->exitCode)->toBe(0);
-    $first->refresh()->update(['status' => AgentRunStatus::Interrupted]);
+            $prompt,
+            fn (
+                string $approvedPrompt,
+                ?Closure $onOutput,
+                ?Closure $onHeartbeat,
+            ): NormalizedExecutionResult => $firstInner
+                ->execute(
+                    $project,
+                    $agent,
+                    $approvedPrompt,
+                    $onOutput,
+                    $onHeartbeat,
+                ),
+        )->exitCode,
+    )->toBe(0);
+
+    $first->refresh()->update([
+        'status' => AgentRunStatus::Interrupted,
+    ]);
+
+    $firstAttempt->update([
+        'status' => 'interrupted',
+        'finished_at' => now(),
+    ]);
+
     $first->refresh();
+
+    $secondAttempt = TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 2,
+        'base_sha' => $baseSha,
+        'status' => 'running',
+        'validation_results' => [
+            'repository_preflight' => [
+                'mode' => 'recovery',
+                'base_sha' => $baseSha,
+                'recovery_attempt_number' => $firstAttempt->number,
+            ],
+        ],
+        'changed_files' => [],
+        'started_at' => now(),
+    ]);
 
     $second = AgentRun::create([
         'project_id' => $project->id,
@@ -236,62 +400,331 @@ test('recovery with the same immutable configuration reuses the persisted capaci
         'role' => AgentRole::Coder,
         'harness' => AgentHarnessIdentifier::Codex->value,
         'status' => AgentRunStatus::Running,
-        'prompt_hash' => hash('sha256', $prompt),
+        'attempt_number' => $secondAttempt->number,
+        'prompt_hash' => hash(
+            'sha256',
+            $prompt,
+        ),
         'configuration_snapshot' => $first->configuration_snapshot,
-        'context_schema_version' => $assembled->contextSchemaVersion,
-        'context_cost_estimate' => $assembled->contextCostEstimate,
-        'context_cost_schema_version' => $assembled->contextCostSchemaVersion,
+        'context_schema_version' => $assembled
+            ->contextSchemaVersion,
+        'context_cost_estimate' => $assembled
+            ->contextCostEstimate,
+        'context_cost_schema_version' => $assembled
+            ->contextCostSchemaVersion,
         'started_at' => now(),
     ]);
+
     $secondInner = p3016Harness(200000);
 
-    expect($gate->execute(
-        $secondInner,
-        $project,
-        $agent,
-        $prompt,
-        fn (
-            string $approvedPrompt,
-            ?Closure $onOutput,
-            ?Closure $onHeartbeat,
-        ): NormalizedExecutionResult => $secondInner->execute(
+    expect(
+        $gate->execute(
+            $secondInner,
             $project,
             $agent,
-            $approvedPrompt,
-            $onOutput,
-            $onHeartbeat,
-        ),
-    )->exitCode)->toBe(0);
+            $prompt,
+            fn (
+                string $approvedPrompt,
+                ?Closure $onOutput,
+                ?Closure $onHeartbeat,
+            ): NormalizedExecutionResult => $secondInner
+                ->execute(
+                    $project,
+                    $agent,
+                    $approvedPrompt,
+                    $onOutput,
+                    $onHeartbeat,
+                ),
+        )->exitCode,
+    )->toBe(0);
+
     $second->refresh();
 
-    expect($second->context_budget_snapshot['resolved_capacity_tokens'])->toBe(100000)
-        ->and($second->context_budget_snapshot['recovery_snapshot_reused'])->toBeTrue()
-        ->and($second->context_budget_snapshot['recovery_snapshot_source_run_id'])->toBe($first->id)
-        ->and($first->context_budget_snapshot['resolved_capacity_tokens'])->toBe(100000);
+    expect(
+        $second->context_budget_snapshot[
+            'resolved_capacity_tokens'
+        ],
+    )
+        ->toBe(100000)
+        ->and(
+            $second->context_budget_snapshot[
+                'recovery_snapshot_reused'
+            ],
+        )
+        ->toBeTrue()
+        ->and(
+            $second->context_budget_snapshot[
+                'recovery_snapshot_source_run_id'
+            ],
+        )
+        ->toBe($first->id)
+        ->and(
+            $first->context_budget_snapshot[
+                'resolved_capacity_tokens'
+            ],
+        )
+        ->toBe(100000);
+});
+
+test('a new Coder attempt does not inherit an unrelated interrupted Context Budget snapshot', function () {
+    $project = p3016Project(
+        'Independent retry budget policy',
+    );
+
+    $phase = Phase::create([
+        'project_id' => $project->id,
+        'position' => 1,
+        'title' => 'Independent retry phase',
+        'objective' => 'Verify independent retry budgeting.',
+    ]);
+
+    $task = Task::create([
+        'project_id' => $project->id,
+        'phase_id' => $phase->id,
+        'key' => 'TASK-INDEPENDENT-RETRY',
+        'position' => 1,
+        'title' => 'Independent retry task',
+        'objective' => 'Use current budget capacity for a new attempt.',
+        'acceptance_criteria' => [
+            'Old interrupted evidence is not adopted.',
+        ],
+        'implementation_prompt' => 'Verify new-attempt budgeting.',
+        'context_capsule' => [],
+        'status' => 'coding',
+    ]);
+
+    $agent = Agent::factory()
+        ->for($project)
+        ->create([
+            'role' => AgentRole::Coder,
+            'harness' => AgentHarnessIdentifier::Codex,
+            'model' => null,
+        ]);
+
+    $assembled = app(
+        AgentContextAssembler::class,
+    )->assemble(
+        $agent,
+        AgentRole::Coder,
+        [
+            'task_key' => $task->key,
+            'objective' => 'Use current budget capacity for a new attempt.',
+            'acceptance_criteria' => [
+                'Old interrupted evidence is not adopted.',
+            ],
+        ],
+    );
+
+    $prompt = "Coder contract.\n\n".json_encode(
+        $assembled->toArray(),
+        JSON_THROW_ON_ERROR
+            | JSON_UNESCAPED_SLASHES
+            | JSON_UNESCAPED_UNICODE,
+    );
+
+    $baseSha = str_repeat('b', 40);
+
+    $firstAttempt = TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'base_sha' => $baseSha,
+        'status' => 'running',
+        'validation_results' => [
+            'repository_preflight' => [
+                'mode' => 'clean',
+                'base_sha' => $baseSha,
+                'recovery_attempt_number' => null,
+            ],
+        ],
+        'changed_files' => [],
+        'started_at' => now()->subMinute(),
+    ]);
+
+    $first = AgentRun::create([
+        'project_id' => $project->id,
+        'task_id' => $task->id,
+        'agent_id' => $agent->id,
+        'role' => AgentRole::Coder,
+        'harness' => AgentHarnessIdentifier::Codex->value,
+        'status' => AgentRunStatus::Running,
+        'attempt_number' => $firstAttempt->number,
+        'prompt_hash' => hash(
+            'sha256',
+            $prompt,
+        ),
+        'configuration_snapshot' => $assembled
+            ->configurationSnapshot(),
+        'context_schema_version' => $assembled
+            ->contextSchemaVersion,
+        'context_cost_estimate' => $assembled
+            ->contextCostEstimate,
+        'context_cost_schema_version' => $assembled
+            ->contextCostSchemaVersion,
+        'started_at' => now()->subMinute(),
+    ]);
+
+    $gate = app(
+        ContextBudgetedAgentHarness::class,
+    );
+
+    $firstInner = p3016Harness(100000);
+
+    expect(
+        $gate->execute(
+            $firstInner,
+            $project,
+            $agent,
+            $prompt,
+            fn (
+                string $approvedPrompt,
+                ?Closure $onOutput,
+                ?Closure $onHeartbeat,
+            ): NormalizedExecutionResult => $firstInner
+                ->execute(
+                    $project,
+                    $agent,
+                    $approvedPrompt,
+                    $onOutput,
+                    $onHeartbeat,
+                ),
+        )->exitCode,
+    )->toBe(0);
+
+    $first->refresh()->update([
+        'status' => AgentRunStatus::Interrupted,
+    ]);
+
+    $firstAttempt->update([
+        'status' => 'interrupted',
+        'finished_at' => now(),
+    ]);
+
+    $first->refresh();
+
+    $secondAttempt = TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 2,
+        'base_sha' => $baseSha,
+        'status' => 'running',
+        'validation_results' => [
+            'repository_preflight' => [
+                'mode' => 'clean',
+                'base_sha' => $baseSha,
+                'recovery_attempt_number' => null,
+            ],
+        ],
+        'changed_files' => [],
+        'started_at' => now(),
+    ]);
+
+    $second = AgentRun::create([
+        'project_id' => $project->id,
+        'task_id' => $task->id,
+        'agent_id' => $agent->id,
+        'role' => AgentRole::Coder,
+        'harness' => AgentHarnessIdentifier::Codex->value,
+        'status' => AgentRunStatus::Running,
+        'attempt_number' => $secondAttempt->number,
+        'prompt_hash' => hash(
+            'sha256',
+            $prompt,
+        ),
+        'configuration_snapshot' => $first->configuration_snapshot,
+        'context_schema_version' => $assembled
+            ->contextSchemaVersion,
+        'context_cost_estimate' => $assembled
+            ->contextCostEstimate,
+        'context_cost_schema_version' => $assembled
+            ->contextCostSchemaVersion,
+        'started_at' => now(),
+    ]);
+
+    $secondInner = p3016Harness(200000);
+
+    expect(
+        $gate->execute(
+            $secondInner,
+            $project,
+            $agent,
+            $prompt,
+            fn (
+                string $approvedPrompt,
+                ?Closure $onOutput,
+                ?Closure $onHeartbeat,
+            ): NormalizedExecutionResult => $secondInner
+                ->execute(
+                    $project,
+                    $agent,
+                    $approvedPrompt,
+                    $onOutput,
+                    $onHeartbeat,
+                ),
+        )->exitCode,
+    )->toBe(0);
+
+    $second->refresh();
+
+    expect(
+        $second->context_budget_snapshot[
+            'resolved_capacity_tokens'
+        ],
+    )
+        ->toBe(200000)
+        ->and(
+            $second->context_budget_snapshot[
+                'recovery_snapshot_reused'
+            ],
+        )
+        ->toBeFalse()
+        ->and(
+            $second->context_budget_snapshot[
+                'recovery_snapshot_source_run_id'
+            ],
+        )
+        ->toBeNull()
+        ->and($secondInner->executions)
+        ->toBe(1);
 });
 
 test('managed assembled prompts cannot bypass the Context Budget gate when their durable AgentRun is missing', function () {
-    $project = p3016Project('Missing managed run');
-    $agent = Agent::factory()->for($project)->create([
-        'role' => AgentRole::Coder,
-        'harness' => AgentHarnessIdentifier::Codex,
-        'model' => null,
-    ]);
-    $assembled = app(AgentContextAssembler::class)->assemble(
+    $project = p3016Project(
+        'Missing managed run',
+    );
+
+    $agent = Agent::factory()
+        ->for($project)
+        ->create([
+            'role' => AgentRole::Coder,
+            'harness' => AgentHarnessIdentifier::Codex,
+            'model' => null,
+        ]);
+
+    $assembled = app(
+        AgentContextAssembler::class,
+    )->assemble(
         $agent,
         AgentRole::Coder,
         [
             'task_key' => 'TASK-MISSING-RUN',
             'objective' => 'Preserve the durable budget boundary.',
-            'acceptance_criteria' => ['Provider execution remains blocked without run evidence.'],
+            'acceptance_criteria' => [
+                'Provider execution remains blocked without run evidence.',
+            ],
         ],
     );
+
     $prompt = "Coder contract.\n\n".json_encode(
         $assembled->toArray(),
-        JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        JSON_THROW_ON_ERROR
+            | JSON_UNESCAPED_SLASHES
+            | JSON_UNESCAPED_UNICODE,
     );
+
     $inner = p3016Harness(100000);
-    $gate = app(ContextBudgetedAgentHarness::class);
+
+    $gate = app(
+        ContextBudgetedAgentHarness::class,
+    );
 
     $result = $gate->execute(
         $inner,
@@ -313,25 +746,40 @@ test('managed assembled prompts cannot bypass the Context Budget gate when their
 
     expect($result->exitCode)
         ->toBe(-1)
-        ->and($result->providerMetadata['failure_type'])
+        ->and(
+            $result->providerMetadata[
+                'failure_type'
+            ],
+        )
         ->toBe('context_budget_run_missing')
         ->and($inner->executions)
         ->toBe(0);
 });
 
 test('legacy no Agent runs remain readable without false Context Budget evidence', function () {
-    $project = p3016Project('Legacy Context Budget exception');
+    $project = p3016Project(
+        'Legacy Context Budget exception',
+    );
+
     $prompt = 'Legacy workflow prompt.';
+
     $run = AgentRun::create([
         'project_id' => $project->id,
         'role' => AgentRole::Coder,
         'status' => AgentRunStatus::Running,
-        'prompt_hash' => hash('sha256', $prompt),
+        'prompt_hash' => hash(
+            'sha256',
+            $prompt,
+        ),
         'started_at' => now(),
     ]);
 
-    expect($run->agent_id)->toBeNull()
-        ->and($run->configuration_snapshot)->toBeNull()
-        ->and($run->context_budget_snapshot)->toBeNull()
-        ->and($run->context_budget_schema_version)->toBeNull();
+    expect($run->agent_id)
+        ->toBeNull()
+        ->and($run->configuration_snapshot)
+        ->toBeNull()
+        ->and($run->context_budget_snapshot)
+        ->toBeNull()
+        ->and($run->context_budget_schema_version)
+        ->toBeNull();
 });

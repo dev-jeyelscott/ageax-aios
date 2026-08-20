@@ -57,11 +57,28 @@ class AuditLogger
 
     private function isSensitiveField(?string $field): bool
     {
-        return $field !== null
-            && preg_match(
-                '/(?:token|secret|password|api[_-]?key|app[_-]?key|private[_-]?key|credential|credentials|authorization)$/i',
-                $field,
-            ) === 1;
+        if ($field === null) {
+            return false;
+        }
+
+        if (preg_match(
+            '/(?:token|secret|password|api[_-]?key|app[_-]?key|private[_-]?key|credential|credentials|authorization)$/i',
+            $field,
+        ) === 1) {
+            return true;
+        }
+
+        if (preg_match(
+            '/(?:^|[_-])internal[_-]?notes?(?:$|[_-])/i',
+            $field,
+        ) === 1) {
+            return true;
+        }
+
+        return preg_match(
+            '/^(?:env|environment|env[_-]?vars?|environment[_-]?variables?|private[_-]?environment(?:[_-]?values?)?|host[_-]?environment|process[_-]?environment|execution[_-]?environment)$/i',
+            $field,
+        ) === 1;
     }
 
     private function redactText(string $text): string
@@ -84,8 +101,14 @@ class AuditLogger
             $redacted,
         ) ?? $redacted;
 
-        return preg_replace(
+        $redacted = preg_replace(
             '/(?i)\b((?=[a-z0-9_]*(?:token|secret|password|api_key|app_key|private_key|credential))[a-z][a-z0-9_]*)\s*=\s*[^\r\n]*/',
+            '$1=[REDACTED]',
+            $redacted,
+        ) ?? $redacted;
+
+        return preg_replace(
+            '/\b([A-Z][A-Z0-9_]{1,})\s*=\s*(?:"[^"\r\n]*"|\'[^\'\r\n]*\'|[^\s\r\n]+)/',
             '$1=[REDACTED]',
             $redacted,
         ) ?? $redacted;
