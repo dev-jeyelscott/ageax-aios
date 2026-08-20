@@ -9,6 +9,7 @@ use App\Services\ClaudeCodeHarness;
 use App\Services\CodexHarness;
 use App\Services\ContextBudgetGuard;
 use App\Services\ContextBudgetPolicy;
+use App\Services\ContextCostEstimator;
 use Illuminate\Support\Facades\DB;
 
 function p3013Project(string $name): Project
@@ -89,6 +90,176 @@ test('the policy locks 70 75 80 boundaries and reserves twenty percent', functio
         ->and($resolved['target_tokens'])->toBe(70000)
         ->and($resolved['warning_tokens'])->toBe(75000)
         ->and($resolved['hard_ceiling_tokens'])->toBe(80000);
+});
+
+test('context above the normal target executes unchanged until the warning threshold then reduces deterministically', function () {
+    $project = p3013Project('Context Budget threshold behavior');
+    $agent = Agent::factory()->for($project)->create([
+        'role' => AgentRole::Coder,
+        'default_context' => str_repeat(
+            'optional agent guidance ',
+            6000,
+        ),
+    ]);
+    $assembled = app(AgentContextAssembler::class)->assemble(
+        $agent,
+        AgentRole::Coder,
+        [
+            'task_key' => 'TASK-THRESHOLD',
+            'objective' => 'Preserve the required task objective.',
+            'acceptance_criteria' => [
+                'The Context Budget boundary behavior remains deterministic.',
+            ],
+        ],
+    );
+    $prompt = "Coder contract.\n\n".json_encode(
+        $assembled->toArray(),
+        JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+    );
+    $originalTokens = app(ContextCostEstimator::class)
+        ->measureValue($prompt)['estimated_tokens'];
+
+    $capacityEvidence = static fn (int $capacityTokens): array => [
+        'harness' => 'codex',
+        'model' => 'test',
+        'resolved_capacity_tokens' => $capacityTokens,
+        'max_output_tokens' => (int) floor($capacityTokens * 0.2),
+        'capacity_source' => 'test:model',
+        'capacity_source_version' => 1,
+        'fallback' => false,
+    ];
+
+    $betweenTargetAndWarning = app(ContextBudgetGuard::class)->evaluate(
+        AgentRole::Coder,
+        $prompt,
+        $assembled,
+        $capacityEvidence(
+            (int) ceil($originalTokens / 0.72),
+        ),
+    );
+
+    expect($betweenTargetAndWarning->blocked)
+        ->toBeFalse()
+        ->and(
+            $betweenTargetAndWarning->evidence[
+                'original_estimated_tokens'
+            ],
+        )
+        ->toBeGreaterThan(
+            $betweenTargetAndWarning->evidence[
+                'budget_tokens'
+            ],
+        )
+        ->and(
+            $betweenTargetAndWarning->evidence[
+                'original_estimated_tokens'
+            ],
+        )
+        ->toBeLessThan(
+            $betweenTargetAndWarning->evidence[
+                'warning_tokens'
+            ],
+        )
+        ->and(
+            $betweenTargetAndWarning->evidence[
+                'warning_reason'
+            ],
+        )
+        ->toBeNull()
+        ->and(
+            $betweenTargetAndWarning->evidence[
+                'decision'
+            ],
+        )
+        ->toBe('approved')
+        ->and(
+            $betweenTargetAndWarning->evidence[
+                'reductions'
+            ],
+        )
+        ->toBe([])
+        ->and($betweenTargetAndWarning->prompt)
+        ->toBe($prompt);
+
+    $atWarning = app(ContextBudgetGuard::class)->evaluate(
+        AgentRole::Coder,
+        $prompt,
+        $assembled,
+        $capacityEvidence(
+            (int) ceil($originalTokens / 0.75),
+        ),
+    );
+
+    expect($atWarning->blocked)
+        ->toBeFalse()
+        ->and(
+            $atWarning->evidence[
+                'original_estimated_tokens'
+            ],
+        )
+        ->toBeGreaterThanOrEqual(
+            $atWarning->evidence[
+                'warning_tokens'
+            ],
+        )
+        ->and(
+            $atWarning->evidence[
+                'original_estimated_tokens'
+            ],
+        )
+        ->toBeLessThan(
+            $atWarning->evidence[
+                'hard_ceiling_tokens'
+            ],
+        )
+        ->and(
+            $atWarning->evidence[
+                'warning_reason'
+            ],
+        )
+        ->toBe(
+            'estimated_context_at_or_above_warning_threshold',
+        )
+        ->and(
+            $atWarning->evidence[
+                'decision'
+            ],
+        )
+        ->toBe('reduced')
+        ->and(
+            $atWarning->evidence[
+                'reduction_reason'
+            ],
+        )
+        ->toBe(
+            'warning_threshold_reached_reduce_toward_normal_target',
+        )
+        ->and(
+            $atWarning->evidence[
+                'reduced_sources'
+            ],
+        )
+        ->toContain('agent_default_context')
+        ->and(
+            $atWarning->evidence[
+                'final_estimated_tokens'
+            ],
+        )
+        ->toBeLessThan(
+            $atWarning->evidence[
+                'original_estimated_tokens'
+            ],
+        )
+        ->and(
+            $atWarning->evidence[
+                'final_estimated_tokens'
+            ],
+        )
+        ->toBeLessThan(
+            $atWarning->evidence[
+                'hard_ceiling_tokens'
+            ],
+        );
 });
 
 test('deterministic reduction preserves required task evidence and produces the same final hash', function () {

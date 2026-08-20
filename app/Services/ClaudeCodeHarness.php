@@ -173,6 +173,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 message: 'Claude Code returned malformed stream output.',
                 failureType: 'malformed_output',
                 externalRunId: $stream['session_id'],
+                rawOutput: $execution['output'],
             );
         }
 
@@ -191,6 +192,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 failureType: 'malformed_output',
                 result: $result,
                 externalRunId: $stream['session_id'],
+                rawOutput: $execution['output'],
             );
         }
 
@@ -319,7 +321,15 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         ];
     }
 
-    /** @param array<string, mixed>|null $result */
+    /**
+     * $rawOutput is only accepted for malformed-stream failures: content AIOS could not parse
+     * into structured provider events in the first place, so there is no extracted "error"
+     * field to leak and the raw transcript is the only available diagnostic evidence. Other
+     * failure branches deliberately keep output blank because the parsed result may carry
+     * provider-authored error text not covered by AgentRunRecorder's redaction patterns.
+     *
+     * @param  array<string, mixed>|null  $result
+     */
     private function failure(
         int $exitCode,
         string $message,
@@ -328,6 +338,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         ?string $externalRunId = null,
         ?string $apiErrorCategory = null,
         ?int $apiErrorStatus = null,
+        ?string $rawOutput = null,
     ): NormalizedExecutionResult {
         $resolvedExternalRunId = $externalRunId;
         $usage = null;
@@ -350,7 +361,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
             exitCode: $exitCode === 0
                 ? self::NormalizationFailureExitCode
                 : $exitCode,
-            output: '',
+            output: $rawOutput ?? '',
             errorOutput: $message,
             externalRunId: $resolvedExternalRunId,
             usage: $usage,

@@ -1004,10 +1004,46 @@ test('rejects malformed successful stream output', function () {
     expect($result->exitCode)
         ->toBe(1)
         ->and($result->output)
-        ->toBe('')
+        ->toBe("{not-json}\n")
         ->and($result->errorOutput)
         ->toBe(
             'Claude Code returned malformed stream output.',
+        )
+        ->and(
+            $result
+                ->providerMetadata[
+                    'failure_type'
+                ],
+        )
+        ->toBe('malformed_output');
+});
+
+test('preserves the raw transcript when a result event is missing required metadata', function () {
+    $stream = json_encode([
+        'type' => 'result',
+        'is_error' => false,
+    ], JSON_THROW_ON_ERROR)."\n";
+
+    fakeClaudeCodeExecution($stream);
+
+    $project = claudeCodeProject();
+    $agent = claudeCodeAgent($project);
+
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
+        $project,
+        $agent,
+        'Implement the task.',
+    );
+
+    expect($result->exitCode)
+        ->toBe(1)
+        ->and($result->output)
+        ->toBe($stream)
+        ->and($result->errorOutput)
+        ->toBe(
+            'Claude Code returned a result without required execution metadata.',
         )
         ->and(
             $result
