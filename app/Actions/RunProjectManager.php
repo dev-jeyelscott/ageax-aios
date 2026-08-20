@@ -122,8 +122,14 @@ class RunProjectManager
 
         try {
             $isFinalBatch = $this->plans->handle($roadmap->project, $plan['phases'], $roadmap, $attempt, $plan, fn () => $this->renewLease($lease), (bool) ($plan['remaining_work'] ?? false));
-        } catch (Throwable) {
-            $this->failAttempt($attempt, $execution['exit_code'], 'persistence_failed');
+        } catch (Throwable $throwable) {
+            // Persistence failures were previously swallowed here with no evidence beyond the
+            // generic 'persistence_failed' reason, forcing manual reproduction (re-running
+            // ApplyRoadmapPlan against the stored transcript) to find the actual cause on every
+            // occurrence. Surface the exception message in both the audit trail and the
+            // application log so operators can diagnose without that reproduction step.
+            report($throwable);
+            $this->failAttempt($attempt, $execution['exit_code'], 'persistence_failed', $throwable->getMessage());
 
             return $execution;
         }
@@ -249,9 +255,9 @@ class RunProjectManager
         }, attempts: 3);
     }
 
-    private function failAttempt(RoadmapAttempt $attempt, int $exitCode, string $reason): void
+    private function failAttempt(RoadmapAttempt $attempt, int $exitCode, string $reason, ?string $detail = null): void
     {
-        DB::transaction(function () use ($attempt, $exitCode, $reason): void {
+        DB::transaction(function () use ($attempt, $exitCode, $reason, $detail): void {
             $lockedAttempt = RoadmapAttempt::query()->lockForUpdate()->findOrFail($attempt->id);
             $roadmap = Roadmap::query()->lockForUpdate()->findOrFail($lockedAttempt->roadmap_id);
 
@@ -270,6 +276,7 @@ class RunProjectManager
                 'roadmap_attempt_id' => $lockedAttempt->id,
                 'exit_code' => $exitCode,
                 'reason' => $reason,
+                'detail' => $detail,
                 'retry_count' => $retry['retry_count'],
                 'retry_limit' => $retry['retry_limit'],
                 'roadmap_status' => $roadmapStatus,
