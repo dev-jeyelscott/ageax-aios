@@ -71,6 +71,45 @@ test('it extracts a fenced plan even when a nested field contains a single-line 
     ]);
 });
 
+test('it extracts a recovery decision from a Claude Code stream-json assistant message', function () {
+    // Regression: ClaudeCodeCliRunner always runs with --output-format stream-json, so raw
+    // execution output is NDJSON envelopes like {"type":"assistant","message":{"content":
+    // [{"type":"text","text":"...```json...```"}]}}, not the agent's fenced JSON directly. Before
+    // this, parseAgentMessage() only recognized Codex's item.text shape, so every Claude
+    // Code-harnessed decision (Recovery Engineer, Reviewer, Project Manager) silently failed to
+    // parse and was misclassified as a transient harness failure.
+    $output = json_encode(['type' => 'system', 'subtype' => 'init'])."\n"
+        .json_encode([
+            'type' => 'assistant',
+            'message' => [
+                'content' => [
+                    ['type' => 'text', 'text' => 'Investigating the incident now.'],
+                ],
+            ],
+        ])."\n"
+        .json_encode([
+            'type' => 'assistant',
+            'message' => [
+                'content' => [
+                    [
+                        'type' => 'text',
+                        'text' => "Diagnosis complete.\n\n```json\n{\n  \"root_cause_category\": \"orchestration_defect\",\n  \"root_cause_summary\": \"Missing deterministic block classification.\",\n  \"recoverable\": true,\n  \"fix_applied\": true,\n  \"changed_files\": [\"app/Services/WorkflowRecoveryEngine.php\"],\n  \"fix_summary\": \"Extended KnownDeterministicBlocks.\"\n}\n```",
+                    ],
+                ],
+            ],
+        ])."\n"
+        .json_encode(['type' => 'result', 'subtype' => 'success', 'result' => 'done', 'is_error' => false]);
+
+    expect(app(StructuredResultParser::class)->parseAgentMessage($output))->toBe([
+        'root_cause_category' => 'orchestration_defect',
+        'root_cause_summary' => 'Missing deterministic block classification.',
+        'recoverable' => true,
+        'fix_applied' => true,
+        'changed_files' => ['app/Services/WorkflowRecoveryEngine.php'],
+        'fix_summary' => 'Extended KnownDeterministicBlocks.',
+    ]);
+});
+
 test('it extracts a review decision from pretty-printed JSON with no fence', function () {
     $output = <<<'TEXT'
     {

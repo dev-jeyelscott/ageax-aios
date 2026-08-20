@@ -29,6 +29,21 @@ class StructuredResultParser
             return $fenced;
         }
 
+        // Claude Code CLI's `stream-json` output (used for every Claude Code execution, including
+        // the Recovery Engineer/Reviewer/Project Manager roles) wraps the agent's final answer
+        // inside an NDJSON envelope: {"type":"assistant","message":{"content":[{"type":"text",
+        // "text":"...```json...```"}]}}. The fenced/embedded scans above operate on the raw
+        // envelope text, where the agent's own JSON is still escaped as a string literal, so they
+        // never match. Extract the actual message text first (mirroring
+        // AgentRunRecorder::extractAgentMessageTexts(), which already handles both harnesses), then
+        // re-run fenced/plain JSON extraction against that unwrapped text.
+        foreach (array_reverse($this->extractAgentMessageTexts($trimmed)) as $text) {
+            $decoded = $this->decodeFencedJsonObject($text) ?? $this->decodeJsonObject($text);
+            if ($decoded !== null && ! isset($decoded['type'])) {
+                return $decoded;
+            }
+        }
+
         foreach (array_reverse(preg_split('/\R/', $trimmed) ?: []) as $line) {
             $decoded = $this->decodeJsonObject($line);
             if ($decoded !== null && ! isset($decoded['type'])) {
@@ -43,6 +58,40 @@ class StructuredResultParser
 
         // Last resort: a single pretty-printed JSON object with no fence at all.
         return $this->decodeEmbeddedJsonObject($trimmed);
+    }
+
+    /**
+     * Recognizes the "agent message" shape from both supported harnesses: Codex CLI's
+     * `item.completed` items and Claude Code CLI's `stream-json` assistant text blocks.
+     *
+     * @return list<string>
+     */
+    private function extractAgentMessageTexts(string $output): array
+    {
+        $texts = [];
+
+        foreach (preg_split('/\R/', $output) ?: [] as $line) {
+            $event = $this->decodeJsonObject($line);
+            if ($event === null) {
+                continue;
+            }
+
+            $item = $event['item'] ?? null;
+            if (is_array($item) && ($item['type'] ?? null) === 'agent_message' && is_string($item['text'] ?? null)) {
+                $texts[] = $item['text'];
+            }
+
+            $content = ($event['type'] ?? null) === 'assistant' ? $event['message']['content'] ?? null : null;
+            if (is_array($content)) {
+                foreach ($content as $block) {
+                    if (is_array($block) && ($block['type'] ?? null) === 'text' && is_string($block['text'] ?? null)) {
+                        $texts[] = $block['text'];
+                    }
+                }
+            }
+        }
+
+        return $texts;
     }
 
     /** @return array<string, mixed>|null */
