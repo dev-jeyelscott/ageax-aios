@@ -272,7 +272,7 @@ class TaskWorkflow
         if (! $phaseTasks->every(
             fn (Task $task): bool => in_array(
                 TaskStatus::from($task->getRawOriginal('status')),
-                [TaskStatus::ReadyForReview, TaskStatus::Done],
+                [TaskStatus::ReadyForReview, TaskStatus::Done, TaskStatus::Cancelled],
                 true,
             ),
         )) {
@@ -290,7 +290,7 @@ class TaskWorkflow
             ->whereBelongsTo($project)
             ->whereHas(
                 'tasks',
-                fn ($tasks) => $tasks->where('status', '!=', TaskStatus::Done),
+                fn ($tasks) => $tasks->whereNotIn('status', [TaskStatus::Done, TaskStatus::Cancelled]),
             )
             ->orderBy('position')
             ->lockForUpdate()

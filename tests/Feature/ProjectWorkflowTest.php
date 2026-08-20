@@ -170,6 +170,48 @@ test('a same-phase dependency is satisfied once its dependency reaches ready for
         ->and($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($secondTask->id);
 });
 
+test('a cancelled task counts as having crossed the phase review barrier', function () {
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
+
+    $firstTask = createWorkflowTask($project, 1);
+    $secondTask = createWorkflowTask($project, 2);
+    $firstTask->update(['phase_id' => $phase->id]);
+    $secondTask->update(['phase_id' => $phase->id]);
+
+    $transitionTask = app(TransitionTask::class);
+    $transitionTask->handle($firstTask, TaskStatus::Coding);
+    $transitionTask->handle($firstTask, TaskStatus::Validating);
+    $transitionTask->handle($firstTask, TaskStatus::ReadyForReview);
+    $transitionTask->handle($secondTask, TaskStatus::Blocked);
+    $transitionTask->handle($secondTask, TaskStatus::Cancelled);
+
+    $claimTask = app(ClaimTask::class);
+
+    expect($claimTask->handle($project, AgentRole::Reviewer)?->id)->toBe($firstTask->id);
+});
+
+test('a cancelled task lets the coder advance into the next phase', function () {
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $firstPhase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
+    $secondPhase = Phase::create(['project_id' => $project->id, 'position' => 2, 'title' => 'Delivery', 'objective' => 'Deliver the feature.']);
+
+    $firstTask = createWorkflowTask($project, 1);
+    $secondTask = createWorkflowTask($project, 2);
+    $firstTask->update(['phase_id' => $firstPhase->id]);
+    $secondTask->update(['phase_id' => $secondPhase->id]);
+
+    $transitionTask = app(TransitionTask::class);
+    $transitionTask->handle($firstTask, TaskStatus::Blocked);
+    $transitionTask->handle($firstTask, TaskStatus::Cancelled);
+
+    $claimTask = app(ClaimTask::class);
+
+    expect($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($secondTask->id);
+});
+
 test('changes required closes the phase review gate and returns control to the coder', function () {
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
