@@ -1,4 +1,4 @@
-import { Form, Head, Link, usePoll } from '@inertiajs/react';
+import { Form, Head, Link, usePage, usePoll } from '@inertiajs/react';
 import {
     Activity,
     ArrowLeft,
@@ -17,6 +17,7 @@ import { lazy, Suspense, useState, useSyncExternalStore } from 'react';
 import {
     index,
     requeueRoadmap,
+    show as showProject,
     showAgentRun,
     showTask,
     updateStatus,
@@ -128,6 +129,29 @@ type Project = {
 };
 
 type Tab = 'overview' | 'agents' | 'skills' | 'tasks' | 'activity';
+
+const tabs: { value: Tab; label: string }[] = [
+    { value: 'overview', label: 'Overview' },
+    { value: 'agents', label: 'Agents' },
+    { value: 'skills', label: 'Skills' },
+    { value: 'tasks', label: 'Tasks' },
+    { value: 'activity', label: 'Recent Activity' },
+];
+
+function resolveProjectTab(url: string): Tab {
+    const query = url.split('?')[1]?.split('#')[0] ?? '';
+    const value = new URLSearchParams(query).get('tab');
+
+    return tabs.some((tab) => tab.value === value)
+        ? (value as Tab)
+        : 'overview';
+}
+
+function projectTabUrl(projectId: number, tab: Tab): string {
+    return showProject(projectId, {
+        query: tab === 'overview' ? {} : { tab },
+    }).url;
+}
 
 function formatTokens(tokens: number): string {
     return new Intl.NumberFormat().format(tokens);
@@ -1179,6 +1203,8 @@ export default function ProjectShow({
     project: Project;
     harness_capabilities: HarnessCapabilities;
 }) {
+    const { url } = usePage();
+
     usePoll(
         2_000,
         {
@@ -1196,15 +1222,7 @@ export default function ProjectShow({
         (task) => task.status === 'done',
     ).length;
 
-    const [tab, setTab] = useState<Tab>('overview');
-
-    const tabs: { value: Tab; label: string }[] = [
-        { value: 'overview', label: 'Overview' },
-        { value: 'agents', label: 'Agents' },
-        { value: 'skills', label: 'Skills' },
-        { value: 'tasks', label: 'Tasks' },
-        { value: 'activity', label: 'Recent Activity' },
-    ];
+    const tab = resolveProjectTab(url);
 
     useAppHeaderSlot(
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
@@ -1286,25 +1304,24 @@ export default function ProjectShow({
 
                 <div className="relative flex min-h-0 flex-1 flex-col gap-2.5 px-3 py-3 md:px-4">
                     <nav
-                        role="tablist"
                         aria-label="Project sections"
                         className="flex shrink-0 gap-1 overflow-x-auto rounded-xl border border-border/80 bg-background/60 p-1"
                     >
                         {tabs.map(({ value, label }) => (
-                            <button
+                            <Link
                                 key={value}
-                                type="button"
-                                role="tab"
-                                aria-selected={tab === value}
-                                onClick={() => setTab(value)}
-                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                                href={projectTabUrl(project.id, value)}
+                                aria-current={
+                                    tab === value ? 'page' : undefined
+                                }
+                                className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
                                     tab === value
-                                        ? 'glow-border border border-primary/20 bg-primary/10 text-primary/80'
-                                        : 'border border-transparent text-muted-foreground hover:bg-foreground/3 hover:text-muted-foreground'
+                                        ? 'glow-border border-primary/20 bg-primary/10 text-primary/80'
+                                        : 'border-transparent text-muted-foreground hover:bg-foreground/3 hover:text-muted-foreground'
                                 }`}
                             >
                                 {label}
-                            </button>
+                            </Link>
                         ))}
                     </nav>
 
