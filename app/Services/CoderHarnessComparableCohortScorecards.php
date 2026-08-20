@@ -49,11 +49,10 @@ final class CoderHarnessComparableCohortScorecards
     ): array {
         $projectTasks = $this->uniqueProjectTasks($project, $tasks);
         $baseMetrics = $this->metrics->calculate($projectTasks);
+
         $projectOutcomes = $this->projectOutcomes(
             $project,
-            is_array($baseMetrics['task_outcomes'] ?? null)
-                ? $baseMetrics['task_outcomes']
-                : [],
+            $this->recordList($baseMetrics['task_outcomes'] ?? null),
         );
 
         $candidates = [
@@ -88,11 +87,11 @@ final class CoderHarnessComparableCohortScorecards
 
         $selected = $this->selectCandidate($candidates);
         $score = $selected['score'];
+
         $configurationScores = $this->rankConfigurationScores(
-            is_array($score['configuration_scores'] ?? null)
-                ? $score['configuration_scores']
-                : [],
+            $this->recordList($score['configuration_scores'] ?? null),
         );
+
         $completedTaskCount = (int) $selected['comparable_completed_task_count'];
         $confidence = $this->confidenceFor($completedTaskCount);
         $scoreVersion = (int) ($score['schema_version'] ?? CoderHarnessOutcomeMetrics::SchemaVersion);
@@ -141,7 +140,11 @@ final class CoderHarnessComparableCohortScorecards
                 fn (array $candidate): array => $this->fallbackEvaluation($candidate),
                 $candidates,
             ),
-            'sample' => $this->sampleEvidence($score, $completedTaskCount, count($configurationScores)),
+            'sample' => $this->sampleEvidence(
+                $score,
+                $completedTaskCount,
+                count($configurationScores),
+            ),
             'confidence' => [
                 'level' => $confidence,
                 'comparable_completed_task_count' => $completedTaskCount,
@@ -163,7 +166,9 @@ final class CoderHarnessComparableCohortScorecards
                 confidence: $confidence,
                 completedTaskCount: $completedTaskCount,
                 scoreVersion: $scoreVersion,
-                cohort: is_array($selected['cohort'] ?? null) ? $selected['cohort'] : [],
+                cohort: is_array($selected['cohort'] ?? null)
+                    ? $selected['cohort']
+                    : [],
             ),
         ];
     }
@@ -247,11 +252,17 @@ final class CoderHarnessComparableCohortScorecards
         $filteredOutcomes = array_values(array_filter(
             $outcomes,
             function (array $outcome) use ($workType, $complexity): bool {
-                if ($workType !== null && ($outcome['work_type'] ?? null) !== $workType->value) {
+                if (
+                    $workType !== null
+                    && ($outcome['work_type'] ?? null) !== $workType->value
+                ) {
                     return false;
                 }
 
-                if ($complexity !== null && ($outcome['complexity'] ?? null) !== $complexity->value) {
+                if (
+                    $complexity !== null
+                    && ($outcome['complexity'] ?? null) !== $complexity->value
+                ) {
                     return false;
                 }
 
@@ -260,7 +271,11 @@ final class CoderHarnessComparableCohortScorecards
         ));
 
         $score = $this->metrics->scoreOutcomes($filteredOutcomes);
-        $completedTaskCount = (int) ($score['reference']['successful_attributed_task_count'] ?? 0);
+
+        $completedTaskCount = (int) (
+            $score['reference']['successful_attributed_task_count'] ?? 0
+        );
+
         $configurationCount = is_array($score['configuration_scores'] ?? null)
             ? count($score['configuration_scores'])
             : 0;
@@ -303,8 +318,10 @@ final class CoderHarnessComparableCohortScorecards
             self::ConfidencePreliminary,
         ] as $targetConfidence) {
             foreach ($candidates as $candidate) {
-                if ($candidate['confidence'] === $targetConfidence
-                    && (int) $candidate['configuration_count'] >= 2) {
+                if (
+                    $candidate['confidence'] === $targetConfidence
+                    && (int) $candidate['configuration_count'] >= 2
+                ) {
                     return $candidate;
                 }
             }
@@ -347,8 +364,14 @@ final class CoderHarnessComparableCohortScorecards
         ?TaskComplexity $complexity,
         array $broadenedDimensions,
     ): array {
-        $workTypeValue = $workType?->value ?? '*';
-        $complexityValue = $complexity?->value ?? '*';
+        $workTypeValue = $workType === null
+            ? '*'
+            : $workType->value;
+
+        $complexityValue = $complexity === null
+            ? '*'
+            : $complexity->value;
+
         $projectId = (int) $project->getKey();
         $projectName = (string) $project->getAttribute('name');
 
@@ -379,8 +402,12 @@ final class CoderHarnessComparableCohortScorecards
                     'project_id' => $projectId,
                     'project_name' => $projectName,
                 ],
-                'work_type' => $workType?->value,
-                'complexity' => $complexity?->value,
+                'work_type' => $workType === null
+                    ? null
+                    : $workType->value,
+                'complexity' => $complexity === null
+                    ? null
+                    : $complexity->value,
             ],
             'broadened_dimensions' => $broadenedDimensions,
             'includes_unknown_metadata' => [
@@ -396,7 +423,9 @@ final class CoderHarnessComparableCohortScorecards
      */
     private function fallbackEvaluation(array $candidate): array
     {
-        $score = is_array($candidate['score'] ?? null) ? $candidate['score'] : [];
+        $score = is_array($candidate['score'] ?? null)
+            ? $candidate['score']
+            : [];
 
         return [
             'fallback_level' => (int) $candidate['fallback_level'],
@@ -420,7 +449,9 @@ final class CoderHarnessComparableCohortScorecards
         int $completedTaskCount,
         int $configurationCount,
     ): array {
-        $cohort = is_array($score['cohort'] ?? null) ? $score['cohort'] : [];
+        $cohort = is_array($score['cohort'] ?? null)
+            ? $score['cohort']
+            : [];
 
         return [
             'terminal_task_count' => (int) ($cohort['terminal_task_count'] ?? 0),
@@ -450,14 +481,16 @@ final class CoderHarnessComparableCohortScorecards
      */
     private function rankConfigurationScores(array $configurationScores): array
     {
-        $scores = array_values(array_map(
+        $scores = array_map(
             function (array $score): array {
-                $score['comparable_completed_task_count'] = (int) ($score['successful_task_count'] ?? 0);
+                $score['comparable_completed_task_count'] = (int) (
+                    $score['successful_task_count'] ?? 0
+                );
 
                 return $score;
             },
             $configurationScores,
-        ));
+        );
 
         usort($scores, function (array $left, array $right): int {
             $scoreComparison = ((float) ($right['composite_score'] ?? 0.0))
@@ -506,8 +539,12 @@ final class CoderHarnessComparableCohortScorecards
                     'configuration_key' => $score['configuration_key'] ?? null,
                     'configuration' => $score['configuration'] ?? null,
                     'sample_count' => (int) ($score['sample_count'] ?? 0),
-                    'comparable_completed_task_count' => (int) ($score['successful_task_count'] ?? 0),
-                    'composite_score' => (float) ($score['composite_score'] ?? 0.0),
+                    'comparable_completed_task_count' => (int) (
+                        $score['successful_task_count'] ?? 0
+                    ),
+                    'composite_score' => (float) (
+                        $score['composite_score'] ?? 0.0
+                    ),
                     'component_points' => is_array($score['component_points'] ?? null)
                         ? $score['component_points']
                         : [],
@@ -541,6 +578,7 @@ final class CoderHarnessComparableCohortScorecards
 
         $leader = $configurationScores[0];
         $runnerUp = $configurationScores[1];
+
         $leaderScore = (float) ($leader['composite_score'] ?? 0.0);
         $runnerUpScore = (float) ($runnerUp['composite_score'] ?? 0.0);
 
@@ -557,7 +595,11 @@ final class CoderHarnessComparableCohortScorecards
             ];
         }
 
-        $componentAdvantage = $this->strongestComponentAdvantage($leader, $runnerUp);
+        $componentAdvantage = $this->strongestComponentAdvantage(
+            $leader,
+            $runnerUp,
+        );
+
         $leaderConfiguration = is_array($leader['configuration'] ?? null)
             ? $leader['configuration']
             : [];
@@ -583,18 +625,24 @@ final class CoderHarnessComparableCohortScorecards
             ...$evidence,
             'eligible' => $confidence === self::ConfidenceRecommendationEligible,
             'leading_configuration' => [
-                'configuration_key' => (string) ($leader['configuration_key'] ?? ''),
+                'configuration_key' => (string) (
+                    $leader['configuration_key'] ?? ''
+                ),
                 'harness' => is_string($leaderConfiguration['harness'] ?? null)
                     ? $leaderConfiguration['harness']
                     : null,
                 'model' => is_string($leaderConfiguration['model'] ?? null)
                     ? $leaderConfiguration['model']
                     : null,
-                'reasoning_setting' => is_string($leaderConfiguration['reasoning_setting'] ?? null)
+                'reasoning_setting' => is_string(
+                    $leaderConfiguration['reasoning_setting'] ?? null,
+                )
                     ? $leaderConfiguration['reasoning_setting']
                     : null,
                 'sample_count' => (int) ($leader['sample_count'] ?? 0),
-                'comparable_completed_task_count' => (int) ($leader['successful_task_count'] ?? 0),
+                'comparable_completed_task_count' => (int) (
+                    $leader['successful_task_count'] ?? 0
+                ),
                 'composite_score' => $leaderScore,
                 'component_points' => is_array($leader['component_points'] ?? null)
                     ? $leader['component_points']
@@ -609,8 +657,10 @@ final class CoderHarnessComparableCohortScorecards
      * @param  array<string, mixed>  $runnerUp
      * @return array{component: string, delta: float}|null
      */
-    private function strongestComponentAdvantage(array $leader, array $runnerUp): ?array
-    {
+    private function strongestComponentAdvantage(
+        array $leader,
+        array $runnerUp,
+    ): ?array {
         $components = [
             'quality' => [
                 $leader['component_points']['quality']['total'] ?? null,
@@ -637,7 +687,10 @@ final class CoderHarnessComparableCohortScorecards
                 continue;
             }
 
-            $delta = round((float) $leaderPoints - (float) $runnerUpPoints, 4);
+            $delta = round(
+                (float) $leaderPoints - (float) $runnerUpPoints,
+                4,
+            );
 
             if ($delta <= 0.0) {
                 continue;
@@ -664,10 +717,18 @@ final class CoderHarnessComparableCohortScorecards
             : [];
 
         return implode("\0", [
-            is_string($configuration['harness'] ?? null) ? $configuration['harness'] : '',
-            is_string($configuration['model'] ?? null) ? $configuration['model'] : '',
-            is_string($configuration['reasoning_setting'] ?? null) ? $configuration['reasoning_setting'] : '',
-            is_string($score['configuration_key'] ?? null) ? $score['configuration_key'] : '',
+            is_string($configuration['harness'] ?? null)
+                ? $configuration['harness']
+                : '',
+            is_string($configuration['model'] ?? null)
+                ? $configuration['model']
+                : '',
+            is_string($configuration['reasoning_setting'] ?? null)
+                ? $configuration['reasoning_setting']
+                : '',
+            is_string($score['configuration_key'] ?? null)
+                ? $score['configuration_key']
+                : '',
         ]);
     }
 
@@ -692,5 +753,30 @@ final class CoderHarnessComparableCohortScorecards
                 ? $configuration['reasoning_setting']
                 : 'provider_default_reasoning',
         );
+    }
+
+    /**
+     * Convert an unknown analytics payload value into a statically safe list of
+     * record arrays. Invalid/non-array entries are ignored instead of guessed.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function recordList(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $records = [];
+
+        foreach ($value as $record) {
+            if (! is_array($record)) {
+                continue;
+            }
+
+            $records[] = $record;
+        }
+
+        return $records;
     }
 }
