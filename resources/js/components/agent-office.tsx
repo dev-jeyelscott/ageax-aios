@@ -4,7 +4,6 @@ import {
     AlertTriangle,
     CheckCircle2,
     CircleDot,
-    Clock,
     Cpu,
     GitBranch,
     GitCommitHorizontal,
@@ -163,11 +162,7 @@ const implementationStatuses = new Set([
 
 const reviewStatuses = new Set(['ready_for_review', 'reviewing']);
 
-const attentionStatuses = new Set([
-    'blocked',
-    'interrupted',
-    'failed',
-]);
+const attentionStatuses = new Set(['blocked', 'interrupted', 'failed']);
 
 function labelForRole(role: string): string {
     return (
@@ -239,10 +234,7 @@ function formatRunDuration(
         return 'Not recorded';
     }
 
-    const totalSeconds = Math.max(
-        0,
-        Math.round((finished - started) / 1_000),
-    );
+    const totalSeconds = Math.max(0, Math.round((finished - started) / 1_000));
 
     if (totalSeconds < 60) {
         return `${totalSeconds}s`;
@@ -267,8 +259,7 @@ function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
     const selected = preferredRoleOrder.flatMap((role) => {
         const worker = workers.find(
             (candidate) =>
-                candidate.role === role &&
-                !claimedIds.has(candidate.id),
+                candidate.role === role && !claimedIds.has(candidate.id),
         );
 
         if (!worker) {
@@ -283,10 +274,7 @@ function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
     return selected;
 }
 
-function workerMessage(
-    worker: OfficeWorker,
-    active: boolean,
-): string {
+function workerMessage(worker: OfficeWorker, active: boolean): string {
     if (worker.run?.latest_message) {
         return worker.run.latest_message;
     }
@@ -370,15 +358,11 @@ function workerPresentation(
     }
 
     if (active) {
-        if (
-            worker.role === 'coder' &&
-            worker.task?.status === 'validating'
-        ) {
+        if (worker.role === 'coder' && worker.task?.status === 'validating') {
             return {
                 label: 'Validating',
                 dotClass: 'bg-primary',
-                badgeClass:
-                    'border-primary/30 bg-primary/8 text-primary',
+                badgeClass: 'border-primary/30 bg-primary/8 text-primary',
             };
         }
 
@@ -395,8 +379,7 @@ function workerPresentation(
             return {
                 label: 'Planning',
                 dotClass: 'bg-primary',
-                badgeClass:
-                    'border-primary/30 bg-primary/8 text-primary',
+                badgeClass: 'border-primary/30 bg-primary/8 text-primary',
             };
         }
 
@@ -415,16 +398,14 @@ function workerPresentation(
         return {
             label: 'Waiting',
             dotClass: 'bg-primary',
-            badgeClass:
-                'border-primary/20 bg-primary/5 text-primary',
+            badgeClass: 'border-primary/20 bg-primary/5 text-primary',
         };
     }
 
     return {
         label: 'Available',
         dotClass: 'bg-muted-foreground',
-        badgeClass:
-            'border-border bg-background/55 text-muted-foreground',
+        badgeClass: 'border-border bg-background/55 text-muted-foreground',
     };
 }
 
@@ -435,12 +416,9 @@ function fallbackTaskForRole(
     if (role === 'coder') {
         return (
             tasks.find((task) =>
-                [
-                    'queued',
-                    'coding',
-                    'validating',
-                    'changes_required',
-                ].includes(task.status),
+                ['queued', 'coding', 'validating', 'changes_required'].includes(
+                    task.status,
+                ),
             ) ?? null
         );
     }
@@ -461,9 +439,7 @@ function validationPresentation(
     workflow: OfficeWorkflow | null,
 ): ValidationPresentation {
     if (evidence?.validation_results?.passed === true) {
-        const checks = Object.values(
-            evidence.validation_results.checks ?? {},
-        );
+        const checks = Object.values(evidence.validation_results.checks ?? {});
         const passed = checks.filter(Boolean).length;
 
         return {
@@ -495,8 +471,7 @@ function validationPresentation(
         return {
             label: 'Running',
             dotClass: 'bg-primary',
-            badgeClass:
-                'border-primary/25 bg-primary/8 text-primary',
+            badgeClass: 'border-primary/25 bg-primary/8 text-primary',
             summary: 'AIOS deterministic validation is in progress',
         };
     }
@@ -518,8 +493,7 @@ function validationPresentation(
     return {
         label: 'Not recorded',
         dotClass: 'bg-muted-foreground',
-        badgeClass:
-            'border-border bg-background/55 text-muted-foreground',
+        badgeClass: 'border-border bg-background/55 text-muted-foreground',
         summary: 'No deterministic validation evidence recorded',
     };
 }
@@ -553,8 +527,7 @@ function nextStageFor(
             return {
                 stage: 'Coder',
                 detail: 'Implementation',
-                trigger:
-                    'After AIOS validates and persists eligible PM output',
+                trigger: 'After AIOS validates and persists eligible PM output',
             };
         case 'coder':
             return {
@@ -567,8 +540,7 @@ function nextStageFor(
             return {
                 stage: 'AIOS decision',
                 detail: 'Approve or changes required',
-                trigger:
-                    'After AIOS validates the structured review result',
+                trigger: 'After AIOS validates the structured review result',
             };
         default:
             return {
@@ -579,13 +551,7 @@ function nextStageFor(
     }
 }
 
-function EmptyAgentNode({
-    role,
-    index,
-}: {
-    role: string;
-    index: number;
-}) {
+function EmptyAgentNode({ role, index }: { role: string; index: number }) {
     return (
         <article
             data-workflow-role={role}
@@ -596,9 +562,7 @@ function EmptyAgentNode({
                     {index.toString().padStart(2, '0')}
                 </span>
                 <div>
-                    <p className="execution-role-label">
-                        {labelForRole(role)}
-                    </p>
+                    <p className="execution-role-label">{labelForRole(role)}</p>
                     <p className="mt-1 text-sm font-semibold text-foreground">
                         Worker unavailable
                     </p>
@@ -640,11 +604,7 @@ function AgentNode({
     projectStatus: string;
     fallbackTask: OfficeTask | null;
 }) {
-    const presentation = workerPresentation(
-        worker,
-        active,
-        projectStatus,
-    );
+    const presentation = workerPresentation(worker, active, projectStatus);
     const thumbnail = roleThumbnails[worker.role] ?? null;
     const message = workerMessage(worker, active);
     const displayedTask = worker.task ?? fallbackTask;
@@ -658,9 +618,7 @@ function AgentNode({
             data-workflow-role={worker.role}
             data-active={active ? 'true' : 'false'}
             className={`execution-agent-card ${
-                active
-                    ? 'execution-agent-card--active agent-card-active'
-                    : ''
+                active ? 'execution-agent-card--active agent-card-active' : ''
             }`}
         >
             <div className="flex items-start justify-between gap-3">
@@ -721,10 +679,7 @@ function AgentNode({
                         active ? 'execution-chat-bubble--active' : ''
                     }`}
                 >
-                    <span
-                        aria-hidden="true"
-                        className="execution-chat-tail"
-                    />
+                    <span aria-hidden="true" className="execution-chat-tail" />
 
                     <p className="relative line-clamp-3 text-xs leading-relaxed text-foreground">
                         {message}
@@ -872,13 +827,11 @@ function RoadmapProgressCard({
     completed: number;
     total: number;
 }) {
-    const progress =
-        total === 0 ? 0 : Math.round((completed / total) * 100);
+    const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
 
     const nextTask =
-        tasks.find(
-            (task) => !['done', 'cancelled'].includes(task.status),
-        ) ?? null;
+        tasks.find((task) => !['done', 'cancelled'].includes(task.status)) ??
+        null;
 
     return (
         <section className="execution-ops-card">
@@ -904,9 +857,7 @@ function RoadmapProgressCard({
             </div>
 
             <div className="mt-3 min-w-0">
-                <p className="execution-meta-label">
-                    Next unfinished task
-                </p>
+                <p className="execution-meta-label">Next unfinished task</p>
 
                 {nextTask ? (
                     <>
@@ -951,9 +902,7 @@ function CurrentOperationCard({
     workers: OfficeWorker[];
 }) {
     const worker = workflow
-        ? workers.find(
-              (candidate) => candidate.id === workflow.worker_id,
-          )
+        ? workers.find((candidate) => candidate.id === workflow.worker_id)
         : undefined;
 
     return (
@@ -993,9 +942,7 @@ function CurrentOperationCard({
                 <div>
                     <p className="execution-meta-label">Started</p>
                     <p className="mt-1 truncate text-2xs text-muted-foreground">
-                        {formatEvidenceTime(
-                            worker?.run?.started_at ?? null,
-                        )}
+                        {formatEvidenceTime(worker?.run?.started_at ?? null)}
                     </p>
                 </div>
 
@@ -1098,21 +1045,14 @@ function RepositoryEvidenceCard({
             <dl className="mt-3 grid grid-cols-3 gap-2">
                 {[
                     ['Base', evidence?.base_sha ?? null],
-                    [
-                        'Head',
-                        evidence?.head_sha ??
-                            repositoryHeadSha ??
-                            null,
-                    ],
+                    ['Head', evidence?.head_sha ?? repositoryHeadSha ?? null],
                     ['Commit', evidence?.commit_sha ?? null],
                 ].map(([label, value]) => (
                     <div
                         key={label}
                         className="rounded-lg border border-border-subtle bg-background/35 px-2 py-2"
                     >
-                        <dt className="execution-meta-label">
-                            {label}
-                        </dt>
+                        <dt className="execution-meta-label">{label}</dt>
                         <dd
                             title={value ?? undefined}
                             className="mt-1 truncate font-mono text-2xs text-primary"
@@ -1125,18 +1065,14 @@ function RepositoryEvidenceCard({
 
             <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-2.5">
                 <div>
-                    <p className="execution-meta-label">
-                        Changed Files
-                    </p>
+                    <p className="execution-meta-label">Changed Files</p>
                     <p className="mt-1 text-xs font-medium text-foreground">
                         {changedFiles}
                     </p>
                 </div>
 
                 <div>
-                    <p className="execution-meta-label">
-                        Working Tree
-                    </p>
+                    <p className="execution-meta-label">Working Tree</p>
                     <p
                         className={`mt-1 text-xs font-medium ${
                             gitStatus === 'clean'
@@ -1185,10 +1121,7 @@ function ValidationStateCard({
     evidence: GitEvidence | null;
     workflow: OfficeWorkflow | null;
 }) {
-    const presentation = validationPresentation(
-        evidence,
-        workflow,
-    );
+    const presentation = validationPresentation(evidence, workflow);
     const task = evidence?.task ?? workflow?.task ?? null;
 
     return (
@@ -1199,9 +1132,7 @@ function ValidationStateCard({
             </div>
 
             <div className="mt-4 flex items-center justify-between gap-3">
-                <span className="text-xs text-muted-foreground">
-                    Status
-                </span>
+                <span className="text-xs text-muted-foreground">Status</span>
 
                 <Badge
                     variant="outline"
@@ -1225,9 +1156,7 @@ function ValidationStateCard({
                 <span className="execution-meta-label">Checks</span>
                 <span className="font-mono text-2xs text-muted-foreground">
                     {evidence?.validation_results?.checks
-                        ? Object.keys(
-                              evidence.validation_results.checks,
-                          ).length
+                        ? Object.keys(evidence.validation_results.checks).length
                         : '—'}
                 </span>
             </div>
@@ -1275,10 +1204,7 @@ function TokenUsageCard({
 
     const barTotal = Math.max(
         1,
-        harnesses.reduce(
-            (sum, entry) => sum + entry.usage.token_usage,
-            0,
-        ),
+        harnesses.reduce((sum, entry) => sum + entry.usage.token_usage, 0),
     );
 
     return (
@@ -1290,9 +1216,7 @@ function TokenUsageCard({
 
             <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(11rem,0.75fr)_minmax(0,1.25fr)_minmax(11rem,0.8fr)]">
                 <div>
-                    <p className="execution-meta-label">
-                        Total Observed
-                    </p>
+                    <p className="execution-meta-label">Total Observed</p>
                     <p className="mt-1 text-2xl font-semibold text-foreground">
                         {formatTokens(total)}
                     </p>
@@ -1316,9 +1240,7 @@ function TokenUsageCard({
                                         </span>
 
                                         <span className="font-mono text-2xs text-primary">
-                                            {formatTokens(
-                                                usage.token_usage,
-                                            )}{' '}
+                                            {formatTokens(usage.token_usage)}{' '}
                                             tokens
                                         </span>
                                     </div>
@@ -1348,8 +1270,7 @@ function TokenUsageCard({
 
                     <div className="mt-2 grid gap-1.5">
                         {preferredRoleOrder.map((role) => {
-                            const observation =
-                                observability[role];
+                            const observation = observability[role];
 
                             return (
                                 <div
@@ -1361,8 +1282,7 @@ function TokenUsageCard({
                                     </span>
 
                                     <span className="shrink-0 font-mono text-2xs text-foreground">
-                                        {observation?.rolling_average ===
-                                        null
+                                        {observation?.rolling_average === null
                                             ? 'No runs'
                                             : observation?.rolling_average !==
                                                 undefined
@@ -1416,9 +1336,7 @@ function HealthCard({
                     </div>
 
                     <div className="min-w-0">
-                        <p className="execution-meta-label">
-                            System Health
-                        </p>
+                        <p className="execution-meta-label">System Health</p>
                         <p
                             className={`mt-0.5 truncate text-xs font-medium ${
                                 healthy
@@ -1466,16 +1384,14 @@ function HealthCard({
 
             {!healthy && (
                 <div className="mt-2 grid gap-1">
-                    {[...errors, ...warnings]
-                        .slice(0, 2)
-                        .map((message) => (
-                            <p
-                                key={message}
-                                className="truncate text-2xs text-muted-foreground"
-                            >
-                                {message}
-                            </p>
-                        ))}
+                    {[...errors, ...warnings].slice(0, 2).map((message) => (
+                        <p
+                            key={message}
+                            className="truncate text-2xs text-muted-foreground"
+                        >
+                            {message}
+                        </p>
+                    ))}
                 </div>
             )}
         </section>
@@ -1506,9 +1422,7 @@ export function AgentOffice({
         total: number;
     };
 }) {
-    const pageProject = usePage().props.project as
-        | OverviewProject
-        | undefined;
+    const pageProject = usePage().props.project as OverviewProject | undefined;
 
     const displayedWorkers = useMemo(
         () => selectOfficeWorkers(workers),
@@ -1546,8 +1460,7 @@ export function AgentOffice({
     }, [agents, workerBindings]);
 
     const tasks = pageProject?.tasks ?? [];
-    const currentWorkflow =
-        workflow?.mode === 'current' ? workflow : null;
+    const currentWorkflow = workflow?.mode === 'current' ? workflow : null;
     const activeWorkerId = currentWorkflow?.worker_id ?? null;
     const workflowStatus = currentWorkflow?.task?.status;
 
@@ -1561,8 +1474,7 @@ export function AgentOffice({
         coderToReviewerState = 'paused';
     } else if (
         currentWorkflow?.role === 'reviewer' ||
-        (workflowStatus !== undefined &&
-            reviewStatuses.has(workflowStatus))
+        (workflowStatus !== undefined && reviewStatuses.has(workflowStatus))
     ) {
         pmToCoderState = 'complete';
         coderToReviewerState = 'active';
@@ -1589,9 +1501,7 @@ export function AgentOffice({
             worker.run?.status === 'failed' ||
             Boolean(worker.run?.failure_reason)
         ) {
-            healthErrors.add(
-                `${labelForRole(worker.role)} requires attention`,
-            );
+            healthErrors.add(`${labelForRole(worker.role)} requires attention`);
         }
     }
 
@@ -1600,15 +1510,11 @@ export function AgentOffice({
     }
 
     if (projectStatus !== 'running') {
-        healthWarnings.add(
-            `Project execution is ${humanize(projectStatus)}`,
-        );
+        healthWarnings.add(`Project execution is ${humanize(projectStatus)}`);
     }
 
     if (gitStatus !== 'clean') {
-        healthWarnings.add(
-            `Repository state is ${humanize(gitStatus)}`,
-        );
+        healthWarnings.add(`Repository state is ${humanize(gitStatus)}`);
     }
 
     if (
@@ -1634,9 +1540,7 @@ export function AgentOffice({
     return (
         <section
             data-aios-execution-office="true"
-            data-active-stage={
-                currentWorkflow?.role ?? 'none'
-            }
+            data-active-stage={currentWorkflow?.role ?? 'none'}
             aria-labelledby="agent-office-title"
             className="execution-command-center"
         >
@@ -1656,12 +1560,12 @@ export function AgentOffice({
                         id="agent-office-title"
                         className="mt-1 text-base font-semibold tracking-tight text-foreground"
                     >
-                        PM → Coder → Reviewer
+                        AI Engineering Workflow
                     </h2>
 
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                        Deterministic workflow with verifiable AIOS
-                        handoffs · {projectName}
+                        Deterministic workflow with verifiable AIOS handoffs ·{' '}
+                        {projectName}
                     </p>
                 </div>
 
@@ -1717,24 +1621,14 @@ export function AgentOffice({
                             <AgentNode
                                 projectId={projectId}
                                 worker={worker}
-                                agent={agentByWorkerId.get(
-                                    worker.id,
-                                )}
-                                active={
-                                    worker.id === activeWorkerId
-                                }
+                                agent={agentByWorkerId.get(worker.id)}
+                                active={worker.id === activeWorkerId}
                                 index={index + 1}
                                 projectStatus={projectStatus}
-                                fallbackTask={fallbackTaskForRole(
-                                    role,
-                                    tasks,
-                                )}
+                                fallbackTask={fallbackTaskForRole(role, tasks)}
                             />
                         ) : (
-                            <EmptyAgentNode
-                                role={role}
-                                index={index + 1}
-                            />
+                            <EmptyAgentNode role={role} index={index + 1} />
                         );
 
                         return (
@@ -1748,9 +1642,7 @@ export function AgentOffice({
 
                                 {index === 2 && (
                                     <WorkflowConnector
-                                        state={
-                                            coderToReviewerState
-                                        }
+                                        state={coderToReviewerState}
                                         label="Coder to Reviewer"
                                     />
                                 )}
@@ -1782,35 +1674,23 @@ export function AgentOffice({
 
                     <RepositoryEvidenceCard
                         projectId={projectId}
-                        evidence={
-                            pageProject?.git_evidence ?? null
-                        }
+                        evidence={pageProject?.git_evidence ?? null}
                         gitStatus={gitStatus}
-                        repositoryHeadSha={
-                            pageProject?.git_head_sha ?? null
-                        }
+                        repositoryHeadSha={pageProject?.git_head_sha ?? null}
                     />
 
                     <ValidationStateCard
                         projectId={projectId}
-                        evidence={
-                            pageProject?.git_evidence ?? null
-                        }
+                        evidence={pageProject?.git_evidence ?? null}
                         workflow={workflow}
                     />
                 </div>
 
                 <div className="execution-secondary-grid">
                     <TokenUsageCard
-                        total={
-                            pageProject?.token_usage_total ?? 0
-                        }
-                        harnessUsage={
-                            pageProject?.harness_usage ?? {}
-                        }
-                        observability={
-                            pageProject?.token_observability ?? {}
-                        }
+                        total={pageProject?.token_usage_total ?? 0}
+                        harnessUsage={pageProject?.harness_usage ?? {}}
+                        observability={pageProject?.token_observability ?? {}}
                     />
 
                     <HealthCard

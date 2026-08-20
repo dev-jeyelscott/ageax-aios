@@ -9,7 +9,7 @@ test('project overview keeps the deterministic PM coder reviewer execution graph
         ->toContain(
             "const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'] as const;",
         )
-        ->toContain('PM → Coder → Reviewer')
+        ->toContain('AI Engineering Workflow')
         ->toContain('data-workflow-role={worker.role}')
         ->toContain('data-active-stage=')
         ->toContain('pmToCoderState')

@@ -68,7 +68,7 @@ test('the project office command center keeps the graph lightweight state driven
     $globalStyles = file_get_contents(resource_path('css/app.css'));
 
     expect($office)
-        ->toContain('PM → Coder → Reviewer')
+        ->toContain('AI Engineering Workflow')
         ->toContain('pmToCoderActive')
         ->toContain('coderToReviewerActive')
         ->toContain('pipeline-flow')
