@@ -220,11 +220,19 @@ export function TasksPanel({
     const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('all');
 
     /*
-     * ProjectController already returns tasks in durable `position` order.
-     * Keep that server-authoritative ordering intact instead of reshuffling
-     * completed work in the browser.
+     * ProjectController returns tasks in durable `position` order. Preserve
+     * that order within each group while moving completed work beneath every
+     * unfinished task in this operational view.
      */
-    const orderedTasks = useMemo(() => [...tasks], [tasks]);
+    const orderedTasks = useMemo(
+        () =>
+            [...tasks].sort(
+                (left, right) =>
+                    Number(left.status === 'done') -
+                    Number(right.status === 'done'),
+            ),
+        [tasks],
+    );
 
     const decoratedTasks = useMemo<DecoratedTask[]>(
         () =>

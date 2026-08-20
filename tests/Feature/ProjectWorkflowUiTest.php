@@ -51,14 +51,23 @@ test('project overview no longer renders the AI engineering workflow canvas', fu
     expect($overview)
         ->toContain('data-project-overview-dashboard="true"')
         ->toContain('Operational overview')
-        ->toContain('Roadmap progress')
-        ->toContain('Current operation')
-        ->toContain('Task flow')
-        ->toContain('Repository & validation')
-        ->toContain('Execution & token usage')
-        ->toContain('Workflow agents')
-        ->toContain('Recent project signals')
+        ->toContain('<RoadmapOverviewCard')
+        ->toContain('<CurrentOperationOverviewCard')
+        ->toContain('<TaskFlowCard')
+        ->toContain('<GitValidationOverviewCard')
+        ->toContain('<HarnessUsageOverviewCard')
+        ->toContain('<WorkerStateCard')
+        ->toContain('<RecentSignalsCard')
         ->not->toContain('<ClientAgentOffice');
+
+    expect($source)
+        ->toContain('title="Roadmap progress"')
+        ->toContain('title="Current operation"')
+        ->toContain('title="Task flow"')
+        ->toContain('title="Repository & validation"')
+        ->toContain('title="Execution & token usage"')
+        ->toContain('title="Workflow agents"')
+        ->toContain('title="Recent project signals"');
 
     expect($workflow)
         ->toContain('data-project-ai-workflow="true"')
@@ -78,7 +87,7 @@ test('project navigation exposes AI workflow as a stable url driven section', fu
         ->toContain("| 'workflow'")
         ->toContain("label: 'AI Workflow'")
         ->toContain('projectWorkflowUrl(projectId)')
-        ->toContain("return `${projectPath}/workflow`;")
+        ->toContain('return `${projectPath}/workflow`;')
         ->toContain("return 'workflow';");
 
     expect($show)
