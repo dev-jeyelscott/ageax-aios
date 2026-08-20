@@ -40,7 +40,11 @@ final readonly class ContextBudgetedAgentHarness
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
     ): NormalizedExecutionResult {
-        $run = $this->currentRun($project, $agent, $prompt);
+        $run = $this->currentRun(
+            $project,
+            $agent,
+            $prompt,
+        );
 
         if ($run === null) {
             if ($this->looksLikeManagedPrompt($prompt)) {
@@ -59,41 +63,61 @@ final readonly class ContextBudgetedAgentHarness
         }
 
         try {
-            $context = $this->guard->contextFromPrompt($prompt);
-            $capacity = $harness->capabilities()->resolveContextCapacity(
-                $agent,
-                $harness->identifier(),
+            $context = $this->guard->contextFromPrompt(
+                $prompt,
             );
-            $recoverySource = $this->recoverySource($run);
+
+            $capacity = $harness
+                ->capabilities()
+                ->resolveContextCapacity(
+                    $agent,
+                    $harness->identifier(),
+                );
+
+            $recoverySource = $this->recoverySource(
+                $run,
+            );
+
             $persistedPolicy = null;
 
             if ($recoverySource !== null) {
-                $snapshot = $recoverySource->getAttribute('context_budget_snapshot');
+                $snapshot = $this->arrayAttribute(
+                    $recoverySource,
+                    'context_budget_snapshot',
+                );
 
-                if (! is_array($snapshot)) {
-                    throw new LogicException('Recovered Context Budget evidence is missing or malformed.');
+                if ($snapshot === null) {
+                    throw new LogicException(
+                        'Recovered Context Budget evidence is missing.',
+                    );
                 }
 
                 $capacity = $this->capacityFromSnapshot(
                     $snapshot,
                     $harness->identifier(),
                 );
+
                 $persistedPolicy = $snapshot;
             }
 
             $decision = $this->guard->evaluate(
-                AgentRole::from((string) $run->getRawOriginal('role')),
+                $this->role($run),
                 $prompt,
                 $context,
                 $capacity,
                 $persistedPolicy,
             );
         } catch (Throwable $throwable) {
-            $this->audit->record('context_budget.blocked', [
-                'agent_run_id' => $run->id,
-                'reason' => 'context_budget_preflight_failed',
-                'error' => $throwable->getMessage(),
-            ], $project, $run->task);
+            $this->audit->record(
+                'context_budget.blocked',
+                [
+                    'agent_run_id' => $run->id,
+                    'reason' => 'context_budget_preflight_failed',
+                    'error' => $throwable->getMessage(),
+                ],
+                $project,
+                $run->task,
+            );
 
             return $this->failure(
                 $harness->identifier(),
@@ -107,6 +131,7 @@ final readonly class ContextBudgetedAgentHarness
             'recovery_snapshot_reused' => $recoverySource !== null,
             'recovery_snapshot_source_run_id' => $recoverySource?->id,
         ];
+
         $finalContext = $decision->context;
 
         $run->update([
@@ -119,12 +144,18 @@ final readonly class ContextBudgetedAgentHarness
             'context_budget_schema_version' => ContextBudgetPolicy::SchemaVersion,
         ]);
 
-        $this->recordEvidence($run->refresh(), $evidence);
+        $this->recordEvidence(
+            $run->refresh(),
+            $evidence,
+        );
 
         if ($decision->blocked) {
             return $this->failure(
                 $harness->identifier(),
-                'Context Budget blocked provider execution: '.($evidence['block_reason'] ?? 'hard ceiling reached.'),
+                'Context Budget blocked provider execution: '.(
+                    $evidence['block_reason']
+                        ?? 'hard ceiling reached.'
+                ),
                 'context_budget_blocked',
             );
         }
@@ -144,57 +175,102 @@ final readonly class ContextBudgetedAgentHarness
         return AgentRun::query()
             ->whereBelongsTo($project)
             ->where('agent_id', $agent->id)
-            ->where('status', AgentRunStatus::Running)
-            ->where('prompt_hash', hash('sha256', $prompt))
+            ->where(
+                'status',
+                AgentRunStatus::Running,
+            )
+            ->where(
+                'prompt_hash',
+                hash('sha256', $prompt),
+            )
             ->latest('id')
             ->first();
     }
 
-    private function recoverySource(AgentRun $run): ?AgentRun
-    {
-        $configurationSnapshot = $run->getAttribute('configuration_snapshot');
-
+    private function recoverySource(
+        AgentRun $run,
+    ): ?AgentRun {
         if (
             $run->task_id === null
             || $run->attempt_number === null
-            || ! is_array($configurationSnapshot)
         ) {
             return null;
         }
 
-        $sourceAttemptNumber = $this->recoverySourceAttemptNumber($run);
+        $configurationSnapshot =
+            $this->arrayAttribute(
+                $run,
+                'configuration_snapshot',
+            );
+
+        if ($configurationSnapshot === null) {
+            return null;
+        }
+
+        $sourceAttemptNumber =
+            $this->recoverySourceAttemptNumber(
+                $run,
+            );
 
         if ($sourceAttemptNumber === null) {
             return null;
         }
 
         $candidate = AgentRun::query()
-            ->where('project_id', $run->project_id)
-            ->where('task_id', $run->task_id)
-            ->where('role', $run->getRawOriginal('role'))
-            ->where('id', '<', $run->id)
-            ->where('attempt_number', $sourceAttemptNumber)
+            ->where(
+                'project_id',
+                $run->project_id,
+            )
+            ->where(
+                'task_id',
+                $run->task_id,
+            )
+            ->where(
+                'role',
+                $run->getRawOriginal('role'),
+            )
+            ->where(
+                'id',
+                '<',
+                $run->id,
+            )
+            ->where(
+                'attempt_number',
+                $sourceAttemptNumber,
+            )
             ->orderByDesc('id')
             ->first();
 
+        if ($candidate === null) {
+            return null;
+        }
+
         if (
-            $candidate === null
-            || $candidate->getRawOriginal('status')
+            $candidate->getRawOriginal('status')
                 !== AgentRunStatus::Interrupted->value
-            || ! is_array(
-                $candidate->getAttribute('context_budget_snapshot'),
-            )
         ) {
             return null;
         }
 
-        $candidateSnapshot = $candidate->getAttribute(
-            'configuration_snapshot',
-        );
+        if (
+            $this->arrayAttribute(
+                $candidate,
+                'context_budget_snapshot',
+            ) === null
+        ) {
+            return null;
+        }
+
+        $candidateSnapshot =
+            $this->arrayAttribute(
+                $candidate,
+                'configuration_snapshot',
+            );
 
         if (
-            ! is_array($candidateSnapshot)
-            || $candidateSnapshot !== $configurationSnapshot
+            $candidateSnapshot === null
+            || $candidateSnapshot
+                !== $configurationSnapshot
         ) {
             return null;
         }
@@ -205,9 +281,7 @@ final readonly class ContextBudgetedAgentHarness
     private function recoverySourceAttemptNumber(
         AgentRun $run,
     ): ?int {
-        $role = AgentRole::from(
-            (string) $run->getRawOriginal('role'),
-        );
+        $role = $this->role($run);
 
         if ($role === AgentRole::Reviewer) {
             return (int) $run->attempt_number;
@@ -218,23 +292,34 @@ final readonly class ContextBudgetedAgentHarness
         }
 
         $attempt = TaskAttempt::query()
-            ->where('task_id', $run->task_id)
-            ->where('number', $run->attempt_number)
+            ->where(
+                'task_id',
+                $run->task_id,
+            )
+            ->where(
+                'number',
+                $run->attempt_number,
+            )
             ->first();
 
-        $validationResults = $attempt?->validation_results;
+        $validationResults =
+            $attempt?->validation_results;
 
         if (! is_array($validationResults)) {
             return null;
         }
 
         $repositoryPreflight =
-            $validationResults['repository_preflight']
-                ?? null;
+            $validationResults[
+                'repository_preflight'
+            ] ?? null;
+
+        if (! is_array($repositoryPreflight)) {
+            return null;
+        }
 
         if (
-            ! is_array($repositoryPreflight)
-            || ($repositoryPreflight['mode'] ?? null)
+            ($repositoryPreflight['mode'] ?? null)
                 !== 'recovery'
         ) {
             return null;
@@ -257,6 +342,48 @@ final readonly class ContextBudgetedAgentHarness
         return $recoveryAttemptNumber;
     }
 
+    private function role(
+        AgentRun $run,
+    ): AgentRole {
+        return AgentRole::from(
+            (string) $run->getRawOriginal('role'),
+        );
+    }
+
+    /**
+     * Read an Eloquent JSON-cast attribute through an explicit typed boundary.
+     *
+     * Larastan resolves these database columns from their underlying SQL type,
+     * while Eloquent converts them to arrays at runtime through model casts.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function arrayAttribute(
+        AgentRun $run,
+        string $attribute,
+    ): ?array {
+        /** @var mixed $value */
+        $value = $run->getAttribute(
+            $attribute,
+        );
+
+        if ($value === null) {
+            return null;
+        }
+
+        if (! is_array($value)) {
+            throw new LogicException(
+                sprintf(
+                    'AgentRun %s must resolve to an array.',
+                    $attribute,
+                ),
+            );
+        }
+
+        /** @var array<string, mixed> $value */
+        return $value;
+    }
+
     /**
      * @param  array<string, mixed>  $snapshot
      * @return array{
@@ -273,40 +400,100 @@ final readonly class ContextBudgetedAgentHarness
         array $snapshot,
         AgentHarnessIdentifier $identifier,
     ): array {
-        $harness = $snapshot['harness'] ?? $identifier->value;
-        $model = $snapshot['model'] ?? null;
-        $resolvedCapacity = $snapshot['resolved_capacity_tokens'] ?? null;
-        $maxOutputTokens = $snapshot['max_output_tokens'] ?? null;
-        $capacitySource = $snapshot['capacity_source'] ?? null;
-        $capacitySourceVersion = $snapshot['capacity_source_version'] ?? null;
-        $fallback = $snapshot['capacity_fallback'] ?? false;
+        $harness =
+            $snapshot['harness']
+                ?? $identifier->value;
 
-        if (! is_string($harness) || $harness === '') {
-            throw new LogicException('Recovered Context Budget evidence has an invalid harness.');
+        $model =
+            $snapshot['model']
+                ?? null;
+
+        $resolvedCapacity =
+            $snapshot[
+                'resolved_capacity_tokens'
+            ] ?? null;
+
+        $maxOutputTokens =
+            $snapshot[
+                'max_output_tokens'
+            ] ?? null;
+
+        $capacitySource =
+            $snapshot[
+                'capacity_source'
+            ] ?? null;
+
+        $capacitySourceVersion =
+            $snapshot[
+                'capacity_source_version'
+            ] ?? null;
+
+        $fallback =
+            $snapshot[
+                'capacity_fallback'
+            ] ?? false;
+
+        if (
+            ! is_string($harness)
+            || $harness === ''
+        ) {
+            throw new LogicException(
+                'Recovered Context Budget evidence has an invalid harness.',
+            );
         }
 
-        if ($model !== null && ! is_string($model)) {
-            throw new LogicException('Recovered Context Budget evidence has an invalid model.');
+        if (
+            $model !== null
+            && ! is_string($model)
+        ) {
+            throw new LogicException(
+                'Recovered Context Budget evidence has an invalid model.',
+            );
         }
 
-        if (! is_int($resolvedCapacity) || $resolvedCapacity <= 0) {
-            throw new LogicException('Recovered Context Budget evidence has an invalid resolved capacity.');
+        if (
+            ! is_int($resolvedCapacity)
+            || $resolvedCapacity <= 0
+        ) {
+            throw new LogicException(
+                'Recovered Context Budget evidence has an invalid resolved capacity.',
+            );
         }
 
-        if ($maxOutputTokens !== null && (! is_int($maxOutputTokens) || $maxOutputTokens <= 0)) {
-            throw new LogicException('Recovered Context Budget evidence has invalid max output tokens.');
+        if (
+            $maxOutputTokens !== null
+            && (
+                ! is_int($maxOutputTokens)
+                || $maxOutputTokens <= 0
+            )
+        ) {
+            throw new LogicException(
+                'Recovered Context Budget evidence has invalid max output tokens.',
+            );
         }
 
-        if (! is_string($capacitySource) || $capacitySource === '') {
-            throw new LogicException('Recovered Context Budget evidence has an invalid capacity source.');
+        if (
+            ! is_string($capacitySource)
+            || $capacitySource === ''
+        ) {
+            throw new LogicException(
+                'Recovered Context Budget evidence has an invalid capacity source.',
+            );
         }
 
-        if (! is_int($capacitySourceVersion) || $capacitySourceVersion <= 0) {
-            throw new LogicException('Recovered Context Budget evidence has an invalid capacity source version.');
+        if (
+            ! is_int($capacitySourceVersion)
+            || $capacitySourceVersion <= 0
+        ) {
+            throw new LogicException(
+                'Recovered Context Budget evidence has an invalid capacity source version.',
+            );
         }
 
         if (! is_bool($fallback)) {
-            throw new LogicException('Recovered Context Budget evidence has an invalid fallback flag.');
+            throw new LogicException(
+                'Recovered Context Budget evidence has an invalid fallback flag.',
+            );
         }
 
         return [
@@ -320,60 +507,113 @@ final readonly class ContextBudgetedAgentHarness
         ];
     }
 
-    /** @param  array<string, mixed>  $evidence */
-    private function recordEvidence(AgentRun $run, array $evidence): void
-    {
+    /**
+     * @param  array<string, mixed>  $evidence
+     */
+    private function recordEvidence(
+        AgentRun $run,
+        array $evidence,
+    ): void {
         $base = [
             'agent_run_id' => $run->id,
-            'role' => (string) $run->getRawOriginal('role'),
+            'role' => (string) $run->getRawOriginal(
+                'role',
+            ),
             'harness' => $run->harness,
-            'policy_version' => $evidence['policy_version'] ?? null,
-            'resolved_capacity_tokens' => $evidence['resolved_capacity_tokens'] ?? null,
-            'original_estimated_tokens' => $evidence['original_estimated_tokens'] ?? null,
-            'final_estimated_tokens' => $evidence['final_estimated_tokens'] ?? null,
-            'utilization_before' => $evidence['utilization_before'] ?? null,
-            'utilization_after' => $evidence['utilization_after'] ?? null,
-            'final_context_hash' => $evidence['final_context_hash'] ?? null,
+            'policy_version' => $evidence[
+                    'policy_version'
+                ] ?? null,
+            'resolved_capacity_tokens' => $evidence[
+                    'resolved_capacity_tokens'
+                ] ?? null,
+            'original_estimated_tokens' => $evidence[
+                    'original_estimated_tokens'
+                ] ?? null,
+            'final_estimated_tokens' => $evidence[
+                    'final_estimated_tokens'
+                ] ?? null,
+            'utilization_before' => $evidence[
+                    'utilization_before'
+                ] ?? null,
+            'utilization_after' => $evidence[
+                    'utilization_after'
+                ] ?? null,
+            'final_context_hash' => $evidence[
+                    'final_context_hash'
+                ] ?? null,
         ];
 
         $this->audit->record(
             'context_budget.evaluated',
-            [...$base, 'decision' => $evidence['decision'] ?? null],
+            [
+                ...$base,
+                'decision' => $evidence[
+                        'decision'
+                    ] ?? null,
+            ],
             $run->project,
             $run->task,
         );
 
-        if (($evidence['warning_reason'] ?? null) !== null) {
+        if (
+            ($evidence['warning_reason'] ?? null)
+                !== null
+        ) {
             $this->audit->record(
                 'context_budget.warning',
-                [...$base, 'reason' => $evidence['warning_reason']],
+                [
+                    ...$base,
+                    'reason' => $evidence[
+                            'warning_reason'
+                        ],
+                ],
                 $run->project,
                 $run->task,
             );
         }
 
-        if (($evidence['reductions'] ?? []) !== []) {
+        if (
+            ($evidence['reductions'] ?? [])
+                !== []
+        ) {
             $this->audit->record(
                 'context_budget.reduced',
-                [...$base, 'reductions' => $evidence['reductions']],
+                [
+                    ...$base,
+                    'reductions' => $evidence[
+                            'reductions'
+                        ],
+                ],
                 $run->project,
                 $run->task,
             );
         }
 
-        if (($evidence['block_reason'] ?? null) !== null) {
+        if (
+            ($evidence['block_reason'] ?? null)
+                !== null
+        ) {
             $this->audit->record(
                 'context_budget.blocked',
-                [...$base, 'reason' => $evidence['block_reason']],
+                [
+                    ...$base,
+                    'reason' => $evidence[
+                            'block_reason'
+                        ],
+                ],
                 $run->project,
                 $run->task,
             );
         }
     }
 
-    private function looksLikeManagedPrompt(string $prompt): bool
-    {
-        return str_contains($prompt, "AIOS assembled context:\n")
+    private function looksLikeManagedPrompt(
+        string $prompt,
+    ): bool {
+        return str_contains(
+            $prompt,
+            "AIOS assembled context:\n",
+        )
             || preg_match(
                 '/\n\n\{(?:"context_schema_version"|"task":\{"context_schema_version")/',
                 $prompt,
