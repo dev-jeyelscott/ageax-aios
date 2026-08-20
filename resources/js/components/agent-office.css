@@ -1,8 +1,8 @@
 /*
  * AGEAX AIOS Project Overview command center.
  *
- * This stylesheet is intentionally presentation-only. Workflow state remains
- * sourced from the Inertia payload and controlled by AIOS.
+ * Presentation only. Durable workflow state remains sourced from the Inertia
+ * payload and controlled by AIOS.
  */
 
 div:has(> div > [data-aios-execution-office='true']) {
@@ -31,9 +31,9 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     border-radius: 0.875rem;
     background:
         radial-gradient(
-            circle at 52% 18%,
-            color-mix(in oklch, var(--primary) 8%, transparent),
-            transparent 28%
+            circle at 38% 18%,
+            color-mix(in oklch, var(--primary) 7%, transparent),
+            transparent 30%
         ),
         linear-gradient(
             color-mix(in oklch, var(--primary) 3%, transparent) 1px,
@@ -56,12 +56,12 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 .execution-command-center::before {
     position: absolute;
     top: -7rem;
-    left: 33%;
-    width: 22rem;
-    height: 15rem;
+    left: 24%;
+    width: 24rem;
+    height: 16rem;
     border-radius: 999px;
     background: color-mix(in oklch, var(--primary) 7%, transparent);
-    filter: blur(70px);
+    filter: blur(72px);
     content: '';
     pointer-events: none;
 }
@@ -76,39 +76,89 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     justify-content: space-between;
     gap: 0.75rem;
     min-height: 4.75rem;
-    padding: 0.8rem 1rem;
+    padding: 0.85rem 1rem;
     border-bottom: 1px solid
         color-mix(in oklch, var(--primary) 12%, var(--border));
     background: linear-gradient(
         110deg,
         color-mix(in oklch, var(--sidebar) 96%, transparent),
         color-mix(in oklch, var(--background) 96%, transparent),
-        color-mix(in oklch, var(--primary) 7%, transparent)
+        color-mix(in oklch, var(--primary) 6%, transparent)
     );
 }
 
 .execution-command-body {
     position: relative;
     z-index: 1;
-    display: flex;
+    display: grid;
     min-height: 0;
     flex: 1;
+    grid-template-columns: minmax(0, 3fr) minmax(24rem, 2fr);
+    gap: 0.75rem;
+    overflow: hidden;
+    padding: 0.8rem;
+}
+
+.execution-workflow-panel,
+.execution-operations-panel {
+    min-width: 0;
+    min-height: 0;
+}
+
+.execution-workflow-panel {
+    display: flex;
     flex-direction: column;
+    overflow: hidden;
+    padding: 0.75rem;
+    border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+    border-radius: 0.8rem;
+    background: linear-gradient(
+        145deg,
+        color-mix(in oklch, var(--card) 56%, transparent),
+        color-mix(in oklch, var(--surface-sunken) 78%, transparent)
+    );
+}
+
+.execution-workflow-panel__label {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0 0.1rem 0.6rem;
+    color: color-mix(in oklch, var(--primary) 78%, white);
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+}
+
+.execution-operations-panel {
+    display: grid;
+    align-content: start;
     gap: 0.65rem;
     overflow-y: auto;
-    padding: 0.8rem;
+    padding-right: 0.2rem;
+}
+
+.execution-operations-pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
 }
 
 .execution-workflow-grid {
     display: grid;
+    min-height: 0;
+    flex: 1;
     grid-template-columns:
         minmax(0, 1fr)
-        minmax(4rem, 6.5rem)
+        minmax(2.75rem, 4rem)
         minmax(0, 1fr)
-        minmax(4rem, 6.5rem)
+        minmax(2.75rem, 4rem)
         minmax(0, 1fr);
     align-items: stretch;
-    gap: 0.7rem;
+    gap: 0.55rem;
 }
 
 .execution-agent-card {
@@ -116,7 +166,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     isolation: isolate;
     display: flex;
     min-width: 0;
-    min-height: 20rem;
+    min-height: 18.5rem;
     flex-direction: column;
     overflow: hidden;
     padding: 0.8rem;
@@ -129,7 +179,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     );
     box-shadow:
         inset 0 1px 0 color-mix(in oklch, white 3%, transparent),
-        0 12px 34px color-mix(in oklch, black 22%, transparent);
+        0 12px 34px color-mix(in oklch, black 20%, transparent);
     transition:
         border-color 180ms ease,
         box-shadow 180ms ease,
@@ -141,7 +191,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     inset: 0;
     z-index: -1;
     background: radial-gradient(
-        circle at 50% 24%,
+        circle at 50% 22%,
         color-mix(in oklch, var(--primary) 5%, transparent),
         transparent 48%
     );
@@ -150,11 +200,11 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 }
 
 .execution-agent-card--active {
-    border-color: color-mix(in oklch, var(--primary) 75%, transparent);
+    border-color: color-mix(in oklch, var(--primary) 72%, transparent);
     box-shadow:
-        0 0 0 1px color-mix(in oklch, var(--primary) 22%, transparent),
-        0 0 22px color-mix(in oklch, var(--primary) 20%, transparent),
-        inset 0 0 28px color-mix(in oklch, var(--primary) 5%, transparent);
+        0 0 0 1px color-mix(in oklch, var(--primary) 20%, transparent),
+        0 0 20px color-mix(in oklch, var(--primary) 18%, transparent),
+        inset 0 0 26px color-mix(in oklch, var(--primary) 5%, transparent);
 }
 
 .execution-agent-card--empty {
@@ -198,12 +248,12 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 
 .execution-agent-conversation {
     display: grid;
-    grid-template-columns: 4.75rem minmax(0, 1fr);
+    grid-template-columns: 4rem minmax(0, 1fr);
     align-items: center;
-    gap: 0.75rem;
-    min-height: 7.3rem;
-    margin-top: 0.8rem;
-    padding: 0.75rem;
+    gap: 0.65rem;
+    min-height: 6.4rem;
+    margin-top: 0.75rem;
+    padding: 0.65rem;
     border: 1px solid var(--border-subtle);
     border-radius: 0.75rem;
     background:
@@ -218,8 +268,8 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 .execution-avatar {
     position: relative;
     display: grid;
-    width: 4.5rem;
-    height: 4.5rem;
+    width: 3.8rem;
+    height: 3.8rem;
     place-items: center;
     overflow: hidden;
     border: 1px solid color-mix(in oklch, var(--primary) 48%, var(--border));
@@ -227,7 +277,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     background: var(--background);
     box-shadow:
         0 0 0 3px color-mix(in oklch, var(--primary) 7%, transparent),
-        0 0 14px color-mix(in oklch, var(--primary) 16%, transparent);
+        0 0 14px color-mix(in oklch, var(--primary) 15%, transparent);
 }
 
 [data-workflow-role='reviewer'] .execution-avatar {
@@ -247,13 +297,13 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     border-color: var(--primary);
     box-shadow:
         0 0 0 3px color-mix(in oklch, var(--primary) 12%, transparent),
-        0 0 20px color-mix(in oklch, var(--primary) 38%, transparent);
+        0 0 20px color-mix(in oklch, var(--primary) 36%, transparent);
 }
 
 .execution-chat-bubble {
     position: relative;
     min-width: 0;
-    padding: 0.65rem 0.75rem;
+    padding: 0.65rem 0.7rem;
     border: 1px solid var(--border-subtle);
     border-radius: 0.65rem;
     background: color-mix(in oklch, var(--card) 72%, transparent);
@@ -423,34 +473,17 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     );
 }
 
-.execution-primary-grid {
-    display: grid;
-    grid-template-columns:
-        minmax(11rem, 1.05fr)
-        minmax(11rem, 0.9fr)
-        minmax(11rem, 0.85fr)
-        minmax(17rem, 1.4fr)
-        minmax(11rem, 0.85fr);
-    gap: 0.55rem;
-}
-
-.execution-secondary-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(18rem, 0.9fr);
-    gap: 0.55rem;
-}
-
 .execution-ops-card {
     position: relative;
     min-width: 0;
     overflow: hidden;
-    padding: 0.7rem;
+    padding: 0.8rem;
     border: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
     border-radius: 0.7rem;
     background: linear-gradient(
         145deg,
-        color-mix(in oklch, var(--card) 74%, transparent),
-        color-mix(in oklch, var(--surface-sunken) 72%, transparent)
+        color-mix(in oklch, var(--card) 76%, transparent),
+        color-mix(in oklch, var(--surface-sunken) 74%, transparent)
     );
     box-shadow: inset 0 1px 0 color-mix(in oklch, white 2%, transparent);
 }
@@ -468,6 +501,10 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
         transparent
     );
     content: '';
+}
+
+.execution-ops-card--roadmap {
+    border-color: color-mix(in oklch, var(--primary) 18%, var(--border));
 }
 
 .execution-ops-heading {
@@ -548,20 +585,6 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
 }
 
 @media (max-width: 79.999rem) {
-    .execution-primary-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    .execution-ops-card--repository {
-        grid-column: span 2;
-    }
-
-    .execution-secondary-grid {
-        grid-template-columns: minmax(0, 1.65fr) minmax(16rem, 1fr);
-    }
-}
-
-@media (max-width: 63.999rem) {
     div:has(> div > [data-aios-execution-office='true']) {
         overflow: visible;
     }
@@ -576,6 +599,12 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     }
 
     .execution-command-body {
+        grid-template-columns: minmax(0, 1fr);
+        overflow: visible;
+    }
+
+    .execution-workflow-panel,
+    .execution-operations-panel {
         overflow: visible;
     }
 
@@ -585,7 +614,7 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     }
 
     .execution-agent-card {
-        min-height: 19rem;
+        min-height: 18rem;
     }
 
     .workflow-connector {
@@ -681,18 +710,6 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
         left: 50%;
         transform: translateX(-50%) rotate(135deg);
     }
-
-    .execution-primary-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .execution-ops-card--repository {
-        grid-column: span 1;
-    }
-
-    .execution-secondary-grid {
-        grid-template-columns: minmax(0, 1fr);
-    }
 }
 
 @media (max-width: 47.999rem) {
@@ -700,26 +717,29 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
         align-items: flex-start;
     }
 
-    .execution-command-body {
+    .execution-command-body,
+    .execution-workflow-panel {
         padding: 0.65rem;
+    }
+
+    .execution-workflow-panel__label {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 0.2rem;
     }
 
     .execution-agent-conversation {
-        grid-template-columns: 4rem minmax(0, 1fr);
-        padding: 0.65rem;
+        grid-template-columns: 3.6rem minmax(0, 1fr);
+        padding: 0.6rem;
     }
 
     .execution-avatar {
-        width: 3.8rem;
-        height: 3.8rem;
+        width: 3.35rem;
+        height: 3.35rem;
     }
 
-    .execution-primary-grid {
+    .execution-operations-pair {
         grid-template-columns: minmax(0, 1fr);
-    }
-
-    .execution-ops-card--repository {
-        grid-column: auto;
     }
 }
 

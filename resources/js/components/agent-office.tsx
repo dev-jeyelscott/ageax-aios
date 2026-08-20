@@ -1,21 +1,27 @@
-import { Link, usePage } from '@inertiajs/react';
+import { Form, Link, usePage } from '@inertiajs/react';
 import {
     Activity,
     AlertTriangle,
     CheckCircle2,
     CircleDot,
     Cpu,
+    FileUp,
     GitBranch,
     GitCommitHorizontal,
+    RotateCcw,
     ShieldCheck,
     Workflow,
 } from 'lucide-react';
 import { Fragment, useMemo } from 'react';
 import {
+    requeueRoadmap,
     showAgentRun,
     showTask,
 } from '@/actions/App/Http/Controllers/ProjectController';
+import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { store as storeRoadmap } from '@/routes/projects/roadmaps';
 import './agent-office.css';
 
 export type OfficeWorker = {
@@ -76,6 +82,12 @@ export type OfficeWorkflow = {
     task: OfficeTask | null;
 };
 
+type OfficeRoadmap = {
+    id: number;
+    original_filename: string;
+    status: string;
+};
+
 type GitEvidence = {
     task: {
         id: number;
@@ -112,6 +124,7 @@ type OverviewProject = {
     status: string;
     git_status: string;
     git_head_sha: string | null;
+    roadmaps: OfficeRoadmap[];
     tasks: OfficeTask[];
     git_evidence: GitEvidence | null;
     token_usage_total: number;
@@ -256,7 +269,7 @@ function formatRunDuration(
 function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
     const claimedIds = new Set<number>();
 
-    const selected = preferredRoleOrder.flatMap((role) => {
+    return preferredRoleOrder.flatMap((role) => {
         const worker = workers.find(
             (candidate) =>
                 candidate.role === role && !claimedIds.has(candidate.id),
@@ -270,8 +283,6 @@ function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
 
         return [worker];
     });
-
-    return selected;
 }
 
 function workerMessage(worker: OfficeWorker, active: boolean): string {
@@ -818,35 +829,58 @@ function WorkflowConnector({
 
 function RoadmapProgressCard({
     projectId,
+    roadmap,
     tasks,
     completed,
     total,
 }: {
     projectId: number;
+    roadmap: OfficeRoadmap | null;
     tasks: OfficeTask[];
     completed: number;
     total: number;
 }) {
     const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
-
     const nextTask =
         tasks.find((task) => !['done', 'cancelled'].includes(task.status)) ??
         null;
 
     return (
-        <section className="execution-ops-card">
-            <div className="execution-ops-heading">
-                <Workflow className="size-3.5 text-primary" />
-                <span>Roadmap Progress</span>
+        <section className="execution-ops-card execution-ops-card--roadmap">
+            <div className="flex items-start justify-between gap-3">
+                <div className="execution-ops-heading">
+                    <Workflow className="size-3.5 text-primary" />
+                    <span>Roadmap Progress</span>
+                </div>
+
+                {roadmap && (
+                    <Badge
+                        variant="outline"
+                        className="border-primary/20 bg-primary/5 font-mono text-2xs text-primary"
+                    >
+                        {humanize(roadmap.status)}
+                    </Badge>
+                )}
             </div>
 
-            <div className="mt-3">
-                <p className="text-3xl font-semibold tracking-tight text-primary">
-                    {progress}%
-                </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                    {completed} of {total} tasks complete
-                </p>
+            <div className="mt-3 flex items-end justify-between gap-3">
+                <div>
+                    <p className="text-3xl font-semibold tracking-tight text-primary">
+                        {progress}%
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                        {completed} of {total} tasks complete
+                    </p>
+                </div>
+
+                {roadmap && (
+                    <p
+                        title={roadmap.original_filename}
+                        className="max-w-[45%] truncate text-right font-mono text-2xs text-muted-foreground"
+                    >
+                        {roadmap.original_filename}
+                    </p>
+                )}
             </div>
 
             <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -856,12 +890,12 @@ function RoadmapProgressCard({
                 />
             </div>
 
-            <div className="mt-3 min-w-0">
+            <div className="mt-3 min-w-0 rounded-lg border border-border-subtle bg-background/30 p-2.5">
                 <p className="execution-meta-label">Next unfinished task</p>
 
                 {nextTask ? (
-                    <>
-                        <p className="mt-1 truncate text-xs font-medium text-foreground">
+                    <div className="mt-1 flex min-w-0 items-center justify-between gap-3">
+                        <p className="min-w-0 truncate text-xs font-medium text-foreground">
                             <span className="font-mono text-primary">
                                 {nextTask.key}
                             </span>{' '}
@@ -875,11 +909,11 @@ function RoadmapProgressCard({
                                     task: nextTask.id,
                                 }).url
                             }
-                            className="execution-card-action"
+                            className="shrink-0 text-2xs font-medium text-primary transition hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
                         >
-                            View task details
+                            View task
                         </Link>
-                    </>
+                    </div>
                 ) : (
                     <p className="mt-1 text-xs text-muted-foreground">
                         {total === 0
@@ -887,6 +921,72 @@ function RoadmapProgressCard({
                             : 'Roadmap execution complete.'}
                     </p>
                 )}
+            </div>
+
+            <div className="mt-3 border-t border-border-subtle pt-2.5">
+                <p className="execution-meta-label">Roadmap actions</p>
+
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {roadmap?.status === 'blocked' && (
+                        <Form
+                            {...requeueRoadmap.form({
+                                project: projectId,
+                                roadmap: roadmap.id,
+                            })}
+                        >
+                            {({ processing }) => (
+                                <Button
+                                    size="sm"
+                                    type="submit"
+                                    variant="outline"
+                                    disabled={processing}
+                                    className="h-8 w-full border-destructive/25 bg-destructive/8 text-xs text-destructive-foreground hover:bg-destructive/15"
+                                >
+                                    <RotateCcw className="size-3.5" />
+                                    {processing ? 'Retrying…' : 'Retry roadmap'}
+                                </Button>
+                            )}
+                        </Form>
+                    )}
+
+                    <Form
+                        {...storeRoadmap.form(projectId)}
+                        encType="multipart/form-data"
+                        className={
+                            roadmap?.status === 'blocked' ? '' : 'sm:col-span-2'
+                        }
+                    >
+                        {({ errors, processing }) => (
+                            <div>
+                                <label className="flex h-8 cursor-pointer items-center justify-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 text-xs font-medium text-primary transition hover:border-primary/35 hover:bg-primary/10">
+                                    <input
+                                        name="roadmap"
+                                        type="file"
+                                        accept=".md,.txt,text/markdown,text/plain"
+                                        required
+                                        disabled={processing}
+                                        className="sr-only"
+                                        onChange={(event) => {
+                                            if (
+                                                event.currentTarget.files
+                                                    ?.length
+                                            ) {
+                                                event.currentTarget.form?.requestSubmit();
+                                            }
+                                        }}
+                                    />
+                                    <FileUp className="size-3.5" />
+                                    {processing
+                                        ? 'Uploading…'
+                                        : roadmap
+                                          ? 'Upload new roadmap'
+                                          : 'Upload roadmap'}
+                                </label>
+                                <InputError message={errors.roadmap} />
+                            </div>
+                        )}
+                    </Form>
+                </div>
             </div>
         </section>
     );
@@ -1035,9 +1135,15 @@ function RepositoryEvidenceCard({
                 </div>
 
                 <div className="text-right">
-                    <p className="execution-meta-label">Branch</p>
-                    <p className="mt-0.5 font-mono text-2xs text-muted-foreground">
-                        Not recorded
+                    <p className="execution-meta-label">Working Tree</p>
+                    <p
+                        className={`mt-0.5 font-mono text-2xs ${
+                            gitStatus === 'clean'
+                                ? 'text-success-foreground'
+                                : 'text-warning-foreground'
+                        }`}
+                    >
+                        {humanize(gitStatus)}
                     </p>
                 </div>
             </div>
@@ -1063,24 +1169,11 @@ function RepositoryEvidenceCard({
                 ))}
             </dl>
 
-            <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-2.5">
+            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border-subtle pt-2.5">
                 <div>
                     <p className="execution-meta-label">Changed Files</p>
                     <p className="mt-1 text-xs font-medium text-foreground">
                         {changedFiles}
-                    </p>
-                </div>
-
-                <div>
-                    <p className="execution-meta-label">Working Tree</p>
-                    <p
-                        className={`mt-1 text-xs font-medium ${
-                            gitStatus === 'clean'
-                                ? 'text-success-foreground'
-                                : 'text-warning-foreground'
-                        }`}
-                    >
-                        {humanize(gitStatus)}
                     </p>
                 </div>
 
@@ -1131,7 +1224,7 @@ function ValidationStateCard({
                 <span>Validation State</span>
             </div>
 
-            <div className="mt-4 flex items-center justify-between gap-3">
+            <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-xs text-muted-foreground">Status</span>
 
                 <Badge
@@ -1214,7 +1307,7 @@ function TokenUsageCard({
                 <span>Execution / Token Usage</span>
             </div>
 
-            <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(11rem,0.75fr)_minmax(0,1.25fr)_minmax(11rem,0.8fr)]">
+            <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(9rem,0.7fr)_minmax(0,1.3fr)]">
                 <div>
                     <p className="execution-meta-label">Total Observed</p>
                     <p className="mt-1 text-2xl font-semibold text-foreground">
@@ -1262,39 +1355,36 @@ function TokenUsageCard({
                         </p>
                     )}
                 </div>
+            </div>
 
-                <div className="border-t border-border-subtle pt-3 xl:border-t-0 xl:border-l xl:pt-0 xl:pl-4">
-                    <p className="execution-meta-label">
-                        Rolling Role Averages
-                    </p>
+            <div className="mt-3 border-t border-border-subtle pt-2.5">
+                <p className="execution-meta-label">Rolling Role Averages</p>
 
-                    <div className="mt-2 grid gap-1.5">
-                        {preferredRoleOrder.map((role) => {
-                            const observation = observability[role];
+                <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+                    {preferredRoleOrder.map((role) => {
+                        const observation = observability[role];
 
-                            return (
-                                <div
-                                    key={role}
-                                    className="flex items-center justify-between gap-2"
-                                >
-                                    <span className="truncate text-2xs text-muted-foreground">
-                                        {labelForRole(role)}
-                                    </span>
-
-                                    <span className="shrink-0 font-mono text-2xs text-foreground">
-                                        {observation?.rolling_average === null
-                                            ? 'No runs'
-                                            : observation?.rolling_average !==
-                                                undefined
-                                              ? `${formatTokens(
-                                                    observation.rolling_average,
-                                                )} avg`
-                                              : 'Not recorded'}
-                                    </span>
-                                </div>
-                            );
-                        })}
-                    </div>
+                        return (
+                            <div
+                                key={role}
+                                className="min-w-0 rounded-lg border border-border-subtle bg-background/25 px-2 py-1.5"
+                            >
+                                <span className="block truncate text-2xs text-muted-foreground">
+                                    {labelForRole(role)}
+                                </span>
+                                <span className="mt-0.5 block truncate font-mono text-2xs text-foreground">
+                                    {observation?.rolling_average === null
+                                        ? 'No runs'
+                                        : observation?.rolling_average !==
+                                            undefined
+                                          ? `${formatTokens(
+                                                observation.rolling_average,
+                                            )} avg`
+                                          : 'Not recorded'}
+                                </span>
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
         </section>
@@ -1384,7 +1474,7 @@ function HealthCard({
 
             {!healthy && (
                 <div className="mt-2 grid gap-1">
-                    {[...errors, ...warnings].slice(0, 2).map((message) => (
+                    {[...errors, ...warnings].slice(0, 3).map((message) => (
                         <p
                             key={message}
                             className="truncate text-2xs text-muted-foreground"
@@ -1463,7 +1553,6 @@ export function AgentOffice({
     const currentWorkflow = workflow?.mode === 'current' ? workflow : null;
     const activeWorkerId = currentWorkflow?.worker_id ?? null;
     const workflowStatus = currentWorkflow?.task?.status;
-
     const projectPaused = projectStatus !== 'running';
 
     let pmToCoderState: ConnectorState = 'idle';
@@ -1610,67 +1699,85 @@ export function AgentOffice({
             </header>
 
             <div className="execution-command-body">
-                <div
-                    className="execution-workflow-grid"
-                    aria-label="Project Manager to Coder to Reviewer execution workflow"
-                >
-                    {preferredRoleOrder.map((role, index) => {
-                        const worker = workerByRole.get(role);
+                <div className="execution-workflow-panel">
+                    <div className="execution-workflow-panel__label">
+                        <span>Workflow agents</span>
+                        <span className="text-muted-foreground">
+                            PM → Coder → Reviewer
+                        </span>
+                    </div>
 
-                        const node = worker ? (
-                            <AgentNode
-                                projectId={projectId}
-                                worker={worker}
-                                agent={agentByWorkerId.get(worker.id)}
-                                active={worker.id === activeWorkerId}
-                                index={index + 1}
-                                projectStatus={projectStatus}
-                                fallbackTask={fallbackTaskForRole(role, tasks)}
-                            />
-                        ) : (
-                            <EmptyAgentNode role={role} index={index + 1} />
-                        );
+                    <div
+                        className="execution-workflow-grid"
+                        aria-label="Project Manager to Coder to Reviewer execution workflow"
+                    >
+                        {preferredRoleOrder.map((role, index) => {
+                            const worker = workerByRole.get(role);
 
-                        return (
-                            <Fragment key={role}>
-                                {index === 1 && (
-                                    <WorkflowConnector
-                                        state={pmToCoderState}
-                                        label="Project Manager to Coder"
-                                    />
-                                )}
+                            const node = worker ? (
+                                <AgentNode
+                                    projectId={projectId}
+                                    worker={worker}
+                                    agent={agentByWorkerId.get(worker.id)}
+                                    active={worker.id === activeWorkerId}
+                                    index={index + 1}
+                                    projectStatus={projectStatus}
+                                    fallbackTask={fallbackTaskForRole(
+                                        role,
+                                        tasks,
+                                    )}
+                                />
+                            ) : (
+                                <EmptyAgentNode role={role} index={index + 1} />
+                            );
 
-                                {index === 2 && (
-                                    <WorkflowConnector
-                                        state={coderToReviewerState}
-                                        label="Coder to Reviewer"
-                                    />
-                                )}
+                            return (
+                                <Fragment key={role}>
+                                    {index === 1 && (
+                                        <WorkflowConnector
+                                            state={pmToCoderState}
+                                            label="Project Manager to Coder"
+                                        />
+                                    )}
 
-                                {node}
-                            </Fragment>
-                        );
-                    })}
+                                    {index === 2 && (
+                                        <WorkflowConnector
+                                            state={coderToReviewerState}
+                                            label="Coder to Reviewer"
+                                        />
+                                    )}
+
+                                    {node}
+                                </Fragment>
+                            );
+                        })}
+                    </div>
                 </div>
 
-                <div className="execution-primary-grid">
+                <aside
+                    className="execution-operations-panel"
+                    aria-label="Operational intelligence"
+                >
                     <RoadmapProgressCard
                         projectId={projectId}
+                        roadmap={pageProject?.roadmaps[0] ?? null}
                         tasks={tasks}
                         completed={taskProgress.completed}
                         total={taskProgress.total}
                     />
 
-                    <CurrentOperationCard
-                        projectId={projectId}
-                        workflow={workflow}
-                        workers={displayedWorkers}
-                    />
+                    <div className="execution-operations-pair">
+                        <CurrentOperationCard
+                            projectId={projectId}
+                            workflow={workflow}
+                            workers={displayedWorkers}
+                        />
 
-                    <NextStageCard
-                        workflow={workflow}
-                        projectStatus={projectStatus}
-                    />
+                        <NextStageCard
+                            workflow={workflow}
+                            projectStatus={projectStatus}
+                        />
+                    </div>
 
                     <RepositoryEvidenceCard
                         projectId={projectId}
@@ -1684,9 +1791,7 @@ export function AgentOffice({
                         evidence={pageProject?.git_evidence ?? null}
                         workflow={workflow}
                     />
-                </div>
 
-                <div className="execution-secondary-grid">
                     <TokenUsageCard
                         total={pageProject?.token_usage_total ?? 0}
                         harnessUsage={pageProject?.harness_usage ?? {}}
@@ -1697,7 +1802,7 @@ export function AgentOffice({
                         errors={Array.from(healthErrors)}
                         warnings={Array.from(healthWarnings)}
                     />
-                </div>
+                </aside>
             </div>
         </section>
     );

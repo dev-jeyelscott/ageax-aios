@@ -62,7 +62,7 @@ test('the project office exposes the latest safe agent message for live workflow
             ->missing('project.office_workers.0.run.live_output'));
 });
 
-test('the project office command center keeps the graph lightweight state driven and motion safe', function () {
+test('the project office command center keeps the graph state driven motion safe and organized in a sixty forty layout', function () {
     $office = file_get_contents(
         resource_path('js/components/agent-office.tsx'),
     );
@@ -76,6 +76,9 @@ test('the project office command center keeps the graph lightweight state driven
         ->toContain(
             "const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'] as const;",
         )
+        ->toContain('execution-workflow-panel')
+        ->toContain('execution-operations-panel')
+        ->toContain('aria-label="Operational intelligence"')
         ->toContain('pmToCoderState')
         ->toContain('coderToReviewerState')
         ->toContain("currentWorkflow?.role === 'coder'")
@@ -91,6 +94,18 @@ test('the project office command center keeps the graph lightweight state driven
         ->toContain('/action-gif/pm-idle.gif')
         ->toContain('/action-gif/coder-idle.gif')
         ->toContain('/action-gif/reviewer-idle.gif')
+        ->toContain('Harness / Model')
+        ->toContain("? 'Recent Task'")
+        ->toContain('Roadmap actions')
+        ->toContain('requeueRoadmap.form({')
+        ->toContain('storeRoadmap.form(projectId)')
+        ->toContain('Upload new roadmap')
+        ->toContain('Current Operation')
+        ->toContain('Next Stage')
+        ->toContain('Repository · Git Evidence')
+        ->toContain('Validation State')
+        ->toContain('Execution / Token Usage')
+        ->toContain('Health & Warnings')
         ->toContain('data-aios-execution-office')
         ->toContain('data-active-stage=')
         ->not->toContain('AgeaxRobotVisual')
@@ -102,13 +117,20 @@ test('the project office command center keeps the graph lightweight state driven
         ->toContain(
             ":has(> div > [data-aios-execution-office='true'])",
         )
+        ->toContain('.execution-workflow-panel')
+        ->toContain('.execution-operations-panel')
+        ->toContain('.execution-operations-pair')
+        ->toContain(
+            'grid-template-columns: minmax(0, 3fr) minmax(24rem, 2fr);',
+        )
         ->toContain('.execution-workflow-grid')
         ->toContain('.workflow-connector--active')
         ->toContain('.workflow-connector--complete')
         ->toContain('.workflow-connector--paused')
         ->toContain('execution-energy-flow')
         ->toContain('execution-particle-flow')
-        ->toContain('@media (max-width: 63.999rem)')
+        ->toContain('@media (max-width: 79.999rem)')
         ->toContain('grid-template-columns: minmax(0, 1fr);')
+        ->toContain('@media (max-width: 47.999rem)')
         ->toContain('@media (prefers-reduced-motion: reduce)');
 });
