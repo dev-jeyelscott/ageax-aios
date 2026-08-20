@@ -141,6 +141,10 @@ class WorkflowRecoveryScanner
                 return;
             }
 
+            if ($this->hasUnresolvedEscalation($lockedTask)) {
+                return;
+            }
+
             $hasOpenIncident = RecoveryIncident::query()
                 ->where('task_id', $lockedTask->id)
                 ->whereIn('status', array_map(fn (RecoveryIncidentStatus $status): string => $status->value, RecoveryIncidentStatus::open()))
@@ -181,6 +185,30 @@ class WorkflowRecoveryScanner
             ->max('id');
 
         return $lastRequeueId === null || $lastNoProgressId > $lastRequeueId;
+    }
+
+    /**
+     * A prior escalation already surfaced this task's condition for operator judgment; without
+     * this guard, the still-blocked task would collect a fresh, identical RecoveryIncident (and
+     * a fresh Recovery Engineer diagnosis run) on every subsequent scan until an operator
+     * requeues it, since escalated incidents are terminal and therefore excluded from the
+     * open-incident check above.
+     */
+    private function hasUnresolvedEscalation(Task $task): bool
+    {
+        $lastEscalatedId = $task->auditEvents()
+            ->where('event_type', 'recovery.escalated')
+            ->max('id');
+
+        if ($lastEscalatedId === null) {
+            return false;
+        }
+
+        $lastRequeueId = $task->auditEvents()
+            ->where('event_type', 'task.requeued')
+            ->max('id');
+
+        return $lastRequeueId === null || $lastEscalatedId > $lastRequeueId;
     }
 
     /** @return array<string, mixed> */
