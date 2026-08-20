@@ -69,6 +69,7 @@ class StaleWorkerRecovery
 
         return $recovered
             + $this->recoverOrphanedRuns($project, $staleAfterSeconds)
+            + $this->recoverAbandonedFinalizations($project, $staleAfterSeconds)
             + $this->recoverStaleRoadmaps(
                 $project,
                 $staleAfterSeconds,
@@ -224,6 +225,114 @@ class StaleWorkerRecovery
                 'agent_run_id' => $lockedRun->id,
                 'evidence' => $evidence,
             ], $lockedRun->project, $task);
+
+            return true;
+        }, attempts: 3);
+    }
+
+    /**
+     * Catches a task left claimed (Coding/Validating/Reviewing) whose harness execution already
+     * finished (or never started) without AIOS ever finalizing it: no `AgentRun` is currently
+     * `Running` for that task/role, yet the task is still sitting in a claimed status past the
+     * stale floor. This differs from recoverOrphanedRuns(), which requires an `AgentRun` still
+     * marked `Running`: it exists for a worker process that crashed *during* harness execution.
+     * This method exists for the harness finishing normally (or a lease-holding process crashing
+     * before ever recording a run) but the surrounding orchestration code never reaching its own
+     * validate/commit/transition step afterward (e.g. the host process was killed between
+     * AgentRunRecorder::complete() and RunCoderTask's subsequent validation) — a task in that
+     * state is invisible to both recoverOrphanedRuns() (its AgentRun is not Running) and
+     * WorkflowRecoveryScanner::detectStuckTasks() (Coding/Reviewing are not tracked terminal-stuck
+     * statuses), so without this it would block the role's single-task-in-flight claim (and, for
+     * Coder, any current-phase Reviewer review) indefinitely.
+     */
+    private function recoverAbandonedFinalizations(
+        Project $project,
+        int $staleAfterSeconds,
+    ): int {
+        $recovered = 0;
+
+        foreach ([AgentRole::Coder, AgentRole::Reviewer] as $role) {
+            $statuses = $role === AgentRole::Coder
+                ? [TaskStatus::Coding, TaskStatus::Validating]
+                : [TaskStatus::Reviewing];
+
+            Task::query()
+                ->whereBelongsTo($project)
+                ->whereIn('status', $statuses)
+                ->where('updated_at', '<=', now()->subSeconds($staleAfterSeconds))
+                ->get()
+                ->each(function (Task $task) use ($role, &$recovered): void {
+                    if ($this->recoverAbandonedFinalization($task, $role)) {
+                        $recovered++;
+                    }
+                });
+        }
+
+        return $recovered;
+    }
+
+    private function recoverAbandonedFinalization(Task $task, AgentRole $role): bool
+    {
+        return DB::transaction(function () use ($task, $role): bool {
+            $lockedTask = Task::query()
+                ->lockForUpdate()
+                ->find($task->id);
+
+            $expectedStatuses = $role === AgentRole::Coder
+                ? [TaskStatus::Coding, TaskStatus::Validating]
+                : [TaskStatus::Reviewing];
+
+            if (
+                $lockedTask === null
+                || ! in_array(
+                    TaskStatus::from($lockedTask->getRawOriginal('status')),
+                    $expectedStatuses,
+                    true,
+                )
+            ) {
+                return false;
+            }
+
+            // Elapsed time alone is never sufficient evidence (see class docblock): require a
+            // persisted AgentRun for this task/role to prove an execution genuinely happened, and
+            // that none of them are still Running to prove nothing is actively in flight.
+            $runs = AgentRun::query()
+                ->whereBelongsTo($lockedTask)
+                ->where('role', $role)
+                ->get();
+
+            if ($runs->isEmpty() || $runs->contains(fn (AgentRun $run): bool => AgentRunStatus::from($run->getRawOriginal('status')) === AgentRunStatus::Running)) {
+                return false;
+            }
+
+            $evidence = $this->recoveryEvidence($lockedTask);
+            $this->storeRecoveryEvidence($lockedTask, $evidence);
+
+            if ($role === AgentRole::Coder) {
+                $lockedTask->attempts()
+                    ->where('status', 'running')
+                    ->update([
+                        'status' => 'interrupted',
+                        'finished_at' => now(),
+                    ]);
+
+                $this->workflow->transition($lockedTask, TaskStatus::Failed);
+            } else {
+                $this->workflow->recordReviewerOperationalFailure(
+                    $lockedTask,
+                    $lockedTask->attempts()->latest('number')->first(),
+                    [
+                        'reason' => 'abandoned_finalization',
+                        'evidence' => $evidence,
+                    ],
+                );
+            }
+
+            $this->audit->record('task.recovered', [
+                'role' => $role->value,
+                'reason' => 'abandoned_finalization',
+                'evidence' => $evidence,
+            ], $lockedTask->project, $lockedTask);
 
             return true;
         }, attempts: 3);

@@ -105,6 +105,43 @@ test('a task orphaned by a crashed execution is recovered even once the worker l
         ->and($project->auditEvents()->where('event_type', 'task.recovered')->where('payload->reason', 'orphaned_agent_run')->exists())->toBeTrue();
 });
 
+test('a task whose harness finished but was never finalized is recovered even with no running AgentRun', function () {
+    // Regression: if the host process is killed between AgentRunRecorder::complete() (harness
+    // finished, AgentRun already marked completed) and RunCoderTask's subsequent validate/commit/
+    // transition step, the task is left claimed (Coding) with no AgentRun still Running at all.
+    // recoverOrphanedRuns() only matches a Running AgentRun, so it never sees this; without
+    // recoverAbandonedFinalizations() the task would block the Coder role (and, if it's the
+    // current phase, the Reviewer role too) forever.
+    $project = Project::create(['name' => 'Abandoned', 'path' => '/tmp/abandoned-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $worker = leasedWorker($project);
+    $worker->update(['status' => 'idle', 'lease_id' => null, 'lease_expires_at' => null, 'last_heartbeat_at' => now()]);
+    $task = leasedTask($project, status: TaskStatus::Coding);
+    Task::query()->whereKey($task->id)->update(['updated_at' => now()->subMinutes(5)]);
+    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'running', 'started_at' => now()->subMinutes(5)]);
+    $run = AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'agent_worker_id' => $worker->id, 'role' => AgentRole::Coder, 'status' => AgentRunStatus::Completed, 'exit_code' => 0, 'prompt_hash' => hash('sha256', 'abandoned'), 'started_at' => now()->subMinutes(5), 'finished_at' => now()->subMinutes(4)]);
+
+    expect(app(StaleWorkerRecovery::class)->recover($project, 60))->toBe(1)
+        ->and($task->refresh()->status)->toBe(TaskStatus::Failed)
+        ->and($attempt->refresh()->status)->toBe('interrupted')
+        ->and($run->refresh()->status)->toBe(AgentRunStatus::Completed)
+        ->and($project->auditEvents()->where('event_type', 'task.recovered')->where('payload->reason', 'abandoned_finalization')->exists())->toBeTrue();
+});
+
+test('a task still genuinely being coded is left untouched by abandoned-finalization recovery', function () {
+    $project = Project::create(['name' => 'Active', 'path' => '/tmp/active-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $worker = leasedWorker($project);
+    $lease = app(WorkerHeartbeat::class)->acquire($project, AgentRole::Coder, fake()->uuid());
+    $task = leasedTask($project, status: TaskStatus::Coding);
+    Task::query()->whereKey($task->id)->update(['updated_at' => now()->subMinutes(5)]);
+    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'running', 'started_at' => now()->subMinutes(5)]);
+    $run = AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'agent_worker_id' => $worker->id, 'worker_instance_id' => $lease->workerInstanceId, 'worker_lease_id' => $lease->leaseId, 'role' => AgentRole::Coder, 'status' => AgentRunStatus::Running, 'prompt_hash' => hash('sha256', 'active'), 'started_at' => now()->subMinutes(5)]);
+
+    expect(app(StaleWorkerRecovery::class)->recover($project, 60))->toBe(0)
+        ->and($task->refresh()->status)->toBe(TaskStatus::Coding)
+        ->and($attempt->refresh()->status)->toBe('running')
+        ->and($run->refresh()->status)->toBe(AgentRunStatus::Running);
+});
+
 test('two worker processes cannot acquire the same role lease or task execution', function () {
     $project = Project::create(['name' => 'Concurrent', 'path' => '/tmp/concurrent-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     leasedWorker($project);

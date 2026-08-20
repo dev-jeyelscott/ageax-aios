@@ -519,7 +519,7 @@ SQL;
      */
     private function officeRunConfiguration(AgentRun $run): ?array
     {
-        $snapshot = $run->configuration_snapshot;
+        $snapshot = $run->getAttribute('configuration_snapshot');
         $agent = is_array($snapshot)
             ? ($snapshot['agent'] ?? null)
             : null;
