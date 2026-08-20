@@ -212,6 +212,26 @@ test('a cancelled task lets the coder advance into the next phase', function () 
     expect($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($secondTask->id);
 });
 
+test('a task depending on a cancelled task remains claimable by the coder', function () {
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
+
+    $firstTask = createWorkflowTask($project, 1);
+    $secondTask = createWorkflowTask($project, 2);
+    $firstTask->update(['phase_id' => $phase->id]);
+    $secondTask->update(['phase_id' => $phase->id]);
+    $secondTask->dependencies()->attach($firstTask);
+
+    $transitionTask = app(TransitionTask::class);
+    $transitionTask->handle($firstTask, TaskStatus::Blocked);
+    $transitionTask->handle($firstTask, TaskStatus::Cancelled);
+
+    $claimTask = app(ClaimTask::class);
+
+    expect($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($secondTask->id);
+});
+
 test('changes required closes the phase review gate and returns control to the coder', function () {
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);

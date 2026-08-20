@@ -303,6 +303,7 @@ class TaskWorkflow
             $status = TaskStatus::from($dependency->getRawOriginal('status'));
 
             return $status === TaskStatus::Done
+                || $status === TaskStatus::Cancelled
                 || ($task->phase_id !== null
                     && $dependency->phase_id === $task->phase_id
                     && $status === TaskStatus::ReadyForReview);
