@@ -1,13 +1,12 @@
 import { Link } from '@inertiajs/react';
-import { Activity, Bot, CircleDot, Radio } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, CircleDot } from 'lucide-react';
 import { useMemo } from 'react';
 import {
     showAgentRun,
     showTask,
 } from '@/actions/App/Http/Controllers/ProjectController';
-import { AgeaxRobotVisual } from '@/components/ageax-robot';
-import type { RobotAnimationState } from '@/components/ageax-robot';
 import { Badge } from '@/components/ui/badge';
+import './agent-office.css';
 
 export type OfficeWorker = {
     id: number;
@@ -23,6 +22,7 @@ export type OfficeWorker = {
         started_at: string | null;
         finished_at: string | null;
         failure_reason: string | null;
+        latest_message: string | null;
     } | null;
     task: {
         id: number;
@@ -70,7 +70,7 @@ type OfficePresentation = {
     label: string;
     dotClass: string;
     textClass: string;
-    pulseClass: string;
+    ringClass: string;
 };
 
 const roleLabels: Record<string, string> = {
@@ -79,21 +79,32 @@ const roleLabels: Record<string, string> = {
     reviewer: 'Reviewer',
 };
 
-const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'];
+const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'] as const;
 
-const workflowStages = [
-    { key: 'queued', label: 'Queued' },
-    { key: 'coding', label: 'Coding' },
-    { key: 'validating', label: 'Validating' },
-    { key: 'review', label: 'Review' },
-    { key: 'done', label: 'Done' },
-];
+const roleThumbnails: Record<string, { idle: string; active: string }> = {
+    project_manager: {
+        idle: '/action-gif/pm-idle.gif',
+        active: '/action-gif/pm-thinking.gif',
+    },
+    coder: {
+        idle: '/action-gif/coder-idle.gif',
+        active: '/action-gif/coder-coding.gif',
+    },
+    reviewer: {
+        idle: '/action-gif/reviewer-idle.gif',
+        active: '/action-gif/reviewer-reviewing.gif',
+    },
+};
 
-const exceptionalWorkflowStatuses = new Set([
-    'blocked',
-    'interrupted',
-    'failed',
+const implementationStatuses = new Set([
+    'coding',
+    'validating',
+    'changes_required',
 ]);
+
+const reviewStatuses = new Set(['ready_for_review', 'reviewing']);
+
+const attentionStatuses = new Set(['blocked', 'interrupted', 'failed']);
 
 export function officePresentation(status: string): OfficePresentation {
     switch (status) {
@@ -102,35 +113,37 @@ export function officePresentation(status: string): OfficePresentation {
                 label: 'Working',
                 dotClass: 'bg-success',
                 textClass: 'text-success-foreground',
-                pulseClass: 'status-glow-pulse text-success',
+                ringClass: 'border-primary/45 shadow-glow-md',
             };
         case 'recovering':
             return {
                 label: 'Recovering',
                 dotClass: 'bg-warning',
                 textClass: 'text-warning-foreground',
-                pulseClass: 'status-glow-pulse text-warning',
+                ringClass: 'border-warning/45',
             };
         case 'interrupted':
+        case 'failed':
+        case 'blocked':
             return {
                 label: 'Needs attention',
                 dotClass: 'bg-destructive',
                 textClass: 'text-destructive-foreground',
-                pulseClass: 'status-glow-pulse text-destructive',
+                ringClass: 'border-destructive/45',
             };
         case 'idle':
             return {
                 label: 'Available',
                 dotClass: 'bg-muted-foreground',
                 textClass: 'text-muted-foreground',
-                pulseClass: '',
+                ringClass: 'border-border',
             };
         default:
             return {
                 label: 'Status unavailable',
                 dotClass: 'bg-muted-foreground/70',
                 textClass: 'text-muted-foreground',
-                pulseClass: '',
+                ringClass: 'border-border',
             };
     }
 }
@@ -153,72 +166,6 @@ function labelForHarness(harness: string): string {
         default:
             return harness.replaceAll('_', ' ');
     }
-}
-
-function workflowStageIndex(status: string | undefined): number {
-    switch (status) {
-        case 'queued':
-            return 0;
-        case 'coding':
-        case 'changes_required':
-            return 1;
-        case 'validating':
-            return 2;
-        case 'ready_for_review':
-        case 'reviewing':
-            return 3;
-        case 'done':
-            return 4;
-        default:
-            return -1;
-    }
-}
-
-export function robotAnimationStateFor(
-    worker: OfficeWorker,
-): RobotAnimationState {
-    switch (worker.status) {
-        case 'working':
-            if (worker.role === 'project_manager') {
-                return 'thinking';
-            }
-
-            if (worker.role === 'reviewer') {
-                return 'reviewing';
-            }
-
-            return 'working';
-        case 'thinking':
-        case 'recovering':
-            return 'thinking';
-        case 'reviewing':
-            return 'reviewing';
-        case 'success':
-        case 'completed':
-            return 'success';
-        case 'failed':
-            return 'failed';
-        case 'interrupted':
-        case 'blocked':
-            return 'interrupted';
-    }
-
-    if (worker.run?.status === 'failed') {
-        return 'failed';
-    }
-
-    if (worker.run?.status === 'interrupted') {
-        return 'interrupted';
-    }
-
-    if (
-        worker.activity_mode === 'recent' &&
-        worker.run?.status === 'completed'
-    ) {
-        return 'success';
-    }
-
-    return 'idle';
 }
 
 function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
@@ -252,102 +199,181 @@ function selectOfficeWorkers(workers: OfficeWorker[]): OfficeWorker[] {
     return selected.slice(0, preferredRoleOrder.length);
 }
 
-function formatDate(value: string | null): string {
-    return value ? new Date(value).toLocaleString() : 'Not recorded';
+function thumbnailForWorker(worker: OfficeWorker): string | null {
+    const thumbnails = roleThumbnails[worker.role];
+
+    if (!thumbnails) {
+        return null;
+    }
+
+    const active = ['working', 'recovering', 'reviewing'].includes(
+        worker.status,
+    );
+
+    return active ? thumbnails.active : thumbnails.idle;
 }
 
-function AgentVisualPanel({ worker }: { worker: OfficeWorker }) {
-    const roleLabel = labelForRole(worker.role);
-    const animationState = robotAnimationStateFor(worker);
+function messageForWorker(worker: OfficeWorker): string | null {
+    if (worker.run?.latest_message) {
+        return worker.run.latest_message;
+    }
 
+    if (worker.run?.failure_reason) {
+        return worker.run.failure_reason;
+    }
+
+    if (worker.status === 'recovering') {
+        return 'Recovering the current execution from durable AIOS evidence.';
+    }
+
+    if (worker.activity_mode === 'current' && worker.task) {
+        return `${labelForRole(worker.role)} is working on ${worker.task.key}.`;
+    }
+
+    if (
+        worker.activity_mode === 'recent' &&
+        worker.run?.status === 'completed' &&
+        worker.task
+    ) {
+        return `Completed ${worker.task.key}.`;
+    }
+
+    return null;
+}
+
+function EmptyAgentNode({ role }: { role: string }) {
     return (
-        <div className="visual-stage relative h-full overflow-hidden rounded-lg border border-primary/10">
-            <div className="pointer-events-none absolute inset-x-8 bottom-0 h-8 rounded-full bg-primary/5 blur-xl" />
-
-            <AgeaxRobotVisual
-                role={worker.role}
-                state={animationState}
-                label={`${roleLabel} AGEAX robot in ${animationState} presentation state from worker status ${worker.status}.`}
-            />
-        </div>
+        <article className="relative min-h-56 rounded-2xl border border-dashed border-border bg-surface-recessed/40 p-4">
+            <div className="flex h-full min-h-48 flex-col items-center justify-center text-center">
+                <div className="grid size-16 place-items-center rounded-2xl border border-border bg-background/70 font-mono text-xs text-muted-foreground">
+                    {labelForRole(role)
+                        .split(' ')
+                        .map((part) => part[0])
+                        .join('')}
+                </div>
+                <p className="mt-3 text-sm font-medium text-foreground">
+                    {labelForRole(role)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                    Worker not provisioned
+                </p>
+            </div>
+        </article>
     );
 }
 
-function AgentCard({
+function AgentNode({
     projectId,
     worker,
     agent,
+    active,
 }: {
     projectId: number;
     worker: OfficeWorker;
     agent: OfficeAgent | undefined;
+    active: boolean;
 }) {
     const presentation = officePresentation(worker.status);
+    const thumbnail = thumbnailForWorker(worker);
+    const message = messageForWorker(worker);
     const taskLabel =
         worker.activity_mode === 'current' ? 'Current task' : 'Recent task';
 
     return (
         <article
-            className={`panel-elevated relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-2.5 ${
-                worker.status === 'working' ? 'agent-card-active' : ''
+            className={`relative min-w-0 overflow-hidden rounded-2xl border bg-card/55 p-3 shadow-panel transition ${
+                active
+                    ? 'agent-card-active border-primary/35'
+                    : 'border-border/70'
             }`}
         >
-            <div className="glow-edge glow-line-accent" />
+            <div className="glow-line-accent opacity-50" />
 
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <p className="font-mono text-2xs tracking-[0.16em] text-primary uppercase">
+                    <p className="font-mono text-2xs tracking-[0.15em] text-primary uppercase">
                         {labelForRole(worker.role)}
                     </p>
-
                     <h3 className="mt-0.5 truncate text-sm font-semibold text-foreground">
                         {agent?.name ?? 'Unbound agent'}
                     </h3>
                 </div>
 
-                <span
-                    className={`mt-1 size-2 shrink-0 rounded-full ${presentation.dotClass} ${presentation.pulseClass}`}
-                    title={presentation.label}
-                />
+                <div
+                    className={`flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-background/70 px-2 py-1 font-mono text-2xs ${presentation.textClass}`}
+                    title={`Worker status: ${worker.status}`}
+                >
+                    <span
+                        className={`size-1.5 rounded-full ${presentation.dotClass} ${
+                            active ? 'status-glow-pulse' : ''
+                        }`}
+                    />
+                    {presentation.label}
+                </div>
             </div>
 
-            <div className="mt-2 min-h-0 flex-1">
-                <AgentVisualPanel worker={worker} />
-            </div>
+            <div className="relative mt-3 min-h-32 rounded-xl border border-border-subtle bg-surface-sunken/80 p-3">
+                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,color-mix(in_oklch,var(--primary)_13%,transparent),transparent_62%)]" />
 
-            <div className="mt-2 grid grid-cols-2 gap-1.5 text-2xs">
-                <div className="tile-inset px-2 py-1">
-                    <p className="text-muted-foreground">Harness</p>
-                    <p className="mt-0.5 truncate font-medium text-primary/80">
-                        {agent ? labelForHarness(agent.harness) : '—'}
-                    </p>
-                </div>
-
-                <div className="tile-inset px-2 py-1">
-                    <p className="text-muted-foreground">Model</p>
-                    <p className="mt-0.5 truncate font-medium text-foreground">
-                        {agent?.model ?? 'Harness default'}
-                    </p>
-                </div>
-
-                <div className="tile-inset px-2 py-1">
-                    <p className="text-muted-foreground">Worker</p>
-                    <p
-                        className={`mt-0.5 font-medium ${presentation.textClass}`}
+                <div className="relative flex min-h-28 items-end gap-3">
+                    <div
+                        className={`relative grid size-20 shrink-0 place-items-center overflow-hidden rounded-2xl border bg-background/80 ${presentation.ringClass}`}
                     >
-                        {worker.status}
-                    </p>
-                </div>
+                        {thumbnail ? (
+                            <img
+                                src={thumbnail}
+                                alt=""
+                                aria-hidden="true"
+                                className="h-full w-full object-cover object-top"
+                            />
+                        ) : (
+                            <span className="font-mono text-sm text-primary">
+                                {labelForRole(worker.role)
+                                    .split(' ')
+                                    .map((part) => part[0])
+                                    .join('')}
+                            </span>
+                        )}
+                    </div>
 
-                <div className="tile-inset px-2 py-1">
-                    <p className="text-muted-foreground">Lease</p>
-                    <p className="mt-0.5 font-medium text-foreground capitalize">
-                        {worker.lease_state}
-                    </p>
+                    <div className="min-w-0 flex-1 self-center">
+                        {message ? (
+                            <div
+                                aria-live={active ? 'polite' : 'off'}
+                                className={`relative rounded-2xl rounded-bl-md border px-3 py-2 text-xs leading-relaxed ${
+                                    active
+                                        ? 'border-primary/30 bg-primary/8 text-foreground shadow-glow-sm'
+                                        : 'border-border-subtle bg-background/65 text-muted-foreground'
+                                }`}
+                            >
+                                <span
+                                    aria-hidden="true"
+                                    className={`absolute bottom-2 -left-1.5 size-3 rotate-45 border-b border-l bg-inherit ${
+                                        active
+                                            ? 'border-primary/30'
+                                            : 'border-border-subtle'
+                                    }`}
+                                />
+                                <p className="relative line-clamp-3">
+                                    {message}
+                                </p>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-muted-foreground">
+                                {active
+                                    ? 'Execution active. Waiting for the next agent message…'
+                                    : 'No live message.'}
+                            </p>
+                        )}
+                    </div>
                 </div>
             </div>
 
-            <div className="panel-recessed mt-2 min-h-10 p-2">
+            <div className="mt-3 min-w-0 rounded-xl border border-border-subtle bg-foreground/2 px-3 py-2">
+                <p className="font-mono text-2xs text-muted-foreground uppercase">
+                    {worker.task ? taskLabel : 'Task'}
+                </p>
+
                 {worker.task ? (
                     <Link
                         href={
@@ -356,30 +382,28 @@ function AgentCard({
                                 task: worker.task.id,
                             }).url
                         }
-                        className="block focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                        className="mt-1 block truncate text-xs font-medium text-foreground transition hover:text-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
                     >
-                        <p className="font-mono text-2xs text-primary uppercase">
-                            {taskLabel} · {worker.task.status}
-                        </p>
-
-                        <p className="mt-0.5 truncate text-xs font-medium text-foreground">
-                            <span className="font-mono">{worker.task.key}</span>
-                            : {worker.task.title}
-                        </p>
+                        <span className="font-mono text-primary">
+                            {worker.task.key}
+                        </span>{' '}
+                        · {worker.task.title}
                     </Link>
                 ) : (
-                    <p className="text-xs text-muted-foreground">
-                        No task currently assigned.
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        No task currently assigned
                     </p>
                 )}
             </div>
 
-            <div className="mt-1.5 flex items-center justify-between gap-2 text-2xs text-muted-foreground">
-                <span title={formatDate(worker.last_heartbeat_at)}>
-                    Heartbeat {worker.last_heartbeat_at ? 'recorded' : '—'}
+            <div className="mt-2 flex min-w-0 items-center justify-between gap-2 text-2xs text-muted-foreground">
+                <span className="truncate">
+                    {agent
+                        ? `${labelForHarness(agent.harness)} · ${agent.model ?? 'default model'}`
+                        : 'No agent configuration'}
                 </span>
 
-                {worker.run ? (
+                {worker.run && (
                     <Link
                         href={
                             showAgentRun({
@@ -387,164 +411,71 @@ function AgentCard({
                                 run: worker.run.id,
                             }).url
                         }
-                        className="font-mono text-secondary-foreground hover:text-secondary-foreground/80"
+                        className="shrink-0 font-mono text-primary hover:text-primary/80"
                     >
                         Run #{worker.run.id}
                     </Link>
-                ) : (
-                    <span>No run</span>
                 )}
             </div>
-
-            {worker.run?.failure_reason && (
-                <p className="mt-2 line-clamp-2 rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1.5 text-2xs text-destructive-foreground">
-                    {worker.run.failure_reason}
-                </p>
-            )}
         </article>
     );
 }
 
-function WorkflowPipeline({
-    workflow,
-    taskProgress,
+function WorkflowConnector({
+    active,
+    label,
 }: {
-    workflow: OfficeWorkflow | null;
-    taskProgress: {
-        completed: number;
-        total: number;
-    };
+    active: boolean;
+    label: string;
 }) {
-    const isComplete =
-        taskProgress.total > 0 && taskProgress.completed === taskProgress.total;
-    const workflowTask = workflow?.task ?? null;
-    const activeIndex = workflowTask
-        ? workflowStageIndex(workflowTask.status)
-        : workflow === null && isComplete
-          ? workflowStages.length - 1
-          : -1;
-    const trackFillPercent =
-        activeIndex <= 0
-            ? 0
-            : (Math.min(activeIndex, workflowStages.length - 1) /
-                  (workflowStages.length - 1)) *
-              100;
-    const hasWorkflowException = workflowTask
-        ? exceptionalWorkflowStatuses.has(workflowTask.status)
-        : false;
-    const operationLabel =
-        workflow?.mode === 'recent' ? 'Recent operation' : 'Current operation';
-
     return (
-        <div className="panel-recessed px-3 py-2.5">
-            <div className="flex items-center justify-between gap-3">
-                <div>
-                    <p className="font-mono text-2xs tracking-[0.15em] text-secondary-foreground uppercase">
-                        Workflow pipeline
-                    </p>
-
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                        AIOS-controlled deterministic lifecycle
-                    </p>
-                </div>
-
-                <span className="font-mono text-2xs text-muted-foreground">
-                    {taskProgress.completed}/{taskProgress.total} done
-                </span>
-            </div>
-
-            <div className="relative mt-2.5">
-                <div className="absolute top-2.5 right-[9%] left-[9%] h-px overflow-hidden rounded-full bg-border">
-                    <div
-                        className="pipeline-flow h-full rounded-full"
-                        style={{ width: `${trackFillPercent}%` }}
-                    />
-                </div>
-
-                <div className="relative grid grid-cols-5 gap-1">
-                    {workflowStages.map((stage, index) => {
-                        const active = index === activeIndex;
-                        const passed = activeIndex > index;
-
-                        return (
-                            <div
-                                key={stage.key}
-                                className="flex min-w-0 flex-col items-center"
-                            >
-                                <span
-                                    className={`z-10 rounded-full border transition-[width,height] ${
-                                        active
-                                            ? 'glow-border size-6 border-primary bg-primary shadow-glow-lg'
-                                            : passed
-                                              ? 'size-5 border-success/70 bg-success/60'
-                                              : 'size-5 border-border bg-background'
-                                    }`}
-                                />
-
-                                <span
-                                    className={`mt-1.5 truncate font-mono text-2xs uppercase ${
-                                        active
-                                            ? 'text-primary'
-                                            : passed
-                                              ? 'text-success-foreground'
-                                              : 'text-muted-foreground'
-                                    }`}
-                                >
-                                    {stage.label}
-                                </span>
-                            </div>
-                        );
-                    })}
-                </div>
-
-                {hasWorkflowException && workflowTask && (
-                    <p className="mt-1.5 text-center font-mono text-2xs text-destructive-foreground uppercase">
-                        Workflow exception · {workflowTask.status}
-                    </p>
+        <div
+            aria-label={`${label} ${active ? 'active' : 'inactive'}`}
+            className="relative mx-auto flex h-12 w-12 shrink-0 items-center justify-center lg:h-auto lg:w-full"
+        >
+            <div className="relative h-px w-12 rotate-90 lg:w-full lg:rotate-0">
+                <span className="absolute inset-0 rounded-full bg-border" />
+                {active && (
+                    <span className="pipeline-flow absolute inset-0 rounded-full" />
                 )}
+                <span
+                    aria-hidden="true"
+                    className={`absolute top-1/2 -right-px size-2 -translate-y-1/2 rotate-45 border-t border-r ${
+                        active
+                            ? 'border-primary shadow-glow-sm'
+                            : 'border-border'
+                    }`}
+                />
             </div>
 
-            <div className="mt-2.5 flex min-w-0 items-center justify-between gap-3 border-t border-border-subtle pt-2">
-                <div className="min-w-0">
-                    <p className="text-2xs text-muted-foreground uppercase">
-                        {workflow ? operationLabel : 'Workflow operation'}
-                    </p>
-
-                    <p className="truncate text-xs font-medium text-foreground">
-                        {workflowTask
-                            ? `${workflowTask.key}: ${workflowTask.title}`
-                            : workflow
-                              ? `${labelForRole(workflow.role)} run #${workflow.run_id} has no task association`
-                              : isComplete
-                                ? 'Roadmap execution complete'
-                                : 'No current or recent task execution'}
-                    </p>
-
-                    {workflow && (
-                        <p className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">
-                            {labelForRole(workflow.role)} · Run #
-                            {workflow.run_id}
-                        </p>
-                    )}
-                </div>
-
-                {workflowTask && (
-                    <Badge
-                        variant={
-                            hasWorkflowException ? 'destructive' : 'outline'
-                        }
-                        className={
-                            hasWorkflowException
-                                ? 'shrink-0 font-mono text-2xs'
-                                : 'shrink-0 border-primary/20 bg-primary/5 font-mono text-2xs text-primary'
-                        }
-                    >
-                        {workflowTask.status}
-                    </Badge>
-                )}
-            </div>
+            <span
+                className={`absolute top-1/2 left-1/2 hidden -translate-x-1/2 translate-y-2.5 rounded-full border px-2 py-0.5 font-mono text-[9px] tracking-[0.08em] whitespace-nowrap uppercase lg:block ${
+                    active
+                        ? 'border-primary/25 bg-background text-primary'
+                        : 'border-border-subtle bg-background/80 text-muted-foreground'
+                }`}
+            >
+                {active ? 'handoff active' : label}
+            </span>
         </div>
     );
+}
+
+function nextStageFor(workflow: OfficeWorkflow | null): string {
+    if (workflow?.mode !== 'current') {
+        return 'Waiting for eligible work';
+    }
+
+    switch (workflow.role) {
+        case 'project_manager':
+            return 'Coder implementation';
+        case 'coder':
+            return 'Reviewer handoff';
+        case 'reviewer':
+            return 'AIOS completion decision';
+        default:
+            return 'AIOS-controlled next stage';
+    }
 }
 
 export function AgentOffice({
@@ -576,6 +507,16 @@ export function AgentOffice({
         [workers],
     );
 
+    const workerByRole = useMemo(
+        () =>
+            new Map(
+                displayedWorkers.map(
+                    (worker) => [worker.role, worker] as const,
+                ),
+            ),
+        [displayedWorkers],
+    );
+
     const agentByWorkerId = useMemo(() => {
         const agentMap = new Map<number, OfficeAgent>();
 
@@ -596,36 +537,60 @@ export function AgentOffice({
         return agentMap;
     }, [agents, workerBindings]);
 
-    const boundWorkers = displayedWorkers.filter((worker) =>
-        agentByWorkerId.has(worker.id),
-    ).length;
+    const currentWorkflow = workflow?.mode === 'current' ? workflow : null;
+    const workflowStatus = currentWorkflow?.task?.status;
+    const pmToCoderActive =
+        currentWorkflow?.role === 'coder' ||
+        (workflowStatus !== undefined &&
+            implementationStatuses.has(workflowStatus));
+    const coderToReviewerActive =
+        currentWorkflow?.role === 'reviewer' ||
+        (workflowStatus !== undefined && reviewStatuses.has(workflowStatus));
+    const activeWorkerId = currentWorkflow?.worker_id ?? null;
+    const progress =
+        taskProgress.total === 0
+            ? 0
+            : Math.round((taskProgress.completed / taskProgress.total) * 100);
+    const needsAttention = displayedWorkers.some(
+        (worker) =>
+            attentionStatuses.has(worker.status) ||
+            worker.run?.status === 'failed' ||
+            Boolean(worker.run?.failure_reason),
+    );
+    const currentOperation = workflow?.task
+        ? `${workflow.task.key}: ${workflow.task.title}`
+        : workflow
+          ? `${labelForRole(workflow.role)} · Run #${workflow.run_id}`
+          : taskProgress.total > 0 &&
+              taskProgress.completed === taskProgress.total
+            ? 'Roadmap execution complete'
+            : 'No active execution';
 
     return (
         <section
+            data-aios-execution-office="true"
             aria-labelledby="agent-office-title"
-            className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-primary/15 bg-background/95 text-foreground shadow-panel"
+            className="relative flex min-h-full flex-col overflow-hidden rounded-2xl border border-primary/15 bg-background/95 text-foreground shadow-panel"
         >
-            <div className="pointer-events-none absolute -top-24 -left-16 size-56 animate-pulse rounded-full bg-primary/8 blur-3xl motion-reduce:animate-none" />
+            <div className="pointer-events-none absolute -top-28 left-1/4 size-64 rounded-full bg-primary/8 blur-3xl" />
+            <div className="pointer-events-none absolute -right-24 bottom-0 size-64 rounded-full bg-secondary/15 blur-3xl" />
 
-            <div className="pointer-events-none absolute -right-24 bottom-0 size-64 animate-pulse rounded-full bg-secondary/20 blur-3xl motion-reduce:animate-none" />
-
-            <header className="relative shrink-0 border-b border-primary/10 bg-[linear-gradient(110deg,var(--sidebar),var(--background),color-mix(in_oklch,var(--primary)_18%,transparent))] px-4 py-2.5">
+            <header className="relative shrink-0 border-b border-primary/10 bg-[linear-gradient(110deg,var(--sidebar),var(--background),color-mix(in_oklch,var(--primary)_15%,transparent))] px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
                         <div className="flex items-center gap-2 font-mono text-2xs tracking-[0.18em] text-primary uppercase">
                             <Activity className="size-3.5" aria-hidden="true" />
-                            Live operations
+                            Live execution
                         </div>
-
                         <h2
                             id="agent-office-title"
-                            className="mt-0.5 truncate text-base font-semibold tracking-tight text-foreground"
+                            className="mt-1 truncate text-base font-semibold tracking-tight"
                         >
-                            AI Engineering Office
+                            PM → Coder → Reviewer
                         </h2>
-
                         <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                            {projectName} · AIOS controlled execution
+                            {projectName} · AIOS-controlled deterministic
+                            workflow
                         </p>
                     </div>
 
@@ -637,10 +602,9 @@ export function AgentOffice({
                             <CircleDot className="mr-1 size-3" />
                             {projectStatus}
                         </Badge>
-
                         <Badge
                             variant="outline"
-                            className="border-secondary/30 bg-secondary/10 font-mono text-2xs text-secondary-foreground"
+                            className="border-primary/20 bg-primary/5 font-mono text-2xs text-primary"
                         >
                             Git · {gitStatus}
                         </Badge>
@@ -648,81 +612,100 @@ export function AgentOffice({
                 </div>
             </header>
 
-            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden p-2.5">
-                {displayedWorkers.length > 0 ? (
-                    <div className="grid min-h-0 flex-1 gap-2.5 md:grid-cols-3">
-                        {displayedWorkers.map((worker) => (
-                            <AgentCard
+            <div className="relative flex flex-1 flex-col p-3 sm:p-4">
+                <div className="grid flex-1 items-center gap-1 lg:grid-cols-[minmax(0,1fr)_minmax(4rem,7rem)_minmax(0,1fr)_minmax(4rem,7rem)_minmax(0,1fr)] lg:gap-3">
+                    {preferredRoleOrder.map((role, index) => {
+                        const worker = workerByRole.get(role);
+                        const node = worker ? (
+                            <AgentNode
                                 key={worker.id}
                                 projectId={projectId}
                                 worker={worker}
                                 agent={agentByWorkerId.get(worker.id)}
+                                active={worker.id === activeWorkerId}
                             />
-                        ))}
-                    </div>
-                ) : (
-                    <div className="grid min-h-32 flex-1 place-items-center rounded-xl border border-dashed border-border bg-background/40 text-center">
-                        <div>
-                            <Bot className="mx-auto size-10 text-muted-foreground" />
+                        ) : (
+                            <EmptyAgentNode key={role} role={role} />
+                        );
 
-                            <p className="mt-2 text-sm text-muted-foreground">
-                                No workflow workers are provisioned.
-                            </p>
-                        </div>
-                    </div>
-                )}
+                        if (index === 0) {
+                            return node;
+                        }
 
-                <div className="mt-2.5 shrink-0">
-                    <WorkflowPipeline
-                        workflow={workflow}
-                        taskProgress={taskProgress}
-                    />
+                        const connector =
+                            index === 1 ? (
+                                <WorkflowConnector
+                                    key="pm-coder-connector"
+                                    active={pmToCoderActive}
+                                    label="PM to Coder"
+                                />
+                            ) : (
+                                <WorkflowConnector
+                                    key="coder-reviewer-connector"
+                                    active={coderToReviewerActive}
+                                    label="Coder to Reviewer"
+                                />
+                            );
+
+                        return [connector, node];
+                    })}
                 </div>
 
-                <div className="mt-2.5 grid shrink-0 gap-2 sm:grid-cols-3">
-                    <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-foreground/2 px-3 py-1.5">
-                        <Radio className="size-3.5 text-primary" />
-
-                        <div>
-                            <p className="font-mono text-2xs text-muted-foreground uppercase">
-                                Worker lanes
-                            </p>
-
-                            <p className="text-xs text-foreground">
-                                {displayedWorkers.length} visible
-                            </p>
-                        </div>
+                <div className="mt-4 grid shrink-0 gap-2 border-t border-border-subtle pt-3 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_auto]">
+                    <div className="min-w-0 rounded-xl border border-border-subtle bg-foreground/2 px-3 py-2">
+                        <p className="font-mono text-2xs text-muted-foreground uppercase">
+                            Current operation
+                        </p>
+                        <p className="mt-1 truncate text-xs font-medium text-foreground">
+                            {currentOperation}
+                        </p>
                     </div>
 
-                    <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-foreground/2 px-3 py-1.5">
-                        <Bot className="size-3.5 text-secondary-foreground" />
-
-                        <div>
-                            <p className="font-mono text-2xs text-muted-foreground uppercase">
-                                Agents
-                            </p>
-
-                            <p className="text-xs text-foreground">
-                                {boundWorkers} bound
-                            </p>
-                        </div>
+                    <div className="min-w-0 rounded-xl border border-border-subtle bg-foreground/2 px-3 py-2">
+                        <p className="font-mono text-2xs text-muted-foreground uppercase">
+                            Next stage
+                        </p>
+                        <p className="mt-1 truncate text-xs font-medium text-foreground">
+                            {nextStageFor(workflow)}
+                        </p>
                     </div>
 
-                    <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-foreground/2 px-3 py-1.5">
-                        <CircleDot className="size-3.5 text-success-foreground" />
-
-                        <div>
+                    <div className="rounded-xl border border-border-subtle bg-foreground/2 px-3 py-2 md:min-w-44">
+                        <div className="flex items-center justify-between gap-3">
                             <p className="font-mono text-2xs text-muted-foreground uppercase">
                                 Roadmap
                             </p>
-
-                            <p className="text-xs text-foreground">
-                                {taskProgress.completed}/{taskProgress.total}{' '}
-                                complete
-                            </p>
+                            <span className="font-mono text-2xs text-primary">
+                                {progress}%
+                            </span>
                         </div>
+                        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
+                            <div
+                                className="progress-flow h-full rounded-full transition-[width]"
+                                style={{ width: `${progress}%` }}
+                            />
+                        </div>
+                        <p className="mt-1 text-2xs text-muted-foreground">
+                            {taskProgress.completed}/{taskProgress.total}{' '}
+                            complete
+                        </p>
                     </div>
                 </div>
+
+                {needsAttention && (
+                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/8 px-3 py-2 text-xs text-destructive-foreground">
+                        <AlertTriangle className="size-3.5 shrink-0" />
+                        One or more workflow agents require operator attention.
+                    </div>
+                )}
+
+                {!needsAttention && currentWorkflow === null && (
+                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-success/15 bg-success/5 px-3 py-2 text-xs text-success-foreground">
+                        <CheckCircle2 className="size-3.5 shrink-0" />
+                        Workflow is healthy and waiting for the next
+                        AIOS-controlled operation.
+                    </div>
+                )}
             </div>
         </section>
     );

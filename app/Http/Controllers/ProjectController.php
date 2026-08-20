@@ -34,6 +34,7 @@ use Carbon\CarbonInterface;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -357,7 +358,8 @@ SQL;
      *         attempt_number: ?int,
      *         started_at: ?string,
      *         finished_at: ?string,
-     *         failure_reason: ?string
+     *         failure_reason: ?string,
+     *         latest_message: ?string
      *     },
      *     task: ?array{
      *         id: int,
@@ -430,6 +432,12 @@ SQL;
             $activityMode = $run === null
                 ? null
                 : ($isCurrentActivity ? 'current' : 'recent');
+            $agentMessages = $run !== null && $activityMode === 'current'
+                ? $runs->agentMessages($run)
+                : [];
+            $latestAgentMessage = $agentMessages === []
+                ? null
+                : $agentMessages[count($agentMessages) - 1];
 
             $officeWorkers[] = [
                 'id' => $worker->id,
@@ -466,6 +474,9 @@ SQL;
                                 $run,
                             )
                             : null,
+                        'latest_message' => $latestAgentMessage === null
+                            ? null
+                            : Str::limit($latestAgentMessage, 240),
                     ],
                 'task' => $task === null
                     ? null
@@ -497,7 +508,8 @@ SQL;
      *         attempt_number: ?int,
      *         started_at: ?string,
      *         finished_at: ?string,
-     *         failure_reason: ?string
+     *         failure_reason: ?string,
+     *         latest_message: ?string
      *     },
      *     task: ?array{
      *         id: int,
