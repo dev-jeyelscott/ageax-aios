@@ -121,6 +121,14 @@ type HarnessUsage = {
     token_usage: number;
 };
 
+type TokenObservability = {
+    rolling_average: number | null;
+    baseline_average: number | null;
+    change_percentage: number | null;
+    run_count: number;
+    warning_threshold: number;
+};
+
 type OverviewProject = {
     id: number;
     status: string;
@@ -130,6 +138,7 @@ type OverviewProject = {
     tasks: OfficeTask[];
     git_evidence: GitEvidence | null;
     token_usage_total: number;
+    token_observability: Record<string, TokenObservability>;
     harness_usage: Record<string, HarnessUsage>;
     recent_agent_runs: {
         id: number;
@@ -1493,9 +1502,11 @@ function ValidationStateCard({
 function TokenUsageCard({
     total,
     harnessUsage,
+    observability,
 }: {
     total: number;
     harnessUsage: Record<string, HarnessUsage>;
+    observability: Record<string, TokenObservability>;
 }) {
     const preferredHarnesses = ['claude_code', 'codex'];
     const allHarnesses = Array.from(
@@ -1567,6 +1578,37 @@ function TokenUsageCard({
                             No harness usage recorded.
                         </p>
                     )}
+                </div>
+            </div>
+
+            <div className="mt-3 border-t border-border-subtle pt-2.5">
+                <p className="execution-meta-label">Rolling Role Averages</p>
+
+                <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+                    {preferredRoleOrder.map((role) => {
+                        const observation = observability[role];
+
+                        return (
+                            <div
+                                key={role}
+                                className="min-w-0 rounded-lg border border-border-subtle bg-background/25 px-2 py-1.5"
+                            >
+                                <span className="block truncate text-2xs text-muted-foreground">
+                                    {labelForRole(role)}
+                                </span>
+                                <span className="mt-0.5 block truncate font-mono text-2xs text-foreground">
+                                    {observation?.rolling_average === null
+                                        ? 'No runs'
+                                        : observation?.rolling_average !==
+                                            undefined
+                                          ? formatTokens(
+                                                observation.rolling_average,
+                                            ) + ' avg'
+                                          : 'Not recorded'}
+                                </span>
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
         </section>
@@ -1970,6 +2012,7 @@ export function AgentOffice({
                     <TokenUsageCard
                         total={pageProject?.token_usage_total ?? 0}
                         harnessUsage={pageProject?.harness_usage ?? {}}
+                        observability={pageProject?.token_observability ?? {}}
                     />
 
                     <HealthCard
