@@ -391,9 +391,12 @@ test('broadened cohorts are explicit and configuration filters only narrow displ
 });
 
 test('scorecard UI remains explicitly advisory token based and navigation only', function () {
-    $page = file_get_contents(
-        resource_path('js/pages/harness-scorecards/index.tsx'),
+    $page = Str::squish(
+        file_get_contents(
+            resource_path('js/pages/harness-scorecards/index.tsx'),
+        ),
     );
+
     $routes = file_get_contents(base_path('routes/web.php'));
 
     expect($page)
