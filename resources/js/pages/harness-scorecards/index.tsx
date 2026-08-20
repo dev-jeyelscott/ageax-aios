@@ -434,11 +434,7 @@ function CohortHeader({
     );
 }
 
-function CoderConfigurationCard({
-    score,
-}: {
-    score: CoderConfigurationScore;
-}) {
+function CoderConfigurationCard({ score }: { score: CoderConfigurationScore }) {
     return (
         <article className="rounded-xl border border-border-subtle bg-card/70 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -656,10 +652,7 @@ export default function HarnessScorecardsIndex({
         });
     }
 
-    function updateFilter<K extends keyof Filters>(
-        key: K,
-        value: Filters[K],
-    ) {
+    function updateFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
         const nextFilters: Filters = {
             ...filters,
             [key]: value,

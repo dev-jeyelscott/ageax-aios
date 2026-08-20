@@ -266,7 +266,7 @@ test('the system scorecard exposes eligible coder recommendations and reviewer d
             ->where('coder_scorecard.configuration_count_total', 2)
             ->where(
                 'coder_scorecard.configuration_scores.0.component_points.quality.total',
-                55.0,
+                55,
             )
             ->missing(
                 'coder_scorecard.configuration_scores.0.points',
