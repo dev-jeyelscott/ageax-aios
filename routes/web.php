@@ -17,6 +17,7 @@ Route::inertia('/', 'welcome')->name('home');
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
     Route::resource('projects', ProjectController::class)->only(['index', 'store', 'show', 'destroy']);
+    Route::get('projects/{project}/workflow', [ProjectController::class, 'show'])->name('projects.workflow');
 
     Route::get('agents', [GlobalAgentController::class, 'index'])->name('agents.index');
     Route::get('agents/{agent}', [GlobalAgentController::class, 'show'])->name('agents.show');

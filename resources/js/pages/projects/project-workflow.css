@@ -1,0 +1,218 @@
+/*
+ * Project overview motion and dedicated AI Workflow layout.
+ *
+ * Presentation only: authoritative workflow state continues to come from the
+ * existing AIOS/Inertia payload and AgentOffice component.
+ */
+
+.overview-motion-card {
+    animation: overview-card-enter 280ms ease-out both;
+    transition:
+        transform 180ms ease,
+        border-color 180ms ease,
+        box-shadow 180ms ease,
+        background-color 180ms ease;
+}
+
+.overview-motion-card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklch, var(--primary) 24%, var(--border));
+    box-shadow:
+        var(--shadow-panel),
+        0 0 22px color-mix(in oklch, var(--primary) 7%, transparent);
+}
+
+.ai-workflow-fullscreen {
+    position: relative;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.ai-workflow-fullscreen .execution-command-center {
+    height: 100%;
+    min-height: 0;
+}
+
+.ai-workflow-fullscreen .execution-command-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 0.7rem;
+    overflow: hidden;
+}
+
+.ai-workflow-fullscreen .execution-workflow-panel {
+    min-height: 0;
+    padding: 0.8rem;
+}
+
+.ai-workflow-fullscreen .execution-workflow-grid {
+    min-height: 20rem;
+}
+
+.ai-workflow-fullscreen .execution-agent-card {
+    min-height: 20rem;
+}
+
+.ai-workflow-fullscreen .execution-operations-panel {
+    display: grid;
+    grid-template-columns:
+        minmax(15rem, 1.15fr)
+        minmax(13rem, 0.9fr)
+        minmax(14rem, 1fr)
+        minmax(13rem, 0.9fr)
+        minmax(16rem, 1.2fr);
+    align-items: stretch;
+    gap: 0.6rem;
+    overflow: visible;
+    padding: 0;
+}
+
+.ai-workflow-fullscreen .execution-operations-panel > * {
+    min-width: 0;
+}
+
+.ai-workflow-fullscreen .execution-operations-pair {
+    display: block;
+}
+
+.ai-workflow-fullscreen .execution-operations-pair > :last-child,
+.ai-workflow-fullscreen .execution-operations-panel > :last-child {
+    display: none;
+}
+
+.ai-workflow-fullscreen .execution-ops-card {
+    height: 100%;
+    animation: workflow-widget-enter 260ms ease-out both;
+    border-color: color-mix(in oklch, var(--primary) 14%, var(--border));
+    background:
+        radial-gradient(
+            circle at 16% 0%,
+            color-mix(in oklch, var(--primary) 5%, transparent),
+            transparent 42%
+        ),
+        linear-gradient(
+            145deg,
+            color-mix(in oklch, var(--card) 82%, transparent),
+            color-mix(in oklch, var(--surface-sunken) 76%, transparent)
+        );
+    box-shadow:
+        inset 0 1px 0 color-mix(in oklch, white 3%, transparent),
+        0 10px 28px color-mix(in oklch, black 14%, transparent);
+    transition:
+        transform 180ms ease,
+        border-color 180ms ease,
+        box-shadow 180ms ease;
+}
+
+.ai-workflow-fullscreen .execution-ops-card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklch, var(--primary) 34%, var(--border));
+    box-shadow:
+        inset 0 1px 0 color-mix(in oklch, white 3%, transparent),
+        0 0 18px color-mix(in oklch, var(--primary) 10%, transparent),
+        0 12px 30px color-mix(in oklch, black 16%, transparent);
+}
+
+.ai-workflow-fullscreen .execution-agent-card[data-active='true'] {
+    animation: workflow-active-card-glow 2.4s ease-in-out infinite;
+}
+
+.ai-workflow-fullscreen
+    .execution-agent-card[data-active='true']
+    .execution-chat-bubble {
+    box-shadow:
+        inset 0 0 22px color-mix(in oklch, var(--primary) 6%, transparent),
+        0 0 18px color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
+@keyframes overview-card-enter {
+    from {
+        opacity: 0;
+        transform: translateY(0.35rem);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes workflow-widget-enter {
+    from {
+        opacity: 0;
+        transform: translateY(0.4rem) scale(0.995);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes workflow-active-card-glow {
+    0%,
+    100% {
+        box-shadow:
+            0 0 0 1px color-mix(in oklch, var(--primary) 18%, transparent),
+            0 0 18px color-mix(in oklch, var(--primary) 15%, transparent),
+            inset 0 0 22px color-mix(in oklch, var(--primary) 5%, transparent);
+    }
+
+    50% {
+        box-shadow:
+            0 0 0 1px color-mix(in oklch, var(--primary) 34%, transparent),
+            0 0 30px color-mix(in oklch, var(--primary) 24%, transparent),
+            inset 0 0 30px color-mix(in oklch, var(--primary) 8%, transparent);
+    }
+}
+
+@media (max-width: 79.999rem) {
+    .ai-workflow-fullscreen {
+        height: auto;
+        overflow: visible;
+    }
+
+    .ai-workflow-fullscreen .execution-command-center {
+        height: auto;
+        overflow: visible;
+    }
+
+    .ai-workflow-fullscreen .execution-command-body {
+        grid-template-rows: auto auto;
+        overflow: visible;
+    }
+
+    .ai-workflow-fullscreen .execution-workflow-panel {
+        overflow: visible;
+    }
+
+    .ai-workflow-fullscreen .execution-operations-panel {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 47.999rem) {
+    .overview-motion-card:hover,
+    .ai-workflow-fullscreen .execution-ops-card:hover {
+        transform: none;
+    }
+
+    .ai-workflow-fullscreen .execution-operations-panel {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .overview-motion-card,
+    .ai-workflow-fullscreen .execution-ops-card,
+    .ai-workflow-fullscreen .execution-agent-card[data-active='true'] {
+        animation: none;
+        transition: none;
+    }
+
+    .overview-motion-card:hover,
+    .ai-workflow-fullscreen .execution-ops-card:hover {
+        transform: none;
+    }
+}

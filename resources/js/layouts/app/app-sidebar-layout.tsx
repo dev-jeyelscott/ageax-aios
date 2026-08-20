@@ -11,6 +11,7 @@ import type { AppLayoutProps } from '@/types';
 
 type ProjectSection =
     | 'overview'
+    | 'workflow'
     | 'agents'
     | 'skills'
     | 'tasks'
@@ -43,12 +44,23 @@ function splitInertiaUrl(url: string): {
     };
 }
 
+function projectWorkflowUrl(projectId: number): string {
+    const projectPath = splitInertiaUrl(showProject(projectId).url).path;
+
+    return `${projectPath}/workflow`;
+}
+
 function projectSectionItems(projectId: number): ProjectSectionItem[] {
     return [
         {
             value: 'overview',
             label: 'Overview',
             href: showProject(projectId).url,
+        },
+        {
+            value: 'workflow',
+            label: 'AI Workflow',
+            href: projectWorkflowUrl(projectId),
         },
         {
             value: 'agents',
@@ -94,10 +106,15 @@ function projectSectionItems(projectId: number): ProjectSectionItem[] {
 function resolveProjectSection(url: string, projectId: number): ProjectSection {
     const { path: currentPath, query } = splitInertiaUrl(url);
     const projectPath = splitInertiaUrl(showProject(projectId).url).path;
+    const workflowPath = projectWorkflowUrl(projectId);
     const ticketsPath = splitInertiaUrl(ticketsIndex(projectId).url).path;
     const knowledgePath = splitInertiaUrl(
         knowledgeImprovementsIndex(projectId).url,
     ).path;
+
+    if (currentPath === workflowPath) {
+        return 'workflow';
+    }
 
     if (
         currentPath === ticketsPath ||
