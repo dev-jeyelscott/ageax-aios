@@ -112,6 +112,8 @@ class RunProjectManager
             return $execution;
         }
 
+        $plan = $this->normalizePlan($plan);
+
         try {
             $this->validatePlan($plan, (int) $roadmap->project->tasks()->max('position'));
         } catch (ValidationException) {
@@ -319,6 +321,31 @@ class RunProjectManager
             'reason' => $reason,
             'action' => 'Inspect the latest Project Manager attempt/run evidence and correct the roadmap or Project Manager configuration before retrying.',
         ], $roadmap->project);
+    }
+
+    /**
+     * Normalize only the known benign Project Manager schema drift before strict validation.
+     * Unexpected shapes remain untouched so validatePlan() continues to reject them.
+     *
+     * @param  array<string, mixed>  $plan
+     * @return array<string, mixed>
+     */
+    private function normalizePlan(array $plan): array
+    {
+        $projectKnowledge = $plan['project_knowledge'] ?? null;
+
+        if (! is_array($projectKnowledge)) {
+            return $plan;
+        }
+
+        $constraints = $projectKnowledge['constraints'] ?? null;
+
+        if (is_string($constraints)) {
+            $projectKnowledge['constraints'] = [$constraints];
+            $plan['project_knowledge'] = $projectKnowledge;
+        }
+
+        return $plan;
     }
 
     /** @param array<string, mixed> $plan */
