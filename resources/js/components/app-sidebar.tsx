@@ -1,18 +1,14 @@
-import { Link, usePage } from '@inertiajs/react';
+import { Link } from '@inertiajs/react';
 import {
     Bot,
     FolderKanban,
     Gauge,
     LayoutGrid,
-    Lightbulb,
     ShieldAlert,
-    Ticket,
 } from 'lucide-react';
 import { index as agentsIndex } from '@/actions/App/Http/Controllers/GlobalAgentController';
 import { index as harnessScorecardsIndex } from '@/actions/App/Http/Controllers/HarnessScorecardController';
-import { index as knowledgeImprovementsIndex } from '@/actions/App/Http/Controllers/KnowledgeImprovementController';
 import { index as projectsIndex } from '@/actions/App/Http/Controllers/ProjectController';
-import { index as ticketsIndex } from '@/actions/App/Http/Controllers/TicketController';
 import { index as ticketOperationsIndex } from '@/actions/App/Http/Controllers/TicketOperationsController';
 import AppLogo from '@/components/app-logo';
 import { NavMain } from '@/components/nav-main';
@@ -29,7 +25,7 @@ import {
 import { dashboard } from '@/routes';
 import type { NavItem } from '@/types';
 
-const baseNavItems: NavItem[] = [
+const mainNavItems: NavItem[] = [
     {
         title: 'Dashboard',
         href: dashboard(),
@@ -58,27 +54,6 @@ const baseNavItems: NavItem[] = [
 ];
 
 export function AppSidebar() {
-    const page = usePage();
-    const project = page.props.project as { id?: number } | undefined;
-    const mainNavItems = [...baseNavItems];
-
-    if (typeof project?.id === 'number') {
-        mainNavItems.splice(
-            2,
-            0,
-            {
-                title: 'Tickets',
-                href: ticketsIndex(project.id),
-                icon: Ticket,
-            },
-            {
-                title: 'Knowledge',
-                href: knowledgeImprovementsIndex(project.id),
-                icon: Lightbulb,
-            },
-        );
-    }
-
     return (
         <Sidebar collapsible="icon" variant="inset">
             <SidebarHeader>

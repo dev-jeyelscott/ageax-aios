@@ -17,7 +17,6 @@ import { lazy, Suspense, useState, useSyncExternalStore } from 'react';
 import {
     index,
     requeueRoadmap,
-    show as showProject,
     showAgentRun,
     showTask,
     updateStatus,
@@ -145,12 +144,6 @@ function resolveProjectTab(url: string): Tab {
     return tabs.some((tab) => tab.value === value)
         ? (value as Tab)
         : 'overview';
-}
-
-function projectTabUrl(projectId: number, tab: Tab): string {
-    return showProject(projectId, {
-        query: tab === 'overview' ? {} : { tab },
-    }).url;
 }
 
 function formatTokens(tokens: number): string {
@@ -1128,7 +1121,7 @@ function RecentActivityPanel({ project }: { project: Project }) {
                     <div className="p-3">
                         {visibleAuditEvents.length > 0 ? (
                             <div className="grid">
-                                {visibleAuditEvents.map((event, index) => (
+                                {visibleAuditEvents.map((event, eventIndex) => (
                                     <div
                                         key={event.id}
                                         className="relative grid grid-cols-[2rem_minmax(0,1fr)] gap-2.5 pb-2 last:pb-0"
@@ -1138,7 +1131,7 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                                 <CheckCircle2 className="size-3.5" />
                                             </div>
 
-                                            {index <
+                                            {eventIndex <
                                                 visibleAuditEvents.length -
                                                     1 && (
                                                 <div className="absolute top-7 bottom-0 w-px bg-gradient-to-b from-primary/40 via-border to-transparent" />
@@ -1210,6 +1203,7 @@ export default function ProjectShow({
         {
             only: ['project'],
             preserveErrors: true,
+            preserveUrl: true,
         },
         { mode: 'rest' },
     );
@@ -1297,34 +1291,12 @@ export default function ProjectShow({
         <>
             <Head title={project.name} />
 
-            <div className="dark relative flex w-full flex-col overflow-hidden bg-background text-foreground lg:h-[calc(100svh-4rem)]">
+            <div className="dark relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground">
                 <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(color-mix(in_oklch,var(--primary)_4%,transparent)_1px,transparent_1px),linear-gradient(90deg,color-mix(in_oklch,var(--primary)_4%,transparent)_1px,transparent_1px)] bg-size-[32px_32px]" />
                 <div className="pointer-events-none absolute -top-32 left-1/4 size-72 rounded-full bg-primary/8 blur-3xl" />
                 <div className="pointer-events-none absolute right-0 bottom-0 size-72 rounded-full bg-secondary/20 blur-3xl" />
 
-                <div className="relative flex min-h-0 flex-1 flex-col gap-2.5 px-3 py-3 md:px-4">
-                    <nav
-                        aria-label="Project sections"
-                        className="flex shrink-0 gap-1 overflow-x-auto rounded-xl border border-border/80 bg-background/60 p-1"
-                    >
-                        {tabs.map(({ value, label }) => (
-                            <Link
-                                key={value}
-                                href={projectTabUrl(project.id, value)}
-                                aria-current={
-                                    tab === value ? 'page' : undefined
-                                }
-                                className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                                    tab === value
-                                        ? 'glow-border border-primary/20 bg-primary/10 text-primary/80'
-                                        : 'border-transparent text-muted-foreground hover:bg-foreground/3 hover:text-muted-foreground'
-                                }`}
-                            >
-                                {label}
-                            </Link>
-                        ))}
-                    </nav>
-
+                <div className="relative flex min-h-0 flex-1 flex-col px-3 py-3 md:px-4">
                     <main className="min-h-0 flex-1">
                         {tab === 'overview' && (
                             <OverviewDashboard
