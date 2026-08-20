@@ -63,29 +63,52 @@ test('the project office exposes the latest safe agent message for live workflow
 });
 
 test('the project office command center keeps the graph lightweight state driven and motion safe', function () {
-    $office = file_get_contents(resource_path('js/components/agent-office.tsx'));
-    $officeStyles = file_get_contents(resource_path('js/components/agent-office.css'));
-    $globalStyles = file_get_contents(resource_path('css/app.css'));
+    $office = file_get_contents(
+        resource_path('js/components/agent-office.tsx'),
+    );
+    $officeStyles = file_get_contents(
+        resource_path('js/components/agent-office.css'),
+    );
 
     expect($office)
-        ->toContain('AI Engineering Workflow')
-        ->toContain('pmToCoderActive')
-        ->toContain('coderToReviewerActive')
-        ->toContain('pipeline-flow')
+        ->toContain('Ai Engineering Workflow')
+        ->toContain('Deterministic workflow with verifiable AIOS')
+        ->toContain(
+            "const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'] as const;",
+        )
+        ->toContain('pmToCoderState')
+        ->toContain('coderToReviewerState')
+        ->toContain("currentWorkflow?.role === 'coder'")
+        ->toContain("currentWorkflow?.role === 'reviewer'")
+        ->toContain("pmToCoderState = 'active'")
+        ->toContain("coderToReviewerState = 'active'")
+        ->toContain("pmToCoderState = 'complete'")
+        ->toContain("pmToCoderState = 'paused'")
+        ->toContain("coderToReviewerState = 'paused'")
+        ->toContain('data-connector-state={state}')
         ->toContain('worker.run?.latest_message')
         ->toContain('aria-live={active')
         ->toContain('/action-gif/pm-idle.gif')
         ->toContain('/action-gif/coder-idle.gif')
         ->toContain('/action-gif/reviewer-idle.gif')
         ->toContain('data-aios-execution-office')
+        ->toContain('data-active-stage=')
         ->not->toContain('AgeaxRobotVisual')
-        ->not->toContain('@react-three');
+        ->not->toContain('AgeaxRobot')
+        ->not->toContain('@react-three')
+        ->not->toContain('<Canvas');
 
     expect($officeStyles)
-        ->toContain(':has(> div > [data-aios-execution-office])')
-        ->toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
-
-    expect($globalStyles)
-        ->toContain('@media (prefers-reduced-motion: reduce)')
-        ->toContain('.pipeline-flow');
+        ->toContain(
+            ":has(> div > [data-aios-execution-office='true'])",
+        )
+        ->toContain('.execution-workflow-grid')
+        ->toContain('.workflow-connector--active')
+        ->toContain('.workflow-connector--complete')
+        ->toContain('.workflow-connector--paused')
+        ->toContain('execution-energy-flow')
+        ->toContain('execution-particle-flow')
+        ->toContain('@media (max-width: 63.999rem)')
+        ->toContain('grid-template-columns: minmax(0, 1fr);')
+        ->toContain('@media (prefers-reduced-motion: reduce)');
 });
