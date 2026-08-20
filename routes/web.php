@@ -6,6 +6,7 @@ use App\Http\Controllers\GlobalAgentController;
 use App\Http\Controllers\HarnessScorecardController;
 use App\Http\Controllers\KnowledgeImprovementController;
 use App\Http\Controllers\ProjectController;
+use App\Http\Controllers\ProjectWorkflowController;
 use App\Http\Controllers\SkillController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketEscalationDecisionController;
@@ -17,7 +18,11 @@ Route::inertia('/', 'welcome')->name('home');
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
     Route::resource('projects', ProjectController::class)->only(['index', 'store', 'show', 'destroy']);
-    Route::get('projects/{project}/workflow', [ProjectController::class, 'show'])->name('projects.workflow');
+
+    Route::get(
+        'projects/{project}/workflow',
+        ProjectWorkflowController::class,
+    )->name('projects.workflow');
 
     Route::get('agents', [GlobalAgentController::class, 'index'])->name('agents.index');
     Route::get('agents/{agent}', [GlobalAgentController::class, 'show'])->name('agents.show');
@@ -43,13 +48,21 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('projects/{project}/tickets', [TicketController::class, 'store'])->name('projects.tickets.store');
     Route::get('projects/{project}/tickets/{ticket}', [TicketController::class, 'show'])->scopeBindings()->name('projects.tickets.show');
     Route::post('projects/{project}/tickets/{ticket}/messages', [TicketController::class, 'storeMessage'])->scopeBindings()->name('projects.tickets.messages.store');
+
     Route::post(
         'projects/{project}/tickets/{ticket}/triage-attempts/{triageAttempt}/operator-decision',
         TicketEscalationDecisionController::class,
     )->scopeBindings()->name('projects.tickets.escalation-decisions.store');
 
-    Route::get('projects/{project}/knowledge-improvements', [KnowledgeImprovementController::class, 'index'])->name('projects.knowledge-improvements.index');
-    Route::patch('projects/{project}/knowledge-improvements/{candidate}', [KnowledgeImprovementController::class, 'decide'])->name('projects.knowledge-improvements.decide');
+    Route::get(
+        'projects/{project}/knowledge-improvements',
+        [KnowledgeImprovementController::class, 'index'],
+    )->name('projects.knowledge-improvements.index');
+
+    Route::patch(
+        'projects/{project}/knowledge-improvements/{candidate}',
+        [KnowledgeImprovementController::class, 'decide'],
+    )->name('projects.knowledge-improvements.decide');
 
     Route::post('projects/{project}/agents', [AgentController::class, 'store'])->name('projects.agents.store');
     Route::patch('projects/{project}/agents/{agent}', [AgentController::class, 'update'])->scopeBindings()->name('projects.agents.update');
