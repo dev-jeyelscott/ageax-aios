@@ -71,7 +71,7 @@ test('the project office command center keeps the graph lightweight state driven
     );
 
     expect($office)
-        ->toContain('Ai Engineering Workflow')
+        ->toContain('AI Engineering Workflow')
         ->toContain('Deterministic workflow with verifiable AIOS')
         ->toContain(
             "const preferredRoleOrder = ['project_manager', 'coder', 'reviewer'] as const;",
