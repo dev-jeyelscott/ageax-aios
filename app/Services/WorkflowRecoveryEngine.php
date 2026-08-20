@@ -97,7 +97,7 @@ class WorkflowRecoveryEngine
             return $this->resolveAlreadyHandled($incident, $task);
         }
 
-        $classification = $this->classifyDeterministically($task) ?? $this->diagnoseWithRecoveryEngineer($incident, $task);
+        $classification = $this->classifyDeterministically($task) ?? $this->diagnoseSafely($incident, $task);
         $maxAttempts = max(1, (int) config('aios.recovery_max_attempts'));
 
         DB::transaction(function () use ($incident, $classification): void {
@@ -261,6 +261,37 @@ class WorkflowRecoveryEngine
         ], $incident->project, $incidentTask);
 
         return $incident->fresh();
+    }
+
+    /**
+     * Guarantees process() always records an attempt, even when diagnosis itself throws (a harness
+     * crash, an unhandled provider exception, etc.), so recovery_max_attempts always bounds retries.
+     * Without this, an incident that fails before returning a classification stays claimed and gets
+     * reset to Detected by reclaimStaleClaims() forever, retrying indefinitely without ever reaching
+     * the attempt cap or escalating.
+     *
+     * @return array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string}
+     */
+    private function diagnoseSafely(RecoveryIncident $incident, ?Task $task): array
+    {
+        try {
+            return $this->diagnoseWithRecoveryEngineer($incident, $task);
+        } catch (Throwable $exception) {
+            $this->audit->record('recovery.diagnosis_exception', [
+                'recovery_incident_id' => $incident->id,
+                'exception' => $exception->getMessage(),
+            ], $incident->project, $task);
+
+            return [
+                'category' => 'transient_harness_failure',
+                'summary' => 'The Workflow Recovery Engineer execution threw an unhandled exception.',
+                'recoverable' => true,
+                'fix_applied' => false,
+                'changed_files' => [],
+                'fix_summary' => null,
+                'escalation_reason' => 'Repeated Workflow Recovery Engineer executions threw unhandled exceptions: '.$exception->getMessage(),
+            ];
+        }
     }
 
     /** @return array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string} */

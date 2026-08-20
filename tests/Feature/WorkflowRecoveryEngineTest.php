@@ -307,6 +307,26 @@ test('repeated recovery engineer execution failures are retried up to the bounde
         ->and($task->refresh()->status)->toBe(TaskStatus::Blocked);
 });
 
+test('a diagnosis that throws still counts as a bounded attempt instead of retrying forever', function () {
+    config()->set('aios.recovery_max_attempts', 2);
+    $project = recoveryProject();
+    $task = recoveryTask($project, 'TASK-001', 1, TaskStatus::Blocked);
+    $incident = RecoveryIncident::create(['project_id' => $project->id, 'task_id' => $task->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Detected, 'detected_at' => now()]);
+    recoveryMock(RecoveryRepositoryLifecycle::class)->shouldReceive('preflight')->twice()->andReturn(['clean' => true, 'head_sha' => 'base-sha-1', 'errors' => []]);
+    recoveryWorktreeMock();
+    recoveryMock(RecoveryEngineerRunner::class)->shouldReceive('run')->twice()->andThrow(new RuntimeException('codex execution exceeded the configured AIOS execution timeout.'));
+
+    $firstAttempt = app(WorkflowRecoveryEngine::class)->process($incident);
+    expect($firstAttempt->status)->toBe(RecoveryIncidentStatus::Detected)
+        ->and($firstAttempt->attempt_count)->toBe(1)
+        ->and($project->auditEvents()->where('event_type', 'recovery.diagnosis_exception')->exists())->toBeTrue();
+
+    $secondAttempt = app(WorkflowRecoveryEngine::class)->process($firstAttempt);
+    expect($secondAttempt->status)->toBe(RecoveryIncidentStatus::Escalated)
+        ->and($secondAttempt->attempt_count)->toBe(2)
+        ->and($task->refresh()->status)->toBe(TaskStatus::Blocked);
+});
+
 test('only one recovery attempt can claim an already-processed incident', function () {
     $project = recoveryProject();
     $task = recoveryTask($project, 'TASK-001', 1, TaskStatus::Blocked);

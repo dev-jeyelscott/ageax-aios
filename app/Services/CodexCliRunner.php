@@ -6,10 +6,13 @@ use App\Models\Agent;
 use App\Models\Project;
 use Closure;
 use Illuminate\Contracts\Process\ProcessResult;
+use Illuminate\Process\Exceptions\ProcessTimedOutException;
 use Illuminate\Support\Facades\Process;
 
 class CodexCliRunner
 {
+    private const int TimeoutExitCode = 124;
+
     public function __construct(
         private WorkspacePathResolver $paths,
         private SanitizedExecutionEnvironment $environment,
@@ -69,41 +72,48 @@ class CodexCliRunner
             ->timeout((int) config('aios.execution_timeout'))
             ->input($prompt);
 
-        if ($onHeartbeat === null) {
-            return $this->result(
-                $pending->run(
-                    $this->command($agent),
-                    $onOutput,
-                ),
-            );
-        }
-
-        $process = $pending->start(
-            $this->command($agent),
-            $onOutput,
-        );
-
-        $interval = max(
-            1,
-            (int) config(
-                'aios.worker_heartbeat_interval_seconds',
-            ),
-        );
-
-        $nextHeartbeatAt = now();
-
-        while ($process->running()) {
-            if (now()->gte($nextHeartbeatAt)) {
-                $onHeartbeat();
-                $nextHeartbeatAt = now()->addSeconds(
-                    $interval,
+        try {
+            if ($onHeartbeat === null) {
+                return $this->result(
+                    $pending->run(
+                        $this->command($agent),
+                        $onOutput,
+                    ),
                 );
             }
 
-            usleep(250000);
-        }
+            $process = $pending->start(
+                $this->command($agent),
+                $onOutput,
+            );
 
-        return $this->result($process->wait());
+            $interval = max(
+                1,
+                (int) config(
+                    'aios.worker_heartbeat_interval_seconds',
+                ),
+            );
+
+            $nextHeartbeatAt = now();
+
+            while ($process->running()) {
+                if (now()->gte($nextHeartbeatAt)) {
+                    $onHeartbeat();
+                    $nextHeartbeatAt = now()->addSeconds(
+                        $interval,
+                    );
+                }
+
+                usleep(250000);
+            }
+
+            return $this->result($process->wait());
+        } catch (ProcessTimedOutException) {
+            return $this->failure(
+                self::TimeoutExitCode,
+                'Codex execution exceeded the configured AIOS execution timeout.',
+            );
+        }
     }
 
     /**
@@ -165,6 +175,16 @@ class CodexCliRunner
             'exit_code' => $result->exitCode(),
             'output' => $result->output(),
             'error_output' => $result->errorOutput(),
+        ];
+    }
+
+    /** @return array{exit_code: int, output: string, error_output: string} */
+    private function failure(int $exitCode, string $message): array
+    {
+        return [
+            'exit_code' => $exitCode,
+            'output' => '',
+            'error_output' => $message,
         ];
     }
 }

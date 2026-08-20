@@ -43,3 +43,23 @@ test('refuses to run Codex for a persisted project path outside the workspace', 
     expect(fn () => app(CodexCliRunner::class)->run($project, 'Implement the task.'))->toThrow(UnsafeProjectPath::class);
     Process::assertNotRan(fn (): bool => true);
 });
+
+test('converts an execution timeout into a normalized failure result instead of throwing', function () {
+    $binary = tempnam(sys_get_temp_dir(), 'aios-codex-timeout-');
+    expect($binary)->not->toBeFalse();
+    file_put_contents($binary, "#!/bin/sh\nsleep 2\n");
+    chmod($binary, 0700);
+
+    try {
+        config()->set('aios.codex_binary', $binary);
+        config()->set('aios.execution_timeout', 1);
+
+        $result = app(CodexCliRunner::class)->runAtPath(base_path(), 'Implement the task.');
+
+        expect($result['exit_code'])->toBe(124)
+            ->and($result['error_output'])->toContain('execution timeout')
+            ->and($result['output'])->toBe('');
+    } finally {
+        @unlink($binary);
+    }
+});
