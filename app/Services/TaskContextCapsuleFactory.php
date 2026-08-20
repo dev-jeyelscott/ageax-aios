@@ -65,6 +65,7 @@ class TaskContextCapsuleFactory
         ];
     }
 
+    /** @return array<string, mixed>|null */
     private function previousAttemptContext(?TaskAttempt $attempt, AgentRole $recipientRole): ?array
     {
         if ($attempt === null) {
