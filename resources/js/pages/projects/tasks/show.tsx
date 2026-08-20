@@ -1485,11 +1485,10 @@ export default function TaskShow({
                                         <CardDescription>
                                             Cancels this task instead of
                                             retrying it. Use this when the
-                                            acceptance criteria cannot be met
-                                            by an automated Coder run (e.g.
-                                            they require physical hardware or
-                                            access this environment doesn’t
-                                            have).
+                                            acceptance criteria cannot be met by
+                                            an automated Coder run (e.g. they
+                                            require physical hardware or access
+                                            this environment doesn’t have).
                                         </CardDescription>
                                     </CardHeader>
                                     <CardContent className="grid gap-3">
@@ -1512,9 +1511,9 @@ export default function TaskShow({
                                                     1
                                                         ? ''
                                                         : 's'}{' '}
-                                                    depend on this one and
-                                                    will stay blocked once it
-                                                    is skipped:{' '}
+                                                    depend on this one and will
+                                                    stay blocked once it is
+                                                    skipped:{' '}
                                                     {task.dependents
                                                         .map(
                                                             (dependent) =>
