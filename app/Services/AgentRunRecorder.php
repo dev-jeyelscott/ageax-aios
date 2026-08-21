@@ -21,7 +21,11 @@ class AgentRunRecorder
 
     private const int MetadataItemLimit = 200;
 
-    public function __construct(private AuditLogger $audit, private TokenUsageObservability $tokens) {}
+    public function __construct(
+        private AuditLogger $audit,
+        private TokenUsageObservability $tokens,
+        private TokenUsageNormalizer $usage,
+    ) {}
 
     /**
      * @param  array<string, mixed>|null  $retrievalManifest
@@ -142,9 +146,15 @@ class AgentRunRecorder
         $normalizedUsage = is_array($execution['usage'] ?? null)
             ? $execution['usage']
             : null;
-        $tokenUsage = $normalizedUsage !== null
-            ? $this->tokenUsage($normalizedUsage)
-            : $metadata['token_usage'];
+        $providerUsage = $normalizedUsage ?? $metadata['usage'];
+        $harness = $run->getRawOriginal('harness');
+
+        if (! is_string($harness) || $harness === '') {
+            $harness = $metadata['codex_run_id'] === null ? null : 'codex';
+        }
+
+        $usageEvidence = $this->usage->normalize($harness, $providerUsage);
+        $tokenUsage = $usageEvidence['canonical_total_tokens'];
         $liveOutput = $run->fresh()->live_output;
 
         if (blank($liveOutput)) {
@@ -159,7 +169,12 @@ class AgentRunRecorder
             'exit_code' => $execution['exit_code'],
             'codex_run_id' => $metadata['codex_run_id'],
             'external_run_id' => $externalRunId,
-            'result' => [...$existingResult, ...$metadata['result']],
+            'result' => [
+                ...$existingResult,
+                ...$metadata['result'],
+                ...($providerUsage === null ? [] : ['usage' => $providerUsage]),
+                'token_usage' => $usageEvidence,
+            ],
             'commands' => $metadata['commands'],
             'file_modifications' => $metadata['file_modifications'],
             'token_usage' => $tokenUsage,
@@ -420,7 +435,7 @@ class AgentRunRecorder
      *     result: array<string, mixed>,
      *     commands: array<int, array{command: string, exit_code: int|null}>,
      *     file_modifications: array<int, array{path: string, kind: string}>,
-     *     token_usage: int|null
+     *     usage: array<string, mixed>|null
      * }
      */
     private function metadata(string $output): array
@@ -485,27 +500,7 @@ class AgentRunRecorder
             ]),
             'commands' => array_slice($commands, -self::MetadataItemLimit),
             'file_modifications' => array_slice($fileModifications, -self::MetadataItemLimit),
-            'token_usage' => $this->tokenUsage($usage),
+            'usage' => $usage,
         ];
-    }
-
-    /** @param array<string, mixed>|null $usage */
-    private function tokenUsage(?array $usage): ?int
-    {
-        if ($usage === null) {
-            return null;
-        }
-
-        $inputTokens = is_int($usage['input_tokens'] ?? null)
-            ? $usage['input_tokens']
-            : 0;
-
-        $outputTokens = is_int($usage['output_tokens'] ?? null)
-            ? $usage['output_tokens']
-            : 0;
-
-        $total = $inputTokens + $outputTokens;
-
-        return $total > 0 ? $total : null;
     }
 }

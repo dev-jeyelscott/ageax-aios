@@ -31,6 +31,7 @@ use App\ProjectStatus;
 use App\Services\AgentHarnessResolver;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
+use App\Services\TokenUsageNormalizer;
 use App\Services\TokenUsageObservability;
 use Carbon\CarbonInterface;
 use Illuminate\Http\RedirectResponse;
@@ -77,6 +78,7 @@ class ProjectController extends Controller
         Request $request,
         AuditLogger $audit,
         TokenUsageObservability $tokens,
+        TokenUsageNormalizer $usageNormalizer,
         AgentRunRecorder $runs,
         AgentHarnessResolver $harnesses,
     ): Response {
@@ -97,6 +99,8 @@ class ProjectController extends Controller
                 $project,
                 $tokens,
                 $runs,
+                $this->usageWindow($request),
+                $usageNormalizer,
             ),
             'harness_capabilities' => fn (): array => $harnesses->capabilities(),
         ]);
@@ -106,6 +110,8 @@ class ProjectController extends Controller
         Project $project,
         TokenUsageObservability $tokens,
         AgentRunRecorder $runs,
+        string $usageWindow,
+        TokenUsageNormalizer $usageNormalizer,
     ): Project {
         $project->load([
             'roadmaps' => fn ($query) => $query->latest(),
@@ -157,10 +163,10 @@ class ProjectController extends Controller
             );
         });
 
-        $project->loadSum('runs', 'token_usage');
+        $usage = $this->harnessUsage($project, $usageWindow, $usageNormalizer);
         $project->setAttribute(
             'token_usage_total',
-            (int) ($project->runs_sum_token_usage ?? 0),
+            $usage['total_processed_tokens'],
         );
         $project->setAttribute(
             'token_observability',
@@ -181,8 +187,9 @@ class ProjectController extends Controller
         );
         $project->setAttribute(
             'harness_usage',
-            $this->harnessUsage($project),
+            $usage['harnesses'],
         );
+        $project->setAttribute('token_usage_evidence', $usage);
 
         $recentRuns = $project->runs()
             ->select([
@@ -298,52 +305,98 @@ class ProjectController extends Controller
     }
 
     /**
-     * @return array<string, array{run_count: int, token_usage: int}>
+     * @return array{window: array{key: string, label: string, starts_at: ?string}, run_count: int, token_usage_run_count: int, total_processed_tokens: int, average_tokens_per_run: ?int, legacy_incomplete_run_count: int, legacy_token_usage: int, harnesses: array<string, array<string, mixed>>}
      */
-    private function harnessUsage(Project $project): array
+    private function harnessUsage(Project $project, string $window, TokenUsageNormalizer $normalizer): array
     {
-        $codexEvidenceExpression = <<<'SQL'
-CASE
-    WHEN codex_run_id IS NOT NULL AND codex_run_id <> '' THEN 1
-    ELSE 0
-END
-SQL;
+        $startsAt = match ($window) {
+            '24h' => now()->subDay(),
+            '7d' => now()->subDays(7),
+            default => null,
+        };
+        $runs = $project->runs()
+            ->when($startsAt !== null, fn ($query) => $query->where('started_at', '>=', $startsAt))
+            ->get(['id', 'harness', 'codex_run_id', 'token_usage', 'result', 'configuration_snapshot']);
+        $harnesses = [];
+        $legacyIncompleteRunCount = 0;
+        $legacyTokenUsage = 0;
 
-        $rows = $project->runs()
-            ->selectRaw(
-                "harness, {$codexEvidenceExpression} AS has_codex_evidence, COUNT(*) AS aggregate_run_count, COALESCE(SUM(token_usage), 0) AS aggregate_token_usage",
-            )
-            ->groupBy('harness')
-            ->groupByRaw($codexEvidenceExpression)
-            ->get();
-
-        $usage = [];
-
-        foreach ($rows as $row) {
-            $harness = $row->getRawOriginal('harness');
-            $hasCodexEvidence = (int) $row->getAttribute(
-                'has_codex_evidence',
-            ) === 1;
+        foreach ($runs as $run) {
+            $harness = $run->getRawOriginal('harness');
             $key = is_string($harness) && $harness !== ''
                 ? $harness
-                : ($hasCodexEvidence
-                    ? AgentHarness::Codex->value
-                    : 'legacy');
-
-            $usage[$key] ??= [
+                : (filled($run->codex_run_id) ? AgentHarness::Codex->value : 'legacy');
+            $harnesses[$key] ??= [
                 'run_count' => 0,
+                'token_usage_run_count' => 0,
                 'token_usage' => 0,
+                'legacy_incomplete_run_count' => 0,
+                'legacy_token_usage' => 0,
+                'configurations' => [],
             ];
+            $harnesses[$key]['run_count']++;
+            $total = $normalizer->canonicalTotal($run);
 
-            $usage[$key]['run_count'] += (int) $row->getAttribute(
-                'aggregate_run_count',
-            );
-            $usage[$key]['token_usage'] += (int) $row->getAttribute(
-                'aggregate_token_usage',
-            );
+            if ($total === null) {
+                $harnesses[$key]['legacy_incomplete_run_count']++;
+                $legacyIncompleteRunCount++;
+                $legacyValue = $run->getAttribute('token_usage');
+                $legacyValue = is_int($legacyValue) ? $legacyValue : 0;
+                $harnesses[$key]['legacy_token_usage'] += $legacyValue;
+                $legacyTokenUsage += $legacyValue;
+
+                continue;
+            }
+
+            $harnesses[$key]['token_usage_run_count']++;
+            $harnesses[$key]['token_usage'] += $total;
+            $configuration = $this->usageConfiguration($run);
+            $configurationKey = implode('|', [$configuration['model'] ?? 'unknown', $configuration['reasoning_setting'] ?? 'default']);
+            $harnesses[$key]['configurations'][$configurationKey] ??= [...$configuration, 'run_count' => 0, 'token_usage' => 0];
+            $harnesses[$key]['configurations'][$configurationKey]['run_count']++;
+            $harnesses[$key]['configurations'][$configurationKey]['token_usage'] += $total;
         }
 
-        return $usage;
+        foreach ($harnesses as &$usage) {
+            $usage['average_tokens_per_run'] = $usage['token_usage_run_count'] === 0 ? null : (int) round($usage['token_usage'] / $usage['token_usage_run_count']);
+            $usage['configurations'] = array_values($usage['configurations']);
+        }
+        unset($usage);
+
+        $totalProcessedTokens = array_sum(array_column($harnesses, 'token_usage'));
+        $tokenUsageRunCount = array_sum(array_column($harnesses, 'token_usage_run_count'));
+
+        return [
+            'window' => ['key' => $window, 'label' => match ($window) {
+                '24h' => 'Last 24 hours', '7d' => 'Last 7 days', default => 'All time'
+            }, 'starts_at' => $startsAt?->toIso8601String()],
+            'run_count' => $runs->count(),
+            'token_usage_run_count' => $tokenUsageRunCount,
+            'total_processed_tokens' => $totalProcessedTokens,
+            'average_tokens_per_run' => $tokenUsageRunCount === 0 ? null : (int) round($totalProcessedTokens / $tokenUsageRunCount),
+            'legacy_incomplete_run_count' => $legacyIncompleteRunCount,
+            'legacy_token_usage' => $legacyTokenUsage,
+            'harnesses' => $harnesses,
+        ];
+    }
+
+    private function usageWindow(Request $request): string
+    {
+        return in_array($request->query('usage_window'), ['24h', '7d', 'all'], true)
+            ? $request->query('usage_window')
+            : 'all';
+    }
+
+    /** @return array{model: ?string, reasoning_setting: ?string} */
+    private function usageConfiguration(AgentRun $run): array
+    {
+        $snapshot = $run->getAttribute('configuration_snapshot');
+        $agent = is_array($snapshot) ? $snapshot['agent'] ?? null : null;
+
+        return [
+            'model' => is_array($agent) && is_string($agent['model'] ?? null) ? $agent['model'] : null,
+            'reasoning_setting' => is_array($agent) && is_string($agent['reasoning_setting'] ?? null) ? $agent['reasoning_setting'] : null,
+        ];
     }
 
     /**

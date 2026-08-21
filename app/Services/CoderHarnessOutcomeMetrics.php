@@ -36,6 +36,13 @@ class CoderHarnessOutcomeMetrics
         TaskStatus::Blocked->value,
     ];
 
+    private TokenUsageNormalizer $tokenUsage;
+
+    public function __construct(?TokenUsageNormalizer $tokenUsage = null)
+    {
+        $this->tokenUsage = $tokenUsage ?? new TokenUsageNormalizer;
+    }
+
     /**
      * Calculate Coder harness metrics for a caller-supplied comparable Task cohort.
      *
@@ -248,7 +255,7 @@ class CoderHarnessOutcomeMetrics
                 $firstCoderAttempt = $attemptsByNumber[$attemptNumber];
             }
 
-            $tokenUsage = $this->integerValue($run->getAttribute('token_usage'));
+            $tokenUsage = $this->tokenUsage->canonicalTotal($run);
 
             if ($tokenUsage === null) {
                 $tokenUsageComplete = false;

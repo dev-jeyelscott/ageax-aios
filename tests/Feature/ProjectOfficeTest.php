@@ -153,7 +153,9 @@ test('the project office includes persisted worker agent git and harness evidenc
             )
             ->where('project.git_evidence.validation_results.passed', true)
             ->where('project.harness_usage.claude_code.run_count', 1)
-            ->where('project.harness_usage.claude_code.token_usage', 1200)
+            ->where('project.harness_usage.claude_code.token_usage', 0)
+            ->where('project.harness_usage.claude_code.legacy_incomplete_run_count', 1)
+            ->where('project.token_usage_evidence.legacy_token_usage', 1200)
             ->where('project.recent_agent_runs.0.harness', 'claude_code'));
 });
 
@@ -380,8 +382,8 @@ test('historical codex evidence is attributed to codex while unknown legacy runs
         'codex_run_id' => null,
         'prompt_hash' => hash('sha256', 'unknown-legacy'),
         'token_usage' => 30,
-        'started_at' => now()->subMinute(),
-        'finished_at' => now(),
+        'started_at' => now()->subDays(2),
+        'finished_at' => now()->subDays(2)->addMinute(),
     ]);
 
     $this->actingAs($user)
@@ -394,4 +396,78 @@ test('historical codex evidence is attributed to codex while unknown legacy runs
             ->where('project.harness_usage.codex.token_usage', 250)
             ->where('project.harness_usage.legacy.run_count', 1)
             ->where('project.harness_usage.legacy.token_usage', 30));
+
+    $this->actingAs($user)
+        ->get(route('projects.show', ['project' => $project, 'usage_window' => '24h']))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('project.token_usage_evidence.window.key', '24h')
+            ->where('project.token_usage_total', 250)
+            ->where('project.harness_usage.codex.run_count', 2));
+});
+
+test('claude cache creation and reads are included in canonical processed token evidence', function () {
+    Storage::fake('local');
+    $project = Project::create(['name' => fake()->sentence(), 'path' => '/tmp/'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $agent = Agent::factory()->for($project)->create(['harness' => AgentHarness::ClaudeCode]);
+    $recorder = app(AgentRunRecorder::class);
+    $run = $recorder->start($project, AgentRole::Coder, 'usage', agent: $agent);
+
+    $completed = $recorder->complete($run, [
+        'exit_code' => 0,
+        'output' => 'complete',
+        'error_output' => '',
+        'usage' => [
+            'input_tokens' => 100,
+            'cache_creation_input_tokens' => 20,
+            'cache_read_input_tokens' => 30,
+            'output_tokens' => 40,
+        ],
+    ]);
+
+    expect($completed->token_usage)->toBe(190)
+        ->and($completed->result['token_usage'])->toMatchArray([
+            'status' => 'complete',
+            'uncached_input_tokens' => 100,
+            'cache_creation_input_tokens' => 20,
+            'cache_read_input_tokens' => 30,
+            'output_tokens' => 40,
+            'canonical_total_tokens' => 190,
+        ]);
+});
+
+test('codex cached input is evidence only and is not double counted', function () {
+    Storage::fake('local');
+    $project = Project::create(['name' => fake()->sentence(), 'path' => '/tmp/'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $agent = Agent::factory()->for($project)->create(['harness' => AgentHarness::Codex]);
+    $recorder = app(AgentRunRecorder::class);
+    $run = $recorder->start($project, AgentRole::Coder, 'usage', agent: $agent);
+
+    $completed = $recorder->complete($run, [
+        'exit_code' => 0,
+        'output' => 'complete',
+        'error_output' => '',
+        'usage' => ['input_tokens' => 100, 'input_tokens_details' => ['cached_tokens' => 60], 'output_tokens' => 20],
+    ]);
+
+    expect($completed->token_usage)->toBe(120)
+        ->and($completed->result['token_usage']['uncached_input_tokens'])->toBe(40)
+        ->and($completed->result['token_usage']['cached_input_tokens'])->toBe(60);
+});
+
+test('partial and historical claude telemetry remains explicitly incomplete', function () {
+    Storage::fake('local');
+    $project = Project::create(['name' => fake()->sentence(), 'path' => '/tmp/'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $agent = Agent::factory()->for($project)->create(['harness' => AgentHarness::ClaudeCode]);
+    $recorder = app(AgentRunRecorder::class);
+    $run = $recorder->start($project, AgentRole::Coder, 'usage', agent: $agent);
+    $completed = $recorder->complete($run, [
+        'exit_code' => 1,
+        'output' => 'failed',
+        'error_output' => '',
+        'usage' => ['input_tokens' => 10],
+    ]);
+
+    expect($completed->token_usage)->toBeNull()
+        ->and($completed->result['token_usage']['status'])->toBe('incomplete');
 });

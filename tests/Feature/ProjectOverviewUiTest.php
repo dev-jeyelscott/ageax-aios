@@ -50,7 +50,10 @@ test('project overview exposes durable operational evidence without inventing mi
         ->toContain('git_evidence')
         ->toContain('token_usage_total')
         ->toContain('token_observability')
-        ->toContain('harness_usage');
+        ->toContain('harness_usage')
+        ->toContain('token_usage_evidence')
+        ->toContain('usage_window')
+        ->toContain('Raw harness totals are observational, not efficiency rankings');
 });
 
 test('project overview keeps pause navigation and live polling behavior', function () {

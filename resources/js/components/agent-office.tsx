@@ -16,6 +16,7 @@ import {
 import { Fragment, useMemo } from 'react';
 import {
     requeueRoadmap,
+    show as showProject,
     showAgentRun,
     showTask,
 } from '@/actions/App/Http/Controllers/ProjectController';
@@ -119,6 +120,24 @@ type GitEvidence = {
 type HarnessUsage = {
     run_count: number;
     token_usage: number;
+    token_usage_run_count: number;
+    average_tokens_per_run: number | null;
+    legacy_incomplete_run_count: number;
+    configurations: {
+        model: string | null;
+        reasoning_setting: string | null;
+        run_count: number;
+        token_usage: number;
+    }[];
+};
+
+type TokenUsageEvidence = {
+    window: { key: '24h' | '7d' | 'all'; label: string };
+    run_count: number;
+    total_processed_tokens: number;
+    average_tokens_per_run: number | null;
+    legacy_incomplete_run_count: number;
+    legacy_token_usage: number;
 };
 
 type TokenObservability = {
@@ -138,6 +157,7 @@ type OverviewProject = {
     tasks: OfficeTask[];
     git_evidence: GitEvidence | null;
     token_usage_total: number;
+    token_usage_evidence: TokenUsageEvidence;
     token_observability: Record<string, TokenObservability>;
     harness_usage: Record<string, HarnessUsage>;
     recent_agent_runs: {
@@ -1500,13 +1520,17 @@ function ValidationStateCard({
 }
 
 function TokenUsageCard({
+    projectId,
     total,
     harnessUsage,
     observability,
+    evidence,
 }: {
+    projectId: number;
     total: number;
     harnessUsage: Record<string, HarnessUsage>;
     observability: Record<string, TokenObservability>;
+    evidence: TokenUsageEvidence;
 }) {
     const preferredHarnesses = ['claude_code', 'codex'];
     const allHarnesses = Array.from(
@@ -1518,6 +1542,10 @@ function TokenUsageCard({
             usage: harnessUsage[harness] ?? {
                 run_count: 0,
                 token_usage: 0,
+                token_usage_run_count: 0,
+                average_tokens_per_run: null,
+                legacy_incomplete_run_count: 0,
+                configurations: [],
             },
         }))
         .filter(
@@ -1538,9 +1566,27 @@ function TokenUsageCard({
                 <span>Execution / Token Usage</span>
             </div>
 
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {(['24h', '7d', 'all'] as const).map((window) => (
+                    <Link
+                        key={window}
+                        href={showProject({ project: projectId }, { query: { usage_window: window } }).url}
+                        preserveScroll
+                        className={`rounded-md px-2 py-1 font-mono text-2xs ${
+                            evidence.window.key === window
+                                ? 'bg-primary/15 text-primary'
+                                : 'text-muted-foreground hover:bg-muted'
+                        }`}
+                    >
+                        {window === 'all' ? 'All time' : window}
+                    </Link>
+                ))}
+                <span className="text-2xs text-muted-foreground">{evidence.window.label}</span>
+            </div>
+
             <div className="execution-token-layout">
                 <div>
-                    <p className="execution-meta-label">Total Observed</p>
+                    <p className="execution-meta-label">Processed tokens</p>
                     <p className="mt-1 text-2xl font-semibold text-foreground">
                         {formatTokens(total)}
                     </p>
@@ -1560,10 +1606,17 @@ function TokenUsageCard({
                                             {labelForHarness(key)}
                                         </span>
                                         <span className="font-mono text-2xs text-primary">
-                                            {formatTokens(usage.token_usage)}{' '}
-                                            tokens
+                                            {formatTokens(usage.token_usage)} · {usage.run_count} runs
                                         </span>
                                     </div>
+                                    <p className="mt-1 text-2xs text-muted-foreground">
+                                        Avg {usage.average_tokens_per_run === null ? 'unavailable' : formatTokens(usage.average_tokens_per_run)} / recorded run
+                                    </p>
+                                    {usage.configurations.map((configuration) => (
+                                        <p key={`${configuration.model}-${configuration.reasoning_setting}`} className="mt-0.5 text-2xs text-muted-foreground">
+                                            {configuration.model ?? 'Immutable config unavailable'} · {configuration.reasoning_setting ?? 'default'}: {formatTokens(configuration.token_usage)} / {configuration.run_count} runs
+                                        </p>
+                                    ))}
                                     <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
                                         <div
                                             className="execution-token-bar h-full rounded-full"
@@ -1580,6 +1633,11 @@ function TokenUsageCard({
                     )}
                 </div>
             </div>
+
+            <p className="mt-2 text-2xs text-muted-foreground">
+                {evidence.run_count} executions; average uses {evidence.window.key === 'all' ? 'all recorded' : 'windowed recorded'} usage. Raw harness totals are observational, not efficiency rankings.
+                {evidence.legacy_incomplete_run_count > 0 && ` ${evidence.legacy_incomplete_run_count} legacy/incomplete runs (${formatTokens(evidence.legacy_token_usage)} legacy tokens) are excluded from processed-token totals.`}
+            </p>
 
             <div className="mt-3 border-t border-border-subtle pt-2.5">
                 <p className="execution-meta-label">Rolling Role Averages</p>
@@ -2010,9 +2068,11 @@ export function AgentOffice({
                     />
 
                     <TokenUsageCard
+                        projectId={projectId}
                         total={pageProject?.token_usage_total ?? 0}
                         harnessUsage={pageProject?.harness_usage ?? {}}
                         observability={pageProject?.token_observability ?? {}}
+                        evidence={pageProject?.token_usage_evidence ?? { window: { key: 'all', label: 'All time' }, run_count: 0, total_processed_tokens: 0, average_tokens_per_run: null, legacy_incomplete_run_count: 0, legacy_token_usage: 0 }}
                     />
 
                     <HealthCard

@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Services\AgentHarnessResolver;
 use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
+use App\Services\TokenUsageNormalizer;
 use App\Services\TokenUsageObservability;
 use Illuminate\Http\Request;
 use Inertia\Response;
@@ -18,6 +19,7 @@ class ProjectWorkflowController extends Controller
         ProjectController $projects,
         AuditLogger $audit,
         TokenUsageObservability $tokens,
+        TokenUsageNormalizer $usageNormalizer,
         AgentRunRecorder $runs,
         AgentHarnessResolver $harnesses,
     ): Response {
@@ -26,6 +28,7 @@ class ProjectWorkflowController extends Controller
             $request,
             $audit,
             $tokens,
+            $usageNormalizer,
             $runs,
             $harnesses,
         );

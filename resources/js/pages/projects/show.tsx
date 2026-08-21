@@ -20,6 +20,7 @@ import { lazy, Suspense, useState, useSyncExternalStore } from 'react';
 import {
     index,
     requeueRoadmap,
+    show as showProject,
     showAgentRun,
     showTask,
     updateStatus,
@@ -90,6 +91,20 @@ type GitEvidence = {
 type HarnessUsage = {
     run_count: number;
     token_usage: number;
+    token_usage_run_count: number;
+    average_tokens_per_run: number | null;
+    legacy_incomplete_run_count: number;
+    legacy_token_usage: number;
+    configurations: { model: string | null; reasoning_setting: string | null; run_count: number; token_usage: number }[];
+};
+
+type TokenUsageEvidence = {
+    window: { key: '24h' | '7d' | 'all'; label: string };
+    run_count: number;
+    total_processed_tokens: number;
+    average_tokens_per_run: number | null;
+    legacy_incomplete_run_count: number;
+    legacy_token_usage: number;
 };
 
 type TokenObservation = {
@@ -116,6 +131,7 @@ type Project = {
     office_workflow: OfficeWorkflow | null;
     tasks: Task[];
     token_usage_total: number;
+    token_usage_evidence: TokenUsageEvidence;
     token_observability: Record<string, TokenObservation>;
     harness_usage: Record<string, HarnessUsage>;
     git_evidence: GitEvidence | null;
@@ -890,6 +906,11 @@ function HarnessUsageOverviewCard({ project }: { project: Project }) {
             usage: project.harness_usage[harness] ?? {
                 run_count: 0,
                 token_usage: 0,
+                token_usage_run_count: 0,
+                average_tokens_per_run: null,
+                legacy_incomplete_run_count: 0,
+                legacy_token_usage: 0,
+                configurations: [],
             },
         }))
         .concat(
@@ -911,6 +932,14 @@ function HarnessUsageOverviewCard({ project }: { project: Project }) {
             eyebrow="Observability"
             icon={<Cpu className="size-4" />}
         >
+            <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                {(['24h', '7d', 'all'] as const).map((window) => (
+                    <Link key={window} href={showProject({ project: project.id }, { query: { usage_window: window } }).url} preserveScroll className={`rounded-md px-2 py-1 font-mono text-2xs ${project.token_usage_evidence.window.key === window ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-muted'}`}>
+                        {window === 'all' ? 'All time' : window}
+                    </Link>
+                ))}
+                <span className="text-2xs text-muted-foreground">{project.token_usage_evidence.window.label}</span>
+            </div>
             <div className="flex items-end justify-between gap-3">
                 <div>
                     <p className="font-mono text-2xs text-muted-foreground uppercase">
@@ -931,7 +960,7 @@ function HarnessUsageOverviewCard({ project }: { project: Project }) {
                                 {harnessLabel(harness)}
                             </span>
                             <span className="font-mono text-2xs text-foreground">
-                                {formatTokens(usage.token_usage)}
+                                {formatTokens(usage.token_usage)} · {usage.run_count} runs
                             </span>
                         </div>
                         <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -944,9 +973,18 @@ function HarnessUsageOverviewCard({ project }: { project: Project }) {
                                 }}
                             />
                         </div>
+                        <p className="mt-1 text-2xs text-muted-foreground">Avg {usage.average_tokens_per_run === null ? 'unavailable' : formatTokens(usage.average_tokens_per_run)} / recorded run</p>
+                        {usage.configurations.map((configuration) => (
+                            <p key={`${configuration.model}-${configuration.reasoning_setting}`} className="mt-0.5 text-2xs text-muted-foreground">{configuration.model ?? 'Immutable config unavailable'} · {configuration.reasoning_setting ?? 'default'}: {formatTokens(configuration.token_usage)} / {configuration.run_count} runs</p>
+                        ))}
                     </div>
                 ))}
             </div>
+
+            <p className="mt-3 text-2xs text-muted-foreground">
+                {project.token_usage_evidence.run_count} executions in this evidence window. Raw aggregates are informational only, not efficiency rankings.
+                {project.token_usage_evidence.legacy_incomplete_run_count > 0 && ` ${project.token_usage_evidence.legacy_incomplete_run_count} legacy/incomplete runs (${formatTokens(project.token_usage_evidence.legacy_token_usage)} legacy tokens) are excluded from processed-token totals.`}
+            </p>
 
             <div className="mt-3 border-t border-border-subtle pt-3">
                 <p className="font-mono text-2xs text-muted-foreground uppercase">

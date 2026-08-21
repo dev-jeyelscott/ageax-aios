@@ -24,6 +24,13 @@ final class ReviewerHarnessDiagnostics
 
     public const string FallbackPolicyVersion = CoderHarnessComparableCohortScorecards::FallbackPolicyVersion;
 
+    private TokenUsageNormalizer $tokenUsage;
+
+    public function __construct(?TokenUsageNormalizer $tokenUsage = null)
+    {
+        $this->tokenUsage = $tokenUsage ?? new TokenUsageNormalizer;
+    }
+
     /**
      * Calculate observational Reviewer diagnostics for one project/repository boundary.
      *
@@ -376,7 +383,7 @@ final class ReviewerHarnessDiagnostics
                 $failedProcessRunCount++;
             }
 
-            $tokenUsage = $this->integerValue($run->getAttribute('token_usage'));
+            $tokenUsage = $this->tokenUsage->canonicalTotal($run);
 
             if ($tokenUsage === null) {
                 $tokenUsageComplete = false;
