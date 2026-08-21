@@ -5,9 +5,12 @@ use App\AgentRunStatus;
 use App\Models\AgentRun;
 use App\Models\AgentWorker;
 use App\Models\Project;
+use App\Models\Review;
 use App\Models\Task;
+use App\Models\TaskAttempt;
 use App\Models\User;
 use App\ProjectStatus;
+use App\ReviewStatus;
 use App\TaskStatus;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -122,6 +125,38 @@ test('office workflow follows the reviewer after coder to reviewer handoff', fun
             ->where('project.office_workflow.run_id', $reviewerRun->id)
             ->where('project.office_workflow.task.key', 'TASK-023')
             ->where('project.office_workflow.task.status', 'reviewing'));
+});
+
+test('office workflow retains a reviewer to coder return handoff throughout correction', function () {
+    $user = User::factory()->create();
+    $project = officeSyncProject('Reviewer Return Sync');
+    $task = officeSyncTask($project, 'TASK-024', 1, TaskStatus::Coding);
+    $attempt = TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'status' => 'completed',
+        'started_at' => now()->subMinute(),
+        'finished_at' => now()->subMinute(),
+    ]);
+    Review::create([
+        'task_id' => $task->id,
+        'task_attempt_id' => $attempt->id,
+        'status' => ReviewStatus::ChangesRequired,
+        'started_at' => now()->subMinute(),
+        'completed_at' => now()->subMinute(),
+    ]);
+    $coder = officeSyncWorker($project, AgentRole::Coder, 'working', true);
+    $run = officeSyncRun($project, $coder, $task, AgentRunStatus::Running);
+
+    $this->actingAs($user)
+        ->get(route('projects.show', $project))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/show')
+            ->where('project.office_workflow.role', 'coder')
+            ->where('project.office_workflow.run_id', $run->id)
+            ->where('project.office_workflow.task.status', 'coding')
+            ->where('project.office_workflow.task.return_from_reviewer', true));
 });
 
 test('office workflow preserves exceptional task status when falling back to recent execution', function (string $status) {

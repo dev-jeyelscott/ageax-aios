@@ -469,9 +469,16 @@ class ProjectController extends Controller
                     ])
                     ->latest('started_at')
                     ->limit(1)
-                    ->with(
-                        'task:id,key,title,status',
-                    ),
+                    ->with([
+                        'task' => fn ($query) => $query
+                            ->select(['id', 'key', 'title', 'status'])
+                            ->with([
+                                'reviews' => fn ($reviews) => $reviews
+                                    ->select(['id', 'task_id', 'status'])
+                                    ->latest('id')
+                                    ->limit(1),
+                            ]),
+                    ]),
             ])
             ->get();
 
@@ -557,6 +564,7 @@ class ProjectController extends Controller
                         'status' => $task->getRawOriginal(
                             'status',
                         ),
+                        'return_from_reviewer' => $task->reviews->first()?->getRawOriginal('status') === 'changes_required',
                     ],
             ];
         }
@@ -660,7 +668,7 @@ class ProjectController extends Controller
      *     worker_id: int,
      *     role: string,
      *     run_id: int,
-     *     task: ?array{id: int, key: string, title: string, status: string}
+     *     task: ?array{id: int, key: string, title: string, status: string, return_from_reviewer: bool}
      * }|null
      */
     private function officeWorkflow(array $workers): ?array

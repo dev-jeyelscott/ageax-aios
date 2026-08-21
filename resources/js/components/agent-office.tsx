@@ -83,6 +83,7 @@ export type OfficeTask = {
     key: string;
     title: string;
     status: string;
+    return_from_reviewer?: boolean;
 };
 
 export type OfficeWorkflow = {
@@ -1892,7 +1893,7 @@ export function AgentOffice({
     let coderToReviewerState: ConnectorState = 'idle';
     const coderToReviewerReverse =
         currentWorkflow?.role === 'coder' &&
-        workflowStatus === 'changes_required';
+        currentWorkflow.task?.return_from_reviewer === true;
 
     if (projectPaused) {
         pmToCoderState = 'paused';
