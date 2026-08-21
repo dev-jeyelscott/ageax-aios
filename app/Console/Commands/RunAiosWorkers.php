@@ -8,14 +8,17 @@ use App\Actions\ConvertTicketToTask;
 use App\Actions\RunCoderTask;
 use App\Actions\RunProjectManager;
 use App\Actions\RunReviewerTask;
+use App\Actions\RunTaskPlanningRevision;
 use App\Actions\RunTicketTriage;
 use App\Actions\SetProjectStatus;
 use App\AgentRole;
 use App\Models\AgentWorker;
 use App\Models\Project;
 use App\Models\Roadmap;
+use App\Models\TaskPlanningEscalation;
 use App\Models\TicketTriageAttempt;
 use App\ProjectStatus;
+use App\Services\TaskPlanningEscalationWorkflow;
 use App\Services\WorkerHeartbeat;
 use App\TicketStatus;
 use Carbon\CarbonImmutable;
@@ -38,10 +41,12 @@ class RunAiosWorkers extends Command
         ConvertTicketToTask $convertTicketToTask,
         RunCoderTask $runCoderTask,
         RunProjectManager $runProjectManager,
+        RunTaskPlanningRevision $runTaskPlanningRevision,
         RunReviewerTask $runReviewerTask,
         RunTicketTriage $runTicketTriage,
         SetProjectStatus $setProjectStatus,
         WorkerHeartbeat $heartbeat,
+        TaskPlanningEscalationWorkflow $planningEscalations,
     ): int {
         $workerInstanceId = (string) Str::uuid();
 
@@ -125,9 +130,29 @@ class RunAiosWorkers extends Command
                     }
                 }
 
+                // Planning revisions are PM work, serialized by the same lease and ordered
+                // after roadmap analysis but before Ticket intake.
+                if (! $this->hasPendingRoadmapWork($project)) {
+                    $lease = $heartbeat->acquire($project, AgentRole::ProjectManager, $workerInstanceId);
+                    if ($lease !== null) {
+                        try {
+                            $revisionAttempt = $planningEscalations->claim($project);
+                            if ($revisionAttempt !== null) {
+                                $runTaskPlanningRevision->handle($revisionAttempt, $lease);
+                                AgentWorker::query()->whereBelongsTo($project)->where('role', AgentRole::ProjectManager)->update(['task_completed_at' => now()]);
+                            }
+                        } catch (Throwable $throwable) {
+                            report($throwable);
+                        } finally {
+                            $heartbeat->release($lease);
+                        }
+                    }
+                }
+
                 if (
                     ! $this->hasActiveTicketTriage($project)
                     && ! $this->hasPendingRoadmapWork($project)
+                    && ! $this->hasActivePlanningRevision($project)
                     && $this->hasEligibleTicketTriage($project)
                 ) {
                     $lease = $heartbeat->acquire(
@@ -284,6 +309,14 @@ class RunAiosWorkers extends Command
     {
         return $project->tickets()
             ->where('status', TicketStatus::Triaging->value)
+            ->exists();
+    }
+
+    private function hasActivePlanningRevision(Project $project): bool
+    {
+        return TaskPlanningEscalation::query()
+            ->whereIn('status', ['pending', 'running'])
+            ->whereHas('task', fn ($query) => $query->where('project_id', $project->id))
             ->exists();
     }
 

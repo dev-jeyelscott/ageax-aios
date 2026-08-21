@@ -102,4 +102,10 @@ class Task extends Model
     {
         return $this->hasOne(Ticket::class, 'converted_task_id');
     }
+
+    /** @return HasMany<TaskPlanningEscalation, $this> */
+    public function planningEscalations(): HasMany
+    {
+        return $this->hasMany(TaskPlanningEscalation::class);
+    }
 }

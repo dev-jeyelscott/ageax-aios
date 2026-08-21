@@ -25,6 +25,8 @@ use App\Services\ProjectGitState;
 use App\Services\TaskCommitter;
 use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskContractGuard;
+use App\Services\TaskPlanningDefectPreflight;
+use App\Services\TaskPlanningEscalationWorkflow;
 use App\Services\TaskValidator;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
@@ -36,7 +38,7 @@ use Throwable;
 
 class RunCoderTask
 {
-    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskContractGuard $contracts, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private NoProgressRetryGuard $noProgress, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git, private DatabaseProtectionGuard $databaseProtection) {}
+    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskContractGuard $contracts, private TaskPlanningDefectPreflight $planningPreflight, private TaskPlanningEscalationWorkflow $planningEscalations, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private NoProgressRetryGuard $noProgress, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git, private DatabaseProtectionGuard $databaseProtection) {}
 
     public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
     {
@@ -47,6 +49,15 @@ class RunCoderTask
             $projectPath = $this->paths->assertProjectPath($task->project->path);
         } catch (UnsafeProjectPath $exception) {
             return $this->blockUnsafeProjectPath($task, $exception);
+        }
+
+        // This is intentionally before repository/harness work: unsafe PM-authored contract
+        // metadata is a planning defect, never a failed implementation attempt.
+        $planningDefect = $this->planningPreflight->evaluate($task);
+        if ($planningDefect !== null) {
+            $escalation = $this->planningEscalations->escalate($task, $planningDefect);
+
+            return $escalation->sourceAttempt()->firstOrFail();
         }
 
         try {
@@ -116,6 +127,13 @@ class RunCoderTask
 
             if ($execution['exit_code'] === 0) {
                 $task->operatorMessages()->where('recipient_role', AgentRole::Coder)->whereNull('delivered_at')->update(['delivered_at' => now()]);
+            }
+
+            $reportedPlanningDefect = $this->reportedPlanningDefect($execution['output']);
+            if ($reportedPlanningDefect !== null) {
+                $this->planningEscalations->escalate($task, $reportedPlanningDefect, $attempt);
+
+                return $attempt->refresh();
             }
 
             $validation = $execution['exit_code'] === 0
@@ -342,6 +360,21 @@ class RunCoderTask
         }
 
         return TaskStatus::Failed;
+    }
+
+    /** @return array{type:string,fingerprint:string,evidence:array<string,mixed>,allowed_fields:list<string>}|null */
+    private function reportedPlanningDefect(string $output): ?array
+    {
+        $decoded = json_decode($output, true);
+        $proposal = is_array($decoded) && is_array($decoded['planning_defect'] ?? null) ? $decoded['planning_defect'] : null;
+        $field = $proposal['field'] ?? null;
+        $type = $proposal['type'] ?? null;
+        $evidence = $proposal['evidence'] ?? null;
+        if (! is_string($field) || ! is_string($type) || ! is_array($evidence) || ! in_array($field, TaskPlanningDefectPreflight::AllowedFields, true) || ! in_array($type, ['missing_contract_detail', 'unsafe_declared_tooling', 'invalid_dependency_placement'], true)) {
+            return null;
+        }
+
+        return ['type' => $type, 'fingerprint' => hash('sha256', json_encode([$type, $field, $evidence], JSON_THROW_ON_ERROR)), 'evidence' => ['field' => $field, ...$evidence], 'allowed_fields' => [$field]];
     }
 
     /** @return array{0: ?Agent, 1: ?AgentHarness} */

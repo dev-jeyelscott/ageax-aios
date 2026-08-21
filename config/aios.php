@@ -27,6 +27,7 @@ return [
     // entire plan as one JSON response (see RunProjectManager/ApplyRoadmapPlan).
     'roadmap_max_phases_per_batch' => (int) env('AIOS_ROADMAP_MAX_PHASES_PER_BATCH', 3),
     'max_coder_attempts' => (int) env('AIOS_MAX_CODER_ATTEMPTS', 3),
+    'max_task_planning_revisions' => (int) env('AIOS_MAX_TASK_PLANNING_REVISIONS', 3),
     'max_reviewer_attempts' => (int) env('AIOS_MAX_REVIEWER_ATTEMPTS', 3),
     'no_progress_repeat_threshold' => (int) env('AIOS_NO_PROGRESS_REPEAT_THRESHOLD', 1),
     // Stops a valid Coder → Reviewer rejection loop when each rejection has the same task

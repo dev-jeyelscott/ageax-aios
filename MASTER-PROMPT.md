@@ -70,6 +70,12 @@ For every task:
 
 Never fabricate inspection, testing, verification, or completion.
 
+### Deterministic Task planning-defect escalation
+
+Before Coder harness execution, AIOS deterministically validates the Task contract. A machine-verifiable planning defect (for example an unsafe verification command, unsafe relevant path, or invalid dependency placement) blocks the Task and records immutable TaskAttempt evidence. It queues one durable planning revision for the existing Project Manager worker; this does not add a role, worker lane, or parallel work.
+
+The Project Manager receives only targeted Task contract context, permitted mutable fields, dependency context, and bounded redacted failure evidence. It may return a structured proposal only. AIOS validates and atomically applies allowed revisions to acceptance criteria, scope, constraints, relevant paths, verification commands, implementation instructions, or dependencies; Task identity, objective, phase, position, work metadata, and history remain immutable. A valid revision resets the contract baseline and transitions the Task to `changes_required`. Invalid, no-op, or repeatedly failing revisions remain blocked for operator intervention after the configured bounded limit.
+
 Priority:
 
 ```
