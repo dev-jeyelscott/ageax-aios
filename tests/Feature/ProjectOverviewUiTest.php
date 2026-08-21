@@ -16,6 +16,8 @@ test('project overview keeps the deterministic PM coder reviewer execution graph
         ->toContain('coderToReviewerState')
         ->toContain('coderToReviewerReverse')
         ->toContain('currentWorkflow.task?.return_from_reviewer === true')
+        ->toContain('if (coderToReviewerReverse)')
+        ->toContain("coderToReviewerState = 'active'")
         ->toContain('workflow-connector--reverse')
         ->toContain("currentWorkflow?.role === 'coder'")
         ->toContain("currentWorkflow?.role === 'reviewer'");

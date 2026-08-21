@@ -1909,8 +1909,13 @@ export function AgentOffice({
         (workflowStatus !== undefined &&
             implementationStatuses.has(workflowStatus))
     ) {
-        pmToCoderState = 'active';
-        coderToReviewerState = 'idle';
+        if (coderToReviewerReverse) {
+            pmToCoderState = 'complete';
+            coderToReviewerState = 'active';
+        } else {
+            pmToCoderState = 'active';
+            coderToReviewerState = 'idle';
+        }
     }
 
     const validation = validationPresentation(
