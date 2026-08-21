@@ -382,7 +382,9 @@ function workerPresentation(
         attentionStatuses.has(worker.status) ||
         worker.run?.status === 'failed' ||
         Boolean(worker.run?.failure_reason) ||
-        (worker.task && attentionStatuses.has(worker.task.status))
+        (worker.activity_mode !== 'recent' &&
+            worker.task &&
+            attentionStatuses.has(worker.task.status))
     ) {
         return {
             label: 'Blocked',
@@ -1917,7 +1919,11 @@ export function AgentOffice({
             attentionStatuses.has(worker.status) ||
             worker.run?.status === 'failed' ||
             Boolean(worker.run?.failure_reason) ||
-            Boolean(worker.task && attentionStatuses.has(worker.task.status));
+            Boolean(
+                worker.activity_mode !== 'recent' &&
+                worker.task &&
+                attentionStatuses.has(worker.task.status),
+            );
 
         if (blocked) {
             blockedWorkerCount += 1;

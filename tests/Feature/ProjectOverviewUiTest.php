@@ -42,6 +42,7 @@ test('project overview distinguishes a completed run from a completed task', fun
         ->toContain('Completed ${labelForRole(worker.role)} run for')
         ->toContain("worker.activity_mode === 'recent' && worker.run !== null")
         ->toContain('? worker.run.status')
+        ->toContain("worker.activity_mode !== 'recent' &&")
         ->not->toContain('Completed ${worker.task.key} · ${worker.task.title}.');
 });
 
