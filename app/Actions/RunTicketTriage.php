@@ -19,6 +19,7 @@ use App\Services\AuditLogger;
 use App\Services\DatabaseProtectionGuard;
 use App\Services\StructuredResultParser;
 use App\Services\TicketContextCapsuleFactory;
+use App\Services\TicketPublicReplySafetyValidator;
 use App\Services\TicketTriagePolicy;
 use App\Services\TicketWorkflow;
 use App\Services\WorkerHeartbeat;
@@ -44,6 +45,7 @@ class RunTicketTriage
         private AgentHarnessResolver $harnesses,
         private AgentContextAssembler $contextAssembler,
         private TicketContextCapsuleFactory $ticketContexts,
+        private TicketPublicReplySafetyValidator $publicReplySafety,
         private AgentRunRecorder $runs,
         private StructuredResultParser $parser,
         private TicketTriagePolicy $triagePolicy,
@@ -110,7 +112,8 @@ class RunTicketTriage
                 AgentRole::ProjectManager,
                 $ticketContext,
             );
-            $prompt = $this->prompt($assembled->toArray());
+            $assembledContext = $assembled->toArray();
+            $prompt = $this->prompt($assembledContext);
         } catch (Throwable $throwable) {
             $this->failAttempt(
                 $attempt,
@@ -249,6 +252,32 @@ class RunTicketTriage
                 $execution['exit_code'],
                 'invalid_triage_result',
                 'The Project Manager returned a parseable result that failed the ticket_triage schema or project-scope checks.',
+            );
+
+            return $execution;
+        }
+
+        $publicReplySafetyEvidence = $this->publicReplySafety->unsafeEvidence(
+            requesterReply: (string) $validatedDecision['requester_reply'],
+            questions: $validatedDecision['questions'],
+            blockers: $validatedDecision['blockers'],
+            finalPublicResponse: $this->requesterReply($validatedDecision),
+            internalNotes: is_array(
+                $assembledContext['task_context']['internal_notes'] ?? null,
+            )
+                ? $assembledContext['task_context']['internal_notes']
+                : [],
+        );
+
+        if ($publicReplySafetyEvidence !== null) {
+            $this->failAttempt(
+                $attempt,
+                $execution['exit_code'],
+                'invalid_triage_result',
+                'The Project Manager returned requester-visible content that failed the deterministic public reply safety boundary.',
+                [
+                    'public_reply_safety' => $publicReplySafetyEvidence,
+                ],
             );
 
             return $execution;
@@ -934,12 +963,14 @@ PROMPT;
         int $exitCode,
         string $reason,
         string $action,
+        array $validationEvidence = [],
     ): void {
         DB::transaction(function () use (
             $attempt,
             $exitCode,
             $reason,
             $action,
+            $validationEvidence,
         ): void {
             $lockedAttempt = TicketTriageAttempt::query()
                 ->lockForUpdate()
@@ -969,7 +1000,7 @@ PROMPT;
                 );
             }
 
-            $this->audit->record('ticket.triage_failed', [
+            $auditPayload = [
                 'ticket_id' => $ticket->id,
                 'ticket_key' => $ticket->key,
                 'ticket_triage_attempt_id' => $lockedAttempt->id,
@@ -978,7 +1009,17 @@ PROMPT;
                 'exit_code' => $exitCode,
                 'reason' => $reason,
                 'action' => $action,
-            ], $ticket->project);
+            ];
+
+            if ($validationEvidence !== []) {
+                $auditPayload['validation_evidence'] = $validationEvidence;
+            }
+
+            $this->audit->record(
+                'ticket.triage_failed',
+                $auditPayload,
+                $ticket->project,
+            );
         }, attempts: 3);
     }
 

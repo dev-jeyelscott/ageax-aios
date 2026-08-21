@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\ClaimTicketForTriage;
+use App\Actions\RecordTicketMessage;
 use App\Actions\RunProjectManager;
 use App\Actions\RunTicketTriage;
 use App\AgentHarness as AgentHarnessIdentifier;
@@ -13,6 +14,8 @@ use App\Models\Project;
 use App\Models\Roadmap;
 use App\Models\Task;
 use App\Models\Ticket;
+use App\Models\TicketMessage;
+use App\Models\User;
 use App\ProjectStatus;
 use App\Services\AgentHarness as AgentHarnessContract;
 use App\Services\AgentHarnessResolver;
@@ -21,6 +24,8 @@ use App\Services\HarnessCapabilities;
 use App\Services\NormalizedExecutionResult;
 use App\Services\WorkerHeartbeat;
 use App\TaskStatus;
+use App\TicketMessageAuthorType;
+use App\TicketMessageType;
 use App\TicketStatus;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
@@ -376,6 +381,151 @@ test('malformed triage output fails safely without applying a ticket decision or
         ->and($project->auditEvents()
             ->where('event_type', 'ticket.triage_failed')
             ->where('payload->reason', 'malformed_triage_result')
+            ->exists())
+        ->toBeTrue();
+});
+
+dataset('p3 internal note leak candidates', [
+    'requester reply' => ['requester_reply'],
+    'question' => ['questions'],
+    'blocker' => ['blockers'],
+]);
+
+test('ticket triage deterministically blocks internal note reuse before public persistence', function (
+    string $candidateField,
+) {
+    $project = p3TicketExecutionProject();
+    p3BindTicketExecutionPm(
+        $project,
+        AgentHarnessIdentifier::Codex,
+    );
+    $ticket = p3TicketExecutionTicket($project);
+    $internalAuthor = User::factory()->create();
+    $confidential = 'Internal only acquisition evidence says the supplier termination is caused by an undisclosed payment dispute that must remain private from the requester.';
+
+    $internalMessage = app(RecordTicketMessage::class)->handle(
+        $ticket,
+        TicketMessageAuthorType::User,
+        TicketMessageType::InternalNote,
+        $confidential,
+        $internalAuthor,
+    );
+
+    $decision = p3ValidTicketTriageDecision([
+        'decision' => 'needs_information',
+        'requester_reply' => 'We need a few additional details before proceeding.',
+        'questions' => ['Which environment reproduces the reported behavior?'],
+        'blockers' => ['Awaiting the requested diagnostic details.'],
+        'implementation_required' => false,
+        'proposed_task' => null,
+    ]);
+
+    if ($candidateField === 'requester_reply') {
+        $decision['requester_reply'] = $confidential;
+    } else {
+        $decision[$candidateField] = [$confidential];
+    }
+
+    p3UseTicketTriageHarness(
+        AgentHarnessIdentifier::Codex,
+        $decision,
+    );
+
+    $attempt = app(ClaimTicketForTriage::class)->handle($project);
+
+    expect($attempt)->not->toBeNull();
+
+    app(RunTicketTriage::class)->handle($attempt);
+
+    $attempt = $attempt?->refresh();
+    $ticket = $ticket->refresh();
+    $failedAudit = $project->auditEvents()
+        ->where('event_type', 'ticket.triage_failed')
+        ->latest('id')
+        ->firstOrFail();
+    $auditPayload = json_encode(
+        $failedAudit->payload,
+        JSON_THROW_ON_ERROR
+            | JSON_UNESCAPED_SLASHES
+            | JSON_UNESCAPED_UNICODE,
+    );
+
+    expect($attempt?->status)
+        ->toBe('failed')
+        ->and($attempt?->structured_decision)
+        ->toBeNull()
+        ->and($ticket->status)
+        ->toBe(TicketStatus::Failed)
+        ->and(TicketMessage::query()
+            ->where('ticket_id', $ticket->id)
+            ->where('author_type', TicketMessageAuthorType::Ai->value)
+            ->where('message_type', TicketMessageType::PublicReply->value)
+            ->exists())
+        ->toBeFalse()
+        ->and($failedAudit->payload['reason'])
+        ->toBe('invalid_triage_result')
+        ->and(data_get(
+            $failedAudit->payload,
+            'validation_evidence.public_reply_safety.reason',
+        ))
+        ->toBe('internal_only_verbatim_overlap')
+        ->and(data_get(
+            $failedAudit->payload,
+            'validation_evidence.public_reply_safety.candidate_field',
+        ))
+        ->toBe($candidateField)
+        ->and(data_get(
+            $failedAudit->payload,
+            'validation_evidence.public_reply_safety.source_message_id',
+        ))
+        ->toBe($internalMessage->id)
+        ->and($auditPayload)
+        ->not->toContain($confidential);
+})->with('p3 internal note leak candidates');
+
+test('ticket triage public reply safety allows unrelated responses and short common overlap', function () {
+    $project = p3TicketExecutionProject();
+    p3BindTicketExecutionPm(
+        $project,
+        AgentHarnessIdentifier::Codex,
+    );
+    $ticket = p3TicketExecutionTicket($project);
+    $internalAuthor = User::factory()->create();
+
+    app(RecordTicketMessage::class)->handle(
+        $ticket,
+        TicketMessageAuthorType::User,
+        TicketMessageType::InternalNote,
+        'Please provide internal deployment evidence only to engineering because the confidential vendor migration sequence must remain restricted.',
+        $internalAuthor,
+    );
+
+    p3UseTicketTriageHarness(
+        AgentHarnessIdentifier::Codex,
+        p3ValidTicketTriageDecision([
+            'decision' => 'needs_information',
+            'requester_reply' => 'Please provide the affected environment and approximate time of the failure.',
+            'questions' => ['Which environment reproduces the reported behavior?'],
+            'blockers' => ['Awaiting requester diagnostics.'],
+            'implementation_required' => false,
+            'proposed_task' => null,
+        ]),
+    );
+
+    $attempt = app(ClaimTicketForTriage::class)->handle($project);
+
+    expect($attempt)->not->toBeNull();
+
+    app(RunTicketTriage::class)->handle($attempt);
+
+    expect($attempt?->refresh()->status)
+        ->toBe('completed')
+        ->and($ticket->refresh()->status)
+        ->toBe(TicketStatus::AwaitingRequester)
+        ->and(TicketMessage::query()
+            ->where('ticket_id', $ticket->id)
+            ->where('author_type', TicketMessageAuthorType::Ai->value)
+            ->where('message_type', TicketMessageType::PublicReply->value)
             ->exists())
         ->toBeTrue();
 });
