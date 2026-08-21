@@ -5,6 +5,7 @@ Before planning or editing, find every row whose glob matches a file in scope an
 | Applies to | Rule file |
 | --- | --- |
 | app/Actions/** | .ai/rules/actions.md |
+| bootstrap/app.php | .ai/rules/bootstrap.md |
 | app/Actions/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
 | app/Services/** | .ai/rules/services.md |
 | app/Services/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |

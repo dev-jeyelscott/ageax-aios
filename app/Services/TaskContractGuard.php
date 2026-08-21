@@ -251,12 +251,16 @@ final readonly class TaskContractGuard
 
     private function globMatches(string $glob, string $path): bool
     {
-        $pattern = preg_quote(str_replace('\\', '/', trim($glob)), '/');
+        // The translated `[^/]` character classes below contain a literal '/', so the pattern
+        // delimiter must not be '/' — PCRE ends the pattern at the first unescaped delimiter
+        // even inside a character class, which previously truncated the pattern mid-class and
+        // threw "Unknown modifier ']'" on every single-segment wildcard (`*`/`?`) glob.
+        $pattern = preg_quote(str_replace('\\', '/', trim($glob)), '#');
         $pattern = str_replace('\\*\\*', '.*', $pattern);
         $pattern = str_replace('\\*', '[^/]*', $pattern);
         $pattern = str_replace('\\?', '[^/]', $pattern);
 
-        return preg_match('/^'.$pattern.'$/', str_replace('\\', '/', $path)) === 1;
+        return preg_match('#^'.$pattern.'$#', str_replace('\\', '/', $path)) === 1;
     }
 
     private function safeProjectFile(string $projectPath, string $relativePath): ?string

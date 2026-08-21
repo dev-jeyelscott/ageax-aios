@@ -15,6 +15,15 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withSchedule(function (Schedule $schedule): void {
+        // `aios:work` is normally a persistent process. Run a bounded cycle from the scheduler as
+        // well so an unexpected worker-process exit is repaired automatically on the next minute.
+        // Worker leases still provide the authoritative serial-execution boundary when this
+        // fallback overlaps a healthy long-lived worker.
+        $schedule->command('aios:work --once')
+            ->everyMinute()
+            ->runInBackground()
+            ->withoutOverlapping();
+
         // AIOS-owned Workflow Recovery Engineer detection/repair scan. Every five minutes,
         // per AGENTS.md; withoutOverlapping guards against a slow scan cycle running twice.
         $schedule->command('aios:recover-workflows')->everyFiveMinutes()->withoutOverlapping();

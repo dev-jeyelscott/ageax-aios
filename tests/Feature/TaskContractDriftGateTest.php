@@ -236,6 +236,25 @@ test('explicit operator requeue after contract drift establishes a new contract 
         ->and($result['drifted'])->toBeFalse();
 });
 
+test('project rule index rows with a single-segment wildcard glob do not crash contract evidence gathering', function () {
+    $project = taskContractProject('Wildcard rule glob project');
+    File::ensureDirectoryExists($project->path.'/.ai/rules');
+    File::put($project->path.'/.ai/rules/index.md', <<<'MARKDOWN'
+        | Applies to | Rule file |
+        | --- | --- |
+        | app/Http/Requests/**/*Ticket*.php | .ai/rules/tickets.md |
+        MARKDOWN);
+    File::put($project->path.'/.ai/rules/tickets.md', 'Ticket rules.');
+    $task = taskContractTask($project);
+    $task->update(['relevant_paths' => ['app/Http/Requests/Foo/CreateTicketRequest.php']]);
+    $guard = app(TaskContractGuard::class);
+
+    $evidence = $guard->evidence($task->refresh(), taskContractContext());
+
+    expect($evidence['input_hashes']['repository_documents'])
+        ->toHaveKey('.ai/rules/tickets.md');
+});
+
 test('same interrupted attempt remains pinned to its original contract and immutable Agent configuration snapshot', function () {
     $project = taskContractProject('Pinned recovery project');
     $task = taskContractTask($project, TaskStatus::Failed);
