@@ -49,15 +49,24 @@ class RunCoderTask
             return $this->blockUnsafeProjectPath($task, $exception);
         }
 
-        $preflight = $this->repositoryGuard->inspect($task);
+        try {
+            $preflight = $this->repositoryGuard->inspect($task);
 
-        if (! $preflight['allowed'] || $preflight['base_sha'] === null) {
-            return $this->blockRepositoryPreflight($task, $preflight);
+            if (! $preflight['allowed'] || $preflight['base_sha'] === null) {
+                return $this->blockRepositoryPreflight($task, $preflight);
+            }
+
+            $baseSha = $preflight['base_sha'];
+            $context = $this->capsules->make($task);
+            $contract = $this->contracts->evaluate($task, $context, $preflight['recovery_attempt']);
+        } catch (Throwable $throwable) {
+            // Preflight/capsule/contract evaluation runs inside the persistent aios:work loop
+            // (App\Console\Commands\RunAiosWorkers) before any harness call. An uncaught
+            // exception here previously escaped this Action entirely and killed the worker
+            // process for every project (see the TaskContractGuard regex-delimiter incident).
+            // Fail this attempt the same way other pre-execution blocks do instead of throwing.
+            return $this->blockUnexpectedFailure($task, $throwable);
         }
-
-        $baseSha = $preflight['base_sha'];
-        $context = $this->capsules->make($task);
-        $contract = $this->contracts->evaluate($task, $context, $preflight['recovery_attempt']);
 
         if ($contract['drifted']) {
             return $this->blockContractDrift($task, $baseSha, $contract);
@@ -429,6 +438,24 @@ class RunCoderTask
             'finished_at' => now(),
         ]);
         $this->audit->record('task.blocked_unsafe_path', ['attempt_number' => $attempt->number], $task->project, $task);
+        $this->workflow->transition($task, TaskStatus::Blocked);
+
+        return $attempt;
+    }
+
+    private function blockUnexpectedFailure(Task $task, Throwable $throwable): TaskAttempt
+    {
+        report($throwable);
+
+        $attempt = TaskAttempt::create([
+            'task_id' => $task->id,
+            'number' => $task->attempts()->max('number') + 1,
+            'status' => 'failed',
+            'validation_results' => ['passed' => false, 'checks' => ['pre_execution' => false], 'error' => $throwable->getMessage()],
+            'started_at' => now(),
+            'finished_at' => now(),
+        ]);
+        $this->audit->record('task.blocked_unexpected_error', ['attempt_number' => $attempt->number, 'error' => $throwable->getMessage()], $task->project, $task);
         $this->workflow->transition($task, TaskStatus::Blocked);
 
         return $attempt;

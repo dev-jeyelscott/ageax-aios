@@ -23,6 +23,7 @@ use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
+use Throwable;
 
 #[Signature('aios:work {--once}')]
 #[Description('Run durable AIOS workers until stopped, or one cycle with --once')]
@@ -53,10 +54,20 @@ class RunAiosWorkers extends Command
                 // A completed PM triage decision may have been persisted immediately before the
                 // worker process died. Resume that same durable conversion before allowing new PM
                 // work so a crash cannot strand a conversion-eligible Ticket in triaging.
-                $this->recoverPendingTicketConversion(
-                    $project,
-                    $convertTicketToTask,
-                );
+                try {
+                    $this->recoverPendingTicketConversion(
+                        $project,
+                        $convertTicketToTask,
+                    );
+                } catch (Throwable $throwable) {
+                    // An uncaught exception here must never kill the persistent loop for every
+                    // other project (see TaskContractGuard regex crash incident). Report and let
+                    // the next cycle retry; the stale-worker/workflow recovery scan covers any
+                    // resulting stranded state.
+                    report($throwable);
+
+                    continue;
+                }
 
                 // Stale worker/lease and workflow-failure recovery is owned by the Workflow
                 // Recovery Engineer's five-minute scheduled scan (aios:recover-workflows), not
@@ -94,6 +105,11 @@ class RunAiosWorkers extends Command
                     if ($lease !== null) {
                         try {
                             $runProjectManager->handle($roadmap, $lease);
+                        } catch (Throwable $throwable) {
+                            // See the recoverPendingTicketConversion catch above: an uncaught
+                            // exception anywhere in a role handler must not take down the
+                            // persistent worker loop for every project.
+                            report($throwable);
                         } finally {
                             $heartbeat->release($lease);
                         }
@@ -138,6 +154,8 @@ class RunAiosWorkers extends Command
 
                                 $convertTicketToTask->handle($attempt);
                             }
+                        } catch (Throwable $throwable) {
+                            report($throwable);
                         } finally {
                             $heartbeat->release($lease);
                         }
@@ -178,6 +196,8 @@ class RunAiosWorkers extends Command
 
                                 $runReviewerTask->run($task, $attempt, $lease);
                             }
+                        } catch (Throwable $throwable) {
+                            report($throwable);
                         } finally {
                             $heartbeat->release($lease);
                         }

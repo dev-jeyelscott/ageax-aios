@@ -48,37 +48,49 @@ class RunProjectManager
         $roadmap = $attempt->roadmap;
 
         $this->audit->record('roadmap.processing_started', ['roadmap_id' => $roadmap->id, 'roadmap_attempt_id' => $attempt->id], $roadmap->project);
-        $pendingMessages = $roadmap->project->projectManagerMessages()
-            ->whereNull('delivered_at')
-            ->oldest()
-            ->get(['id', 'body', 'created_at']);
-        $retrieval = $this->notes->roadmapRetrieval($roadmap->project);
-        $runtimeCapabilities = $this->runtime->detect($roadmap->project);
-        // Large roadmaps are decomposed across multiple bounded Project Manager executions
-        // (see ApplyRoadmapPlan's per-batch phase cap) instead of demanding the entire plan as
-        // one JSON response. Tell the PM what's already committed so it continues numbering and
-        // dependencies correctly rather than re-planning from scratch each batch.
-        $alreadyPlannedPhases = $roadmap->project->phases()->withCount('tasks')->orderBy('position')->get()
-            ->map(fn (Phase $phase): array => ['title' => $phase->title, 'objective' => $phase->objective, 'task_count' => $phase->tasks_count])
-            ->all();
 
-        // AIOS resolves the Agent bound to this workflow role for the deterministic context
-        // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
-        // Agent fall back to the legacy default execution path; such runs remain legacy runs.
-        // A binding that exists but is disabled, missing, or otherwise misconfigured blocks
-        // processing with actionable audit evidence instead of silently falling back (P2-014).
         try {
-            [$agent, $harness] = $this->resolveAgent($roadmap->project, AgentRole::ProjectManager);
-        } catch (LogicException $exception) {
-            return $this->blockMisconfiguredAgent($attempt, $exception);
-        }
+            $pendingMessages = $roadmap->project->projectManagerMessages()
+                ->whereNull('delivered_at')
+                ->oldest()
+                ->get(['id', 'body', 'created_at']);
+            $retrieval = $this->notes->roadmapRetrieval($roadmap->project);
+            $runtimeCapabilities = $this->runtime->detect($roadmap->project);
+            // Large roadmaps are decomposed across multiple bounded Project Manager executions
+            // (see ApplyRoadmapPlan's per-batch phase cap) instead of demanding the entire plan as
+            // one JSON response. Tell the PM what's already committed so it continues numbering and
+            // dependencies correctly rather than re-planning from scratch each batch.
+            $alreadyPlannedPhases = $roadmap->project->phases()->withCount('tasks')->orderBy('position')->get()
+                ->map(fn (Phase $phase): array => ['title' => $phase->title, 'objective' => $phase->objective, 'task_count' => $phase->tasks_count])
+                ->all();
 
-        $roadmapContext = ['roadmap' => $roadmap->content, 'project_runtime_capabilities' => $runtimeCapabilities, 'obsidian_project_knowledge' => $retrieval['notes'], 'operator_messages' => $pendingMessages->map(fn ($message): array => ['id' => $message->id, 'body' => $message->body, 'created_at' => $message->created_at?->toIso8601String()])->all(), 'already_planned_phases' => $alreadyPlannedPhases];
-        $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::ProjectManager, $roadmapContext);
-        $maxPhasesPerBatch = max(1, (int) config('aios.roadmap_max_phases_per_batch'));
-        $prompt = "You are the Project Manager. Read AGENTS.md, repository documentation, Git history, the current implementation, and the provided targeted Obsidian project knowledge before planning. Treat Obsidian notes as context, but verify the repository before marking a task complete. Treat project_runtime_capabilities as authoritative environment-topology evidence: host-only tool or PHP-extension absence does not mean a project capability is unavailable when the repository configures it in Docker Compose. For container-managed projects, prefer the repository's existing Docker Compose service conventions when generating verification_commands. already_planned_phases lists phases already committed for this project, in order; do not re-plan them. Plan only the next contiguous phases continuing immediately after already_planned_phases, up to a maximum of {$maxPhasesPerBatch} phases in this response, even if the roadmap describes more; a large roadmap is decomposed across multiple responses like this one. Produce only JSON: {project_knowledge:{overview,architecture_decisions:[{title,rationale}],constraints:[string],handoff},phases:[{title,objective,tasks:[{title,objective,work_type,complexity,acceptance_criteria,scope,constraints,relevant_paths,verification_commands,implementation_prompt,obsidian_notes,depends_on,completion_status,completion_evidence}]}],remaining_work:boolean}. Set remaining_work to true if the roadmap still describes phases beyond the ones in this response, or false if this response's phases are the last of the roadmap. Keep tasks ordered and implementation-ready. For every newly planned Task, classify work_type conservatively as bug, enhancement, feature, or other, and complexity as low, medium, or high. Use other rather than inventing a bug/enhancement/feature classification when none is supported by the roadmap and current implementation. These fields are descriptive analytics metadata only; never use them to reorder Tasks, alter dependencies, bypass validation, or change completion status. obsidian_notes is an optional list of intentionally relevant project-local Markdown paths; never include absolute paths, traversal, or non-Markdown files. depends_on is an array of one-based task positions counting from the first task of the very first phase of the whole roadmap (i.e. continuing the numbering of already_planned_phases's tasks, not restarting at 1 for this response); declare only real dependencies, which may reference tasks from already_planned_phases. If a task has no additional dependency, use an empty array. In project_knowledge, record only concise, verified facts that will be useful to fresh agents; do not include secrets or raw repository dumps. Use concise arrays for scope, constraints, relevant_paths, and verification_commands. Verification commands must be safe, simple, non-destructive commands from the approved project toolchain, with no shell operators or redirects. They must never perform migrations, schema resets or dumps, database wipes, rollback operations, database seeding or pruning, or any other durable database mutation; verification must observe or test behavior rather than prepare or mutate persistent project state. For Docker Compose projects, prefer safe non-destructive `docker compose exec -T <service> ...` verification against the detected repository-defined application service when appropriate. For every task, set completion_status to done only when the current repository already satisfies its acceptance criteria; provide concise, concrete completion_evidence with paths, commands, or commits. Otherwise set completion_status to queued and completion_evidence to null. Do not infer completion from intent or documentation alone.\n\n".json_encode($assembled?->toArray() ?? $roadmapContext, JSON_THROW_ON_ERROR);
-        $run = $this->runs->start($roadmap->project, AgentRole::ProjectManager, $prompt, lease: $lease, retrievalManifest: $retrieval['manifest'], agent: $agent, context: $assembled);
-        $attempt->update(['agent_run_id' => $run->id, 'status' => 'running']);
+            // AIOS resolves the Agent bound to this workflow role for the deterministic context
+            // snapshot and harness dispatch (P2-011/P2-012). Projects provisioned without a bound
+            // Agent fall back to the legacy default execution path; such runs remain legacy runs.
+            // A binding that exists but is disabled, missing, or otherwise misconfigured blocks
+            // processing with actionable audit evidence instead of silently falling back (P2-014).
+            try {
+                [$agent, $harness] = $this->resolveAgent($roadmap->project, AgentRole::ProjectManager);
+            } catch (LogicException $exception) {
+                return $this->blockMisconfiguredAgent($attempt, $exception);
+            }
+
+            $roadmapContext = ['roadmap' => $roadmap->content, 'project_runtime_capabilities' => $runtimeCapabilities, 'obsidian_project_knowledge' => $retrieval['notes'], 'operator_messages' => $pendingMessages->map(fn ($message): array => ['id' => $message->id, 'body' => $message->body, 'created_at' => $message->created_at?->toIso8601String()])->all(), 'already_planned_phases' => $alreadyPlannedPhases];
+            $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::ProjectManager, $roadmapContext);
+            $maxPhasesPerBatch = max(1, (int) config('aios.roadmap_max_phases_per_batch'));
+            $prompt = "You are the Project Manager. Read AGENTS.md, repository documentation, Git history, the current implementation, and the provided targeted Obsidian project knowledge before planning. Treat Obsidian notes as context, but verify the repository before marking a task complete. Treat project_runtime_capabilities as authoritative environment-topology evidence: host-only tool or PHP-extension absence does not mean a project capability is unavailable when the repository configures it in Docker Compose. For container-managed projects, prefer the repository's existing Docker Compose service conventions when generating verification_commands. already_planned_phases lists phases already committed for this project, in order; do not re-plan them. Plan only the next contiguous phases continuing immediately after already_planned_phases, up to a maximum of {$maxPhasesPerBatch} phases in this response, even if the roadmap describes more; a large roadmap is decomposed across multiple responses like this one. Produce only JSON: {project_knowledge:{overview,architecture_decisions:[{title,rationale}],constraints:[string],handoff},phases:[{title,objective,tasks:[{title,objective,work_type,complexity,acceptance_criteria,scope,constraints,relevant_paths,verification_commands,implementation_prompt,obsidian_notes,depends_on,completion_status,completion_evidence}]}],remaining_work:boolean}. Set remaining_work to true if the roadmap still describes phases beyond the ones in this response, or false if this response's phases are the last of the roadmap. Keep tasks ordered and implementation-ready. For every newly planned Task, classify work_type conservatively as bug, enhancement, feature, or other, and complexity as low, medium, or high. Use other rather than inventing a bug/enhancement/feature classification when none is supported by the roadmap and current implementation. These fields are descriptive analytics metadata only; never use them to reorder Tasks, alter dependencies, bypass validation, or change completion status. obsidian_notes is an optional list of intentionally relevant project-local Markdown paths; never include absolute paths, traversal, or non-Markdown files. depends_on is an array of one-based task positions counting from the first task of the very first phase of the whole roadmap (i.e. continuing the numbering of already_planned_phases's tasks, not restarting at 1 for this response); declare only real dependencies, which may reference tasks from already_planned_phases. If a task has no additional dependency, use an empty array. In project_knowledge, record only concise, verified facts that will be useful to fresh agents; do not include secrets or raw repository dumps. Use concise arrays for scope, constraints, relevant_paths, and verification_commands. Verification commands must be safe, simple, non-destructive commands from the approved project toolchain, with no shell operators or redirects. They must never perform migrations, schema resets or dumps, database wipes, rollback operations, database seeding or pruning, or any other durable database mutation; verification must observe or test behavior rather than prepare or mutate persistent project state. For Docker Compose projects, prefer safe non-destructive `docker compose exec -T <service> ...` verification against the detected repository-defined application service when appropriate. For every task, set completion_status to done only when the current repository already satisfies its acceptance criteria; provide concise, concrete completion_evidence with paths, commands, or commits. Otherwise set completion_status to queued and completion_evidence to null. Do not infer completion from intent or documentation alone.\n\n".json_encode($assembled?->toArray() ?? $roadmapContext, JSON_THROW_ON_ERROR);
+            $run = $this->runs->start($roadmap->project, AgentRole::ProjectManager, $prompt, lease: $lease, retrievalManifest: $retrieval['manifest'], agent: $agent, context: $assembled);
+            $attempt->update(['agent_run_id' => $run->id, 'status' => 'running']);
+        } catch (Throwable $throwable) {
+            // Runs inside the persistent aios:work loop before any harness call; an uncaught
+            // exception here previously killed the worker process for every project (see the
+            // TaskContractGuard regex-delimiter incident). Fail this attempt the same way
+            // execution/plan failures already do below instead of throwing.
+            report($throwable);
+            $this->failAttempt($attempt, -1, 'pre_execution_exception', $throwable->getMessage());
+
+            return ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
+        }
         $this->renewLease($lease);
 
         try {

@@ -58,6 +58,8 @@ Pending roadmap analysis retains precedence over Ticket triage.
 
 Ticket claiming must be serialized through AIOS transactions/row locks so two PM executions cannot claim the same Ticket concurrently.
 
+`RunAiosWorkers::handle()`'s persistent per-project loop must never let an uncaught exception from `recoverPendingTicketConversion()`, `RunProjectManager`, `RunTicketTriage`/`ConvertTicketToTask`, `RunCoderTask`, or `RunReviewerTask` propagate out of that project's iteration: each call is wrapped in its own `catch (Throwable) { report($throwable); }` alongside the existing lease-release `finally`, so one project's or one role's failure cannot stop every other project's Coder/Reviewer/PM work for the life of the worker process (this is what actually happened in the `TaskContractGuard` regex-delimiter incident, on top of the scheduled `aios:work --once` fallback described in `bootstrap.md`). Preserve this containment when touching the loop; do not let a `finally`-only block become the sole safety net again.
+
 Every new triage or re-triage attempt uses a fresh execution context and the currently bound Project Manager Agent/harness configuration. Recovery and retry behavior must use durable attempt/run evidence.
 
 The PM returns structured proposals only. PM output cannot directly change Ticket state, send a reply, create a Task, reorder work, or resolve escalation.

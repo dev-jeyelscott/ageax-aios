@@ -41,8 +41,25 @@ class RunReviewerTask
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Reviewing, 409, 'Only claimed review tasks may execute.');
         $task->loadMissing('project', 'phase');
 
-        $context = $this->capsules->make($task, AgentRole::Reviewer);
-        $contract = $this->contracts->evaluate($task, $context, $attempt);
+        try {
+            $context = $this->capsules->make($task, AgentRole::Reviewer);
+            $contract = $this->contracts->evaluate($task, $context, $attempt);
+        } catch (Throwable $throwable) {
+            // Runs inside the persistent aios:work loop before any harness call; an uncaught
+            // exception here previously killed the worker process for every project (see the
+            // TaskContractGuard regex-delimiter incident). Route it through the same bounded
+            // retry-then-block operational failure path as other Reviewer failures instead of
+            // rejecting the implementation outright.
+            report($throwable);
+            $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
+            $this->workflow->recordReviewerOperationalFailure($task, $attempt, [
+                'exit_code' => $execution['exit_code'],
+                'reason' => 'pre_execution_exception',
+                'error' => $throwable->getMessage(),
+            ]);
+
+            return $execution;
+        }
 
         if ($contract['drifted']) {
             $this->audit->record('task.contract_drift_detected', [
@@ -169,6 +186,7 @@ class RunReviewerTask
         } else {
             $this->workflow->transition($task, TaskStatus::ChangesRequired);
             $this->audit->record('task.rejected', ['review_id' => $review->id, 'attempt_number' => $attempt->number], $task->project, $task);
+            $this->workflow->blockRepeatedRejectedReviews($task);
         }
 
         return $review;
