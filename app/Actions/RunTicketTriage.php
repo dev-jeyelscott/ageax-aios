@@ -958,6 +958,7 @@ PROMPT;
         return $reply."\n\nQuestions:\n".implode("\n", $questionLines);
     }
 
+    /** @param array<string, mixed> $validationEvidence */
     private function failAttempt(
         TicketTriageAttempt $attempt,
         int $exitCode,

@@ -823,6 +823,17 @@ SQL;
             ->latest('occurred_at')
             ->first();
 
+        $latestEscalationPayload = $latestEscalation?->getAttribute('payload');
+        $recoveryEscalationReason = null;
+
+        if (
+            is_array($latestEscalationPayload)
+            && is_string($latestEscalationPayload['escalation_reason'] ?? null)
+        ) {
+            $recoveryEscalationReason =
+                $latestEscalationPayload['escalation_reason'];
+        }
+
         return Inertia::render(
             'projects/tasks/show',
             [
@@ -832,7 +843,7 @@ SQL;
                     'path',
                 ]),
                 'task' => $task,
-                'recovery_escalation_reason' => $latestEscalation?->payload['escalation_reason'] ?? null,
+                'recovery_escalation_reason' => $recoveryEscalationReason,
             ],
         );
     }
