@@ -40,6 +40,8 @@ test('project overview distinguishes a completed run from a completed task', fun
 
     expect($source)
         ->toContain('Completed ${labelForRole(worker.role)} run for')
+        ->toContain("worker.activity_mode === 'recent' && worker.run !== null")
+        ->toContain('? worker.run.status')
         ->not->toContain('Completed ${worker.task.key} · ${worker.task.title}.');
 });
 

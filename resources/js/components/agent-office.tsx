@@ -708,6 +708,10 @@ function AgentNode({
     const thumbnail = roleThumbnails[worker.role] ?? null;
     const message = workerMessage(worker, active);
     const displayedTask = worker.task ?? fallbackTask;
+    const displayedTaskStatus =
+        worker.activity_mode === 'recent' && worker.run !== null
+            ? worker.run.status
+            : displayedTask?.status;
     const configuration = executionConfiguration(worker, agent);
     const timestamp =
         worker.run?.finished_at ??
@@ -839,12 +843,12 @@ function AgentNode({
                                         : 'Workflow Scope'}
                             </p>
 
-                            {displayedTask && (
+                            {displayedTask && displayedTaskStatus && (
                                 <Badge
                                     variant="outline"
                                     className="border-border bg-background/50 px-1.5 py-0 font-mono text-[9px] text-muted-foreground"
                                 >
-                                    {humanize(displayedTask.status)}
+                                    {humanize(displayedTaskStatus)}
                                 </Badge>
                             )}
                         </div>
