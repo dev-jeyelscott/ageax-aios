@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Project;
 use App\Models\RecoveryIncident;
 use App\Models\Task;
+use App\Models\TaskPlanningEscalation;
 use App\RecoveryIncidentStatus;
 use App\TaskStatus;
 use Illuminate\Support\Facades\DB;
@@ -33,13 +34,78 @@ class WorkflowRecoveryScanner
         'task.blocked_dirty_repository' => TaskStatus::ChangesRequired,
     ];
 
-    public function __construct(private StaleWorkerRecovery $staleWorkerRecovery, private AuditLogger $audit, private ProjectGitState $git, private TaskWorkflow $workflow) {}
+    public function __construct(private StaleWorkerRecovery $staleWorkerRecovery, private AuditLogger $audit, private ProjectGitState $git, private TaskWorkflow $workflow, private TaskPlanningDefectPreflight $planningPreflight) {}
 
     public function scan(Project $project): void
     {
         $this->recoverStaleExecutions($project);
+        $this->resolveObsoletePlanningEscalations($project);
         $this->autoUnblockCleanRepositories($project);
         $this->detectStuckTasks($project);
+    }
+
+    /**
+     * A planning escalation records the defect that existed when a Coder attempt was claimed.
+     * It must not indefinitely block a Task after an approved planning change has made that
+     * contract valid. Only a Task whose latest blocking decision was that escalation may resume;
+     * a later reviewer, validation, Git, or no-progress block remains authoritative.
+     */
+    private function resolveObsoletePlanningEscalations(Project $project): void
+    {
+        Task::query()
+            ->whereBelongsTo($project)
+            ->where('status', TaskStatus::Blocked)
+            ->whereHas('planningEscalations', fn ($query) => $query->where('status', 'blocked'))
+            ->get()
+            ->each(function (Task $task) use ($project): void {
+                DB::transaction(function () use ($project, $task): void {
+                    $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+                    if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::Blocked
+                        || $lockedTask->planningEscalations()->whereIn('status', ['pending', 'running'])->exists()) {
+                        return;
+                    }
+
+                    $latestBlockDecision = $lockedTask->auditEvents()
+                        ->where(function ($query): void {
+                            $query->whereIn('event_type', [
+                                'task.planning_defect_escalated',
+                                'review.retry_exhausted',
+                                'task.coder_retry_exhausted',
+                                'task.no_progress_detected',
+                                'task.contract_drift_detected',
+                                'task.review_no_progress_blocked',
+                            ])->orWhere('event_type', 'like', 'task.blocked_%');
+                        })
+                        ->orderByDesc('occurred_at')
+                        ->orderByDesc('id')
+                        ->first();
+                    if ($latestBlockDecision?->event_type !== 'task.planning_defect_escalated') {
+                        return;
+                    }
+
+                    $payload = $latestBlockDecision->payload ?? [];
+                    $escalationId = is_array($payload) ? $payload['planning_escalation_id'] ?? null : null;
+                    $escalation = is_int($escalationId)
+                        ? $lockedTask->planningEscalations()->whereKey($escalationId)->where('status', 'blocked')->lockForUpdate()->first()
+                        : null;
+                    if ($escalation === null || $this->planningPreflight->evaluate($lockedTask) !== null) {
+                        return;
+                    }
+
+                    $resolvedEscalationIds = $lockedTask->planningEscalations()
+                        ->where('status', 'blocked')
+                        ->lockForUpdate()
+                        ->pluck('id');
+                    TaskPlanningEscalation::query()
+                        ->whereIn('id', $resolvedEscalationIds)
+                        ->update(['status' => 'resolved', 'resolved_at' => now()]);
+                    $this->workflow->transition($lockedTask, TaskStatus::ChangesRequired);
+                    $this->audit->record('task.planning_escalation_auto_resolved', [
+                        'reason' => 'planning_preflight_now_valid',
+                        'planning_escalation_ids' => $resolvedEscalationIds->all(),
+                    ], $project, $lockedTask);
+                }, attempts: 3);
+            });
     }
 
     /**

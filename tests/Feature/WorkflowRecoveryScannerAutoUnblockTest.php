@@ -87,3 +87,37 @@ test('a task with a pending planning revision stays blocked when its repository 
     expect($task->refresh()->status)->toBe(TaskStatus::Blocked)
         ->and($project->auditEvents()->where('event_type', 'task.auto_unblocked')->exists())->toBeFalse();
 });
+
+test('a stale blocked planning escalation auto-resolves when its current contract is valid', function () {
+    $project = autoUnblockProject();
+    $task = autoUnblockTask($project);
+    $escalation = TaskPlanningEscalation::create([
+        'task_id' => $task->id, 'defect_type' => 'invalid_dependency_placement', 'fingerprint' => hash('sha256', 'obsolete-planning-revision'),
+        'failure_evidence' => ['dependency_key' => 'TASK-046'], 'allowed_fields' => ['dependencies'], 'status' => 'blocked',
+    ]);
+    app(AuditLogger::class)->record('task.planning_defect_escalated', ['planning_escalation_id' => $escalation->id], $project, $task);
+
+    app(WorkflowRecoveryScanner::class)->scan($project);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::ChangesRequired)
+        ->and($escalation->refresh()->status)->toBe('resolved')
+        ->and($escalation->resolved_at)->not->toBeNull()
+        ->and($project->auditEvents()->where('event_type', 'task.planning_escalation_auto_resolved')->exists())->toBeTrue();
+});
+
+test('a stale planning escalation remains blocked when another block reason is newer', function () {
+    $project = autoUnblockProject();
+    $task = autoUnblockTask($project);
+    $escalation = TaskPlanningEscalation::create([
+        'task_id' => $task->id, 'defect_type' => 'invalid_dependency_placement', 'fingerprint' => hash('sha256', 'superseded-planning-revision'),
+        'failure_evidence' => ['dependency_key' => 'TASK-046'], 'allowed_fields' => ['dependencies'], 'status' => 'blocked',
+    ]);
+    app(AuditLogger::class)->record('task.planning_defect_escalated', ['planning_escalation_id' => $escalation->id], $project, $task);
+    app(AuditLogger::class)->record('task.coder_retry_exhausted', ['reason' => 'validation_failed'], $project, $task);
+
+    app(WorkflowRecoveryScanner::class)->scan($project);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($escalation->refresh()->status)->toBe('blocked')
+        ->and($project->auditEvents()->where('event_type', 'task.planning_escalation_auto_resolved')->exists())->toBeFalse();
+});
