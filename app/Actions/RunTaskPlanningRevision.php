@@ -102,7 +102,12 @@ class RunTaskPlanningRevision
     /** @param array<string,mixed> $context */
     private function prompt(array $context): string
     {
-        return 'You are the Project Manager in AIOS planning_revision mode. Return one JSON object only: {"reason":"concise evidence", "replacements":{"allowed_field":"replacement value"}}. Replace only supplied allowed_fields. Do not change task identity, title, objective, phase, position, work metadata, or any field not explicitly allowed. '.json_encode($context, JSON_THROW_ON_ERROR);
+        $contract = 'You are the Project Manager in AIOS planning_revision mode. Return one JSON object only: {"reason":"concise evidence", "replacements":{"allowed_field":"replacement value"}}. Replace only supplied allowed_fields. Do not change task identity, title, objective, phase, position, work metadata, or any field not explicitly allowed.';
+
+        return $contract."\n\nAIOS assembled context:\n".json_encode(
+            $context,
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        );
     }
 
     /** @param array<string,mixed> $proposal */
