@@ -60,6 +60,7 @@ Reviewer outcomes:
 - `approved` → AIOS completes the reviewed task.
 - `changes_required` → findings must include severity, location, current vs. expected behavior, reason, required fix, and verification requirement.
 - `changes_required` closes/pauses further phase review until the rejected task is corrected and returns to `ready_for_review`.
+- After `AIOS_REVIEW_NO_PROGRESS_BLOCK_THRESHOLD` consecutive valid `changes_required` reviews (default `3`) with the same persisted task-contract fingerprint and no repository progress (same base/head SHA and no changed files), AIOS blocks the task and records durable evidence. It must never auto-approve or auto-cancel unmet criteria; manual requeue starts a new evidence window, while skip requires an operator reason.
 - Operational reviewer failures do not reject code; retain evidence and retry within the configured limit.
 
 ## Phase 3 Ticket contract
@@ -198,6 +199,7 @@ queued → coding → validating → ready_for_review → reviewing → done
 - Once phase review begins, already approved `done` tasks count as barrier-satisfied while remaining reviewable tasks stay `ready_for_review`.
 - Reviewer claims are deterministic and occur one task at a time in task-position order.
 - A `changes_required` task closes/pauses the phase review barrier. Later tasks in the phase must not continue through review until the rejected task is corrected and returns to `ready_for_review`.
+- A task blocked by the deterministic repeated-review threshold remains a phase barrier until an operator requeues it after resolving the prerequisite or explicitly skips it with a reason.
 - The next phase must not begin while the current phase contains unresolved implementation or review work.
 - Coder and Reviewer workers observe the centrally configured per-role cooldown after completing a claimed task. The default is `AIOS_WORKER_TASK_COOLDOWN_SECONDS=300`, so a role waits five minutes before claiming its next task.
 - Worker cooldowns are AIOS scheduling state and must not be implemented or bypassed by Agents, harnesses, prompts, or frontend code.

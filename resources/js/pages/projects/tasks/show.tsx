@@ -1502,11 +1502,10 @@ export default function TaskShow({
                                                 <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
                                                 <span>
                                                     AIOS stopped repeated
-                                                    Coder/Reviewer retries
-                                                    after three rejected
-                                                    attempts had no repository
-                                                    progress. Provide the
-                                                    missing external
+                                                    Coder/Reviewer retries after
+                                                    three rejected attempts had
+                                                    no repository progress.
+                                                    Provide the missing external
                                                     prerequisite before
                                                     requeueing.
                                                 </span>
@@ -1555,7 +1554,8 @@ export default function TaskShow({
                                                     variant="outline"
                                                     disabled={processing}
                                                 >
-                                                    Requeue after resolving prerequisite
+                                                    Requeue after resolving
+                                                    prerequisite
                                                 </Button>
                                             )}
                                         </Form>

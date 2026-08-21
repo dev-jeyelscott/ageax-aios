@@ -233,6 +233,8 @@ changes_required
 
 Later tasks in that phase must not continue through review while a `changes_required` task remains unresolved.
 
+AIOS must deterministically stop a repeated valid-review loop. After `AIOS_REVIEW_NO_PROGRESS_BLOCK_THRESHOLD` consecutive `changes_required` reviews (default `3`) with the same persisted task-contract fingerprint and no repository progress (the same base/head SHA and no changed files), AIOS transitions the Task to `blocked` and records durable evidence. This is an operator-intervention state: AIOS must never approve or cancel unmet acceptance criteria automatically. An operator requeue begins a new evidence window after the prerequisite or task contract is corrected; skipping remains an explicit operator cancellation with a durable reason.
+
 Inspect:
 
 ```
@@ -692,6 +694,8 @@ After review begins, tasks already approved as `done` remain barrier-satisfied w
 
 A `changes_required` result immediately blocks further review progression in the phase until the rejected task is corrected and returns to `ready_for_review`.
 
+When the deterministic repeated-review threshold is met, the task instead becomes `blocked`; it remains a phase barrier until an operator explicitly requeues it or skips it with a reason.
+
 The next phase must not begin while the current phase contains unresolved implementation or review work.
 
 ### Worker Task Cooldown
@@ -702,6 +706,7 @@ Default:
 
 ```
 AIOS_WORKER_TASK_COOLDOWN_SECONDS=300
+AIOS_REVIEW_NO_PROGRESS_BLOCK_THRESHOLD=3
 ```
 
 Therefore:
