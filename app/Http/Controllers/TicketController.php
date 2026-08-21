@@ -288,12 +288,6 @@ class TicketController extends Controller
         $attachments = [];
 
         foreach ($files as $file) {
-            if (! $file instanceof UploadedFile) {
-                throw new LogicException(
-                    'Validated Ticket attachment must be an uploaded file.',
-                );
-            }
-
             $attachments[] = $file;
         }
 
