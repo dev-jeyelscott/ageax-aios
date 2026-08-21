@@ -29,9 +29,14 @@ final readonly class TaskContractGuard
      */
     public function evaluate(Task $task, array $context, ?TaskAttempt $requiredBaselineAttempt = null): array
     {
-        $current = $this->evidence($task, $context);
         $baselineAttempt = $requiredBaselineAttempt ?? $this->normalBaselineAttempt($task);
-        $baseline = $baselineAttempt === null ? null : $this->attemptEvidence($baselineAttempt);
+        $ownedDocumentationPaths = $baselineAttempt === null
+            ? []
+            : $this->taskOwnedDocumentationPaths($task, $baselineAttempt);
+        $current = $this->evidence($task, $context, $ownedDocumentationPaths);
+        $baseline = $baselineAttempt === null
+            ? null
+            : $this->withoutTaskOwnedDocumentation($this->attemptEvidence($baselineAttempt), $ownedDocumentationPaths);
 
         if ($requiredBaselineAttempt !== null && $baseline === null) {
             return [
@@ -62,7 +67,7 @@ final readonly class TaskContractGuard
      * @param  array<string, mixed>  $context
      * @return array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>}
      */
-    public function evidence(Task $task, array $context): array
+    public function evidence(Task $task, array $context, array $excludedRepositoryDocuments = []): array
     {
         $task->loadMissing('project');
 
@@ -74,7 +79,7 @@ final readonly class TaskContractGuard
             'implementation_prompt' => $this->hashValue($this->normalizeText($task->implementation_prompt)),
             'verification_commands' => $this->hashValue($this->normalizeStringList($task->verification_commands, false)),
             'relevant_paths' => $this->hashValue($this->normalizeStringList($task->relevant_paths, true)),
-            'repository_documents' => $this->repositoryDocumentHashes($task),
+            'repository_documents' => $this->repositoryDocumentHashes($task, $excludedRepositoryDocuments),
             'obsidian_notes' => $this->obsidianNoteHashes($context),
             'obsidian_selection' => $this->hashValue($this->selectedObsidianPaths($context)),
         ];
@@ -133,7 +138,7 @@ final readonly class TaskContractGuard
     }
 
     /** @return array<string, string> */
-    private function repositoryDocumentHashes(Task $task): array
+    private function repositoryDocumentHashes(Task $task, array $excludedRepositoryDocuments = []): array
     {
         $projectPath = $this->paths->assertProjectPath($task->project->path);
         $relevantPaths = $this->normalizeStringList($task->relevant_paths, true);
@@ -158,7 +163,13 @@ final readonly class TaskContractGuard
         }
 
         $hashes = [];
+        $excludedRepositoryDocuments = $this->normalizeStringList($excludedRepositoryDocuments, true);
+
         foreach (array_values(array_unique($candidates)) as $relativePath) {
+            if (in_array($relativePath, $excludedRepositoryDocuments, true)) {
+                continue;
+            }
+
             $path = $this->safeProjectFile($projectPath, $relativePath);
             if ($path === null) {
                 continue;
@@ -170,6 +181,64 @@ final readonly class TaskContractGuard
         ksort($hashes, SORT_STRING);
 
         return $hashes;
+    }
+
+    /** @return list<string> */
+    private function taskOwnedDocumentationPaths(Task $task, TaskAttempt $attempt): array
+    {
+        $changedFiles = $attempt->getAttribute('changed_files');
+
+        if (! is_array($changedFiles)) {
+            return [];
+        }
+
+        $relevantDocumentation = collect($this->normalizeStringList($task->relevant_paths, true))
+            ->filter(fn (string $path): bool => $this->isDocumentationPath($path));
+
+        return $relevantDocumentation
+            ->intersect($this->normalizeStringList($changedFiles, true))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * A failed attempt may have created or updated a documentation deliverable named in
+     * relevant_paths. Once its exact changed-file evidence proves that ownership, that file is
+     * no longer an external contract input for retries. Normalize the persisted baseline the
+     * same way so legacy attempts created before this distinction remain recoverable.
+     *
+     * @param  array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>}|null  $evidence
+     * @param  list<string>  $ownedDocumentationPaths
+     * @return array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>}|null
+     */
+    private function withoutTaskOwnedDocumentation(?array $evidence, array $ownedDocumentationPaths): ?array
+    {
+        if ($evidence === null || $ownedDocumentationPaths === []) {
+            return $evidence;
+        }
+
+        $inputHashes = $evidence['input_hashes'];
+        $repositoryDocuments = $inputHashes['repository_documents'] ?? [];
+
+        if (! is_array($repositoryDocuments)) {
+            return $evidence;
+        }
+
+        foreach ($ownedDocumentationPaths as $path) {
+            unset($repositoryDocuments[$path]);
+        }
+
+        ksort($repositoryDocuments, SORT_STRING);
+        $inputHashes['repository_documents'] = $repositoryDocuments;
+
+        return [
+            'schema_version' => $evidence['schema_version'],
+            'fingerprint' => $this->hashValue([
+                'schema_version' => $evidence['schema_version'],
+                'input_hashes' => $inputHashes,
+            ]),
+            'input_hashes' => $inputHashes,
+        ];
     }
 
     /**

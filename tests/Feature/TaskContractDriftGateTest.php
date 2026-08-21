@@ -151,6 +151,33 @@ test('task scoped repository documentation and selected Obsidian changes are fin
         ->and(json_encode($persisted))->not->toContain('Obsidian version one');
 });
 
+test('a documented task output does not drift its own retry contract', function () {
+    $project = taskContractProject('Documentation output recovery project');
+    File::ensureDirectoryExists($project->path.'/docs');
+    $task = taskContractTask($project);
+    $task->update(['relevant_paths' => ['docs/task-output.md']]);
+    $guard = app(TaskContractGuard::class);
+    $context = taskContractContext();
+    $baseline = $guard->evidence($task->refresh(), $context);
+
+    File::put($project->path.'/docs/task-output.md', 'Generated task result.');
+    TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'status' => 'failed',
+        'validation_results' => ['task_contract' => $baseline],
+        'changed_files' => ['docs/task-output.md'],
+        'started_at' => now()->subMinute(),
+        'finished_at' => now(),
+    ]);
+
+    $result = $guard->evaluate($task->refresh(), $context);
+
+    expect($result['drifted'])->toBeFalse()
+        ->and($result['changed_inputs'])->not->toContain('repository_documents:docs/task-output.md')
+        ->and($result['current']['fingerprint'])->toBe($result['baseline']['fingerprint']);
+});
+
 test('coder retry is blocked on contract drift before an AgentRun can start', function () {
     $project = taskContractProject('Coder drift gate project');
     $task = taskContractTask($project, TaskStatus::Coding);

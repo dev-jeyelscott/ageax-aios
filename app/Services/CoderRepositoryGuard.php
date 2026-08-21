@@ -65,13 +65,12 @@ class CoderRepositoryGuard
 
     private function latestResumableAttempt(Task $task): ?TaskAttempt
     {
-        $attempt = $task->attempts()->orderByDesc('number')->first();
-
-        if ($attempt === null || ! in_array($attempt->status, ['failed', 'interrupted'], true) || $attempt->commit_sha !== null || blank($attempt->base_sha)) {
-            return null;
-        }
-
-        return $attempt;
+        return $task->attempts()
+            ->whereIn('status', ['failed', 'interrupted'])
+            ->whereNull('commit_sha')
+            ->whereNotNull('base_sha')
+            ->orderByDesc('number')
+            ->first();
     }
 
     private function matchesAttempt(Task $task, TaskAttempt $attempt): bool

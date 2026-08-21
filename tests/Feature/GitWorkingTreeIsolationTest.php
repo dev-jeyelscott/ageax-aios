@@ -7,6 +7,7 @@ use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use App\ProjectStatus;
+use App\Services\CoderRepositoryGuard;
 use App\Services\CodexCliRunner;
 use App\Services\TaskCommitter;
 use App\Services\TaskValidator;
@@ -169,4 +170,34 @@ test('an interrupted attempt may resume its existing dirty task diff from the sa
         ->and($task->refresh()->status)->toBe(TaskStatus::Coding)
         ->and(File::get($project->path.'/feature.txt'))->toBe('interrupted task edit')
         ->and($task->auditEvents()->where('event_type', 'task.repository_recovery_allowed')->exists())->toBeTrue();
+});
+
+test('a bookkeeping block does not hide the latest resumable task-owned dirty attempt', function () {
+    $project = gitIsolationProject();
+    $task = gitIsolationTask($project, TaskStatus::ChangesRequired);
+    $baseSha = $project->git_head_sha;
+    File::put($project->path.'/docs.md', 'task-owned result');
+    TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'base_sha' => $baseSha,
+        'status' => 'failed',
+        'changed_files' => ['docs.md'],
+        'started_at' => now()->subMinutes(2),
+        'finished_at' => now()->subMinute(),
+    ]);
+    TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 2,
+        'base_sha' => $baseSha,
+        'status' => 'blocked',
+        'started_at' => now()->subMinute(),
+        'finished_at' => now(),
+    ]);
+
+    $preflight = app(CoderRepositoryGuard::class)->inspect($task->refresh());
+
+    expect($preflight['allowed'])->toBeTrue()
+        ->and($preflight['mode'])->toBe('recovery')
+        ->and($preflight['recovery_attempt']?->number)->toBe(1);
 });
