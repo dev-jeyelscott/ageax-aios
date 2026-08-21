@@ -21,6 +21,13 @@ class TaskPlanningEscalationWorkflow
             $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
             $existing = $lockedTask->planningEscalations()->whereIn('status', ['pending', 'running'])->first();
             if ($existing !== null) {
+                if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::Blocked) {
+                    $from = $lockedTask->getRawOriginal('status');
+                    $lockedTask->update(['status' => TaskStatus::Blocked]);
+                    $this->audit->record('task.transitioned', ['from' => $from, 'to' => TaskStatus::Blocked->value], $lockedTask->project, $lockedTask);
+                    $this->audit->record('task.planning_escalation_state_repaired', ['planning_escalation_id' => $existing->id, 'reason' => 'active_revision_requires_blocked_task'], $lockedTask->project, $lockedTask);
+                }
+
                 return $existing;
             }
 

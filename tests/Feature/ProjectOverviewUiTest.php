@@ -33,6 +33,16 @@ test('project overview uses thumbnail assets instead of the procedural robot pre
         ->not->toContain('<Canvas');
 });
 
+test('project overview distinguishes a completed run from a completed task', function () {
+    $source = file_get_contents(
+        resource_path('js/components/agent-office.tsx'),
+    );
+
+    expect($source)
+        ->toContain('Completed ${labelForRole(worker.role)} run for')
+        ->not->toContain('Completed ${worker.task.key} · ${worker.task.title}.');
+});
+
 test('project overview exposes durable operational evidence without inventing missing values', function () {
     $source = file_get_contents(
         resource_path('js/components/agent-office.tsx'),

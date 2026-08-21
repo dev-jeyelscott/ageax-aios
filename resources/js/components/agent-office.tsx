@@ -349,7 +349,7 @@ function workerMessage(worker: OfficeWorker, active: boolean): string {
         worker.run?.status === 'completed' &&
         worker.task
     ) {
-        return `Completed ${worker.task.key} · ${worker.task.title}.`;
+        return `Completed ${labelForRole(worker.role)} run for ${worker.task.key} · ${worker.task.title}.`;
     }
 
     switch (worker.role) {

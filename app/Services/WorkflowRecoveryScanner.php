@@ -67,6 +67,10 @@ class WorkflowRecoveryScanner
                         return;
                     }
 
+                    if ($lockedTask->planningEscalations()->whereIn('status', ['pending', 'running'])->exists()) {
+                        return;
+                    }
+
                     $lastBlockReason = $lockedTask->auditEvents()
                         ->whereIn('event_type', array_keys(self::AutoUnblockableBlockReasons))
                         ->orderByDesc('occurred_at')

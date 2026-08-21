@@ -2,6 +2,7 @@
 
 use App\Models\Project;
 use App\Models\Task;
+use App\Models\TaskPlanningEscalation;
 use App\ProjectStatus;
 use App\Services\AuditLogger;
 use App\Services\WorkflowRecoveryScanner;
@@ -65,6 +66,21 @@ test('a task blocked for a non-repository reason never auto-unblocks even if the
     $project = autoUnblockProject();
     $task = autoUnblockTask($project);
     app(AuditLogger::class)->record('task.blocked_agent_misconfigured', ['reason' => 'agent not bound'], $project, $task);
+
+    app(WorkflowRecoveryScanner::class)->scan($project);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($project->auditEvents()->where('event_type', 'task.auto_unblocked')->exists())->toBeFalse();
+});
+
+test('a task with a pending planning revision stays blocked when its repository becomes clean', function () {
+    $project = autoUnblockProject();
+    $task = autoUnblockTask($project);
+    app(AuditLogger::class)->record('task.blocked_dirty_repository', ['reason' => 'repository_not_clean'], $project, $task);
+    TaskPlanningEscalation::create([
+        'task_id' => $task->id, 'defect_type' => 'unsafe_verification_commands', 'fingerprint' => hash('sha256', 'pending-planning-revision'),
+        'failure_evidence' => [], 'allowed_fields' => ['verification_commands'], 'status' => 'pending',
+    ]);
 
     app(WorkflowRecoveryScanner::class)->scan($project);
 

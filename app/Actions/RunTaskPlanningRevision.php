@@ -102,7 +102,11 @@ class RunTaskPlanningRevision
     /** @param array<string,mixed> $context */
     private function prompt(array $context): string
     {
-        $contract = 'You are the Project Manager in AIOS planning_revision mode. Return one JSON object only: {"reason":"concise evidence", "replacements":{"allowed_field":"replacement value"}}. Replace only supplied allowed_fields. Do not change task identity, title, objective, phase, position, work metadata, or any field not explicitly allowed.';
+        $contract = <<<'PROMPT'
+You are the Project Manager in AIOS planning_revision mode. Return one JSON object only: {"reason":"concise evidence", "replacements":{"allowed_field":"replacement value"}}. Replace only supplied allowed_fields. Do not change task identity, title, objective, phase, position, work metadata, or any field not explicitly allowed.
+
+When replacing verification_commands, every command must be one standalone allowlisted executable beginning with exactly one of: php, composer, npm, pnpm, yarn, bun, npx, git, vendor/bin/pest, ./vendor/bin/pest, vendor/bin/phpstan, ./vendor/bin/phpstan, vendor/bin/pint, or ./vendor/bin/pint. Never use ls, rg, find, shell pipelines, redirects, command substitution, semicolons, shell operators, or database migration/destructive Artisan commands. Preserve any safe existing verification command unless replacement is necessary.
+PROMPT;
 
         return $contract."\n\nAIOS assembled context:\n".json_encode(
             $context,

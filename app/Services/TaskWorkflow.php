@@ -236,7 +236,14 @@ class TaskWorkflow
 
         $query = Task::query()
             ->whereBelongsTo($project)
-            ->whereIn('status', TaskStatus::coderClaimableValues());
+            ->whereIn('status', TaskStatus::coderClaimableValues())
+            ->whereDoesntHave(
+                'planningEscalations',
+                fn ($escalations) => $escalations->whereIn(
+                    'status',
+                    ['pending', 'running'],
+                ),
+            );
 
         if ($phase !== null) {
             $query->where('phase_id', $phase->id);

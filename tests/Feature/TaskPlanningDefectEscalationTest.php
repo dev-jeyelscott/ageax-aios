@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\RunCoderTask;
+use App\AgentRole;
 use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\Task;
@@ -8,6 +9,7 @@ use App\Models\TaskPlanningEscalation;
 use App\ProjectStatus;
 use App\Services\TaskPlanningDefectPreflight;
 use App\Services\TaskPlanningEscalationWorkflow;
+use App\Services\TaskWorkflow;
 use App\TaskStatus;
 use Illuminate\Support\Facades\File;
 
@@ -35,4 +37,31 @@ test('unsafe planned verification is blocked and queued once for PM revision bef
         ->and($escalation->allowed_fields)->toBe(['verification_commands'])
         ->and($escalation->revisionAttempts)->toHaveCount(1)
         ->and(TaskPlanningEscalation::query()->where('task_id', $task->id)->count())->toBe(1);
+});
+
+test('an active planning revision prevents the Coder from claiming the task', function () {
+    $project = Project::create(['name' => 'Planning revision project', 'path' => sys_get_temp_dir(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = Task::create([
+        'project_id' => $project->id, 'key' => 'TASK-001', 'position' => 1, 'title' => 'Await PM revision',
+        'objective' => 'Wait for the PM.', 'acceptance_criteria' => ['The Task remains blocked during revision.'],
+        'implementation_prompt' => 'Do not begin implementation.', 'context_capsule' => [], 'status' => TaskStatus::ChangesRequired,
+    ]);
+    TaskPlanningEscalation::create([
+        'task_id' => $task->id, 'defect_type' => 'unsafe_verification_commands', 'fingerprint' => hash('sha256', 'planning-revision'),
+        'failure_evidence' => [], 'allowed_fields' => ['verification_commands'], 'status' => 'pending',
+    ]);
+
+    $claimed = app(TaskWorkflow::class)->claim($project, AgentRole::Coder);
+
+    expect($claimed)->toBeNull()
+        ->and($task->refresh()->status)->toBe(TaskStatus::ChangesRequired);
+});
+
+test('the planning revision prompt states the verification command allowlist', function () {
+    $source = file_get_contents(app_path('Actions/RunTaskPlanningRevision.php'));
+
+    expect($source)
+        ->toContain('Never use ls, rg, find, shell pipelines')
+        ->toContain('vendor/bin/pest')
+        ->toContain('database migration/destructive Artisan commands');
 });
