@@ -2,9 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Actions\CreateTicket;
 use App\Actions\RecordTicketMessage;
-use App\Actions\StoreTicketAttachment;
+use App\Actions\SubmitTicket;
 use App\Http\Requests\IndexTicketsRequest;
 use App\Http\Requests\StoreTicketMessageRequest;
 use App\Http\Requests\StoreTicketRequest;
@@ -22,6 +21,7 @@ use App\TicketStatus;
 use App\TicketUrgency;
 use Carbon\CarbonInterface;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\UploadedFile;
 use Inertia\Inertia;
 use Inertia\Response;
 use LogicException;
@@ -102,9 +102,7 @@ class TicketController extends Controller
     public function store(
         StoreTicketRequest $request,
         Project $project,
-        CreateTicket $createTicket,
-        RecordTicketMessage $recordMessage,
-        StoreTicketAttachment $storeAttachment,
+        SubmitTicket $submitTicket,
     ): RedirectResponse {
         /** @var User $user */
         $user = $request->user();
@@ -112,7 +110,7 @@ class TicketController extends Controller
         $description = $this->submissionDescription($validated);
         $requesterUrgency = $validated['requester_urgency'] ?? null;
 
-        $ticket = $createTicket->handle(
+        $ticket = $submitTicket->handle(
             $project,
             $user,
             $request->string('title')->trim()->toString(),
@@ -123,28 +121,8 @@ class TicketController extends Controller
             is_string($requesterUrgency)
                 ? TicketUrgency::from($requesterUrgency)
                 : null,
+            $this->submissionAttachments($request),
         );
-
-        $initialMessage = $recordMessage->handle(
-            $ticket,
-            TicketMessageAuthorType::User,
-            TicketMessageType::PublicReply,
-            $description,
-            $user,
-        );
-
-        $files = $request->file('attachments', []);
-
-        if (is_array($files)) {
-            foreach ($files as $file) {
-                $storeAttachment->handle(
-                    $ticket,
-                    $file,
-                    $user,
-                    $initialMessage,
-                );
-            }
-        }
 
         return to_route(
             'projects.tickets.show',
@@ -295,6 +273,31 @@ class TicketController extends Controller
         }
 
         return implode("\n\n", $body);
+    }
+
+    /** @return list<UploadedFile> */
+    private function submissionAttachments(
+        StoreTicketRequest $request,
+    ): array {
+        $files = $request->file('attachments', []);
+
+        if (! is_array($files)) {
+            return [];
+        }
+
+        $attachments = [];
+
+        foreach ($files as $file) {
+            if (! $file instanceof UploadedFile) {
+                throw new LogicException(
+                    'Validated Ticket attachment must be an uploaded file.',
+                );
+            }
+
+            $attachments[] = $file;
+        }
+
+        return $attachments;
     }
 
     /**

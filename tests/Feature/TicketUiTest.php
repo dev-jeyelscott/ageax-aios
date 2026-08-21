@@ -8,6 +8,8 @@ use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\Ticket;
+use App\Models\TicketAttachment;
+use App\Models\TicketMessage;
 use App\Models\User;
 use App\ProjectStatus;
 use App\Services\TicketConversation;
@@ -110,7 +112,7 @@ test('an authenticated user can submit a project ticket with safe attachments', 
         ->toBe($ticket->messages()->firstOrFail()->id);
 });
 
-test('ticket submission validation is server authoritative and rejects unsafe uploads before persistence', function () {
+test('ticket request validation is server authoritative before submission persistence', function () {
     $user = User::factory()->create();
     $project = ticketUiProject();
 
@@ -120,20 +122,162 @@ test('ticket submission validation is server authoritative and rejects unsafe up
             'description' => 'Request body',
             'requester_category' => 'not-a-category',
             'attachments' => [
-                UploadedFile::fake()->create(
-                    'payload.php.txt',
-                    1,
-                    'text/plain',
+                UploadedFile::fake()->createWithContent(
+                    'safe.txt',
+                    'safe evidence',
                 ),
             ],
         ])
         ->assertSessionHasErrors([
             'title',
             'requester_category',
-            'attachments.0',
         ]);
 
-    expect(Ticket::query()->count())->toBe(0);
+    expect(Ticket::query()->count())
+        ->toBe(0)
+        ->and(TicketMessage::query()->count())
+        ->toBe(0)
+        ->and(TicketAttachment::query()->count())
+        ->toBe(0)
+        ->and(
+            Storage::disk('local')->allFiles(
+                'ticket-attachments',
+            ),
+        )
+        ->toBeEmpty();
+});
+
+test('initial ticket submission is failure atomic and retry creates exactly one normal ticket', function () {
+    $user = User::factory()->create();
+    $project = ticketUiProject();
+
+    Storage::disk('local')->put(
+        'unrelated/preserve.txt',
+        'pre-existing unrelated file',
+    );
+
+    $basePayload = [
+        'title' => 'Checkout total is incorrect',
+        'description' => 'The displayed total differs from the line items.',
+        'requester_category' => TicketRequesterCategory::Bug->value,
+        'requester_urgency' => TicketUrgency::High->value,
+    ];
+
+    $failedResponse = $this->actingAs($user)->post(
+        route('projects.tickets.store', $project),
+        [
+            ...$basePayload,
+            'attachments' => [
+                UploadedFile::fake()->createWithContent(
+                    'first-evidence.txt',
+                    'first attachment stored before the later failure',
+                ),
+                UploadedFile::fake()->create(
+                    'payload.php.txt',
+                    1,
+                    'text/plain',
+                ),
+            ],
+        ],
+    );
+
+    $failedResponse->assertSessionHasErrors('attachments.1');
+
+    expect(Ticket::query()->count())
+        ->toBe(0)
+        ->and(TicketMessage::query()->count())
+        ->toBe(0)
+        ->and(TicketAttachment::query()->count())
+        ->toBe(0)
+        ->and(
+            $project->auditEvents()
+                ->whereIn('event_type', [
+                    'ticket.created',
+                    'ticket.message_recorded',
+                    'ticket.attachment_stored',
+                ])
+                ->count(),
+        )
+        ->toBe(0)
+        ->and(
+            Storage::disk('local')->allFiles(
+                'ticket-attachments',
+            ),
+        )
+        ->toBeEmpty();
+
+    Storage::disk('local')->assertExists(
+        'unrelated/preserve.txt',
+    );
+
+    $retryResponse = $this->post(
+        route('projects.tickets.store', $project),
+        [
+            ...$basePayload,
+            'attachments' => [
+                UploadedFile::fake()->createWithContent(
+                    'first-evidence.txt',
+                    'first attachment stored successfully on retry',
+                ),
+                UploadedFile::fake()->createWithContent(
+                    'second-evidence.txt',
+                    'second attachment stored successfully on retry',
+                ),
+            ],
+        ],
+    );
+
+    $ticket = Ticket::query()->sole();
+    $message = $ticket->messages()->sole();
+
+    $retryResponse->assertRedirect(
+        route('projects.tickets.show', [$project, $ticket]),
+    );
+
+    expect(Ticket::query()->count())
+        ->toBe(1)
+        ->and($ticket->key)
+        ->toBe('TICKET-001')
+        ->and(TicketMessage::query()->count())
+        ->toBe(1)
+        ->and(TicketAttachment::query()->count())
+        ->toBe(2)
+        ->and(
+            $project->auditEvents()
+                ->where('event_type', 'ticket.created')
+                ->count(),
+        )
+        ->toBe(1)
+        ->and(
+            $project->auditEvents()
+                ->where('event_type', 'ticket.message_recorded')
+                ->count(),
+        )
+        ->toBe(1)
+        ->and(
+            $project->auditEvents()
+                ->where('event_type', 'ticket.attachment_stored')
+                ->count(),
+        )
+        ->toBe(2)
+        ->and(
+            $ticket->attachments()
+                ->pluck('ticket_message_id')
+                ->unique()
+                ->values()
+                ->all(),
+        )
+        ->toBe([$message->id])
+        ->and(
+            Storage::disk('local')->allFiles(
+                'ticket-attachments/'.$ticket->id,
+            ),
+        )
+        ->toHaveCount(2);
+
+    Storage::disk('local')->assertExists(
+        'unrelated/preserve.txt',
+    );
 });
 
 test('ticket list filtering is project scoped and supports status category and final priority', function () {
