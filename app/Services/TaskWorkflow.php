@@ -158,7 +158,7 @@ class TaskWorkflow
     private function hasClaimedWork(Project $project, AgentRole $role): bool
     {
         $statuses = $role === AgentRole::Coder
-            ? [TaskStatus::Coding, TaskStatus::Validating, TaskStatus::Reviewing]
+            ? [TaskStatus::Coding, TaskStatus::Validating]
             : [TaskStatus::Reviewing];
 
         return $project->tasks()->whereIn('status', $statuses)->exists();

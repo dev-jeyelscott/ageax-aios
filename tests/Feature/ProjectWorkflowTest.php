@@ -75,6 +75,23 @@ test('a rejected review returns the same task to the coder with a legal transiti
     expect($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($task->id);
 });
 
+test('an active reviewer does not occupy the separate coder lane', function () {
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
+    $reviewingTask = createWorkflowTask($project, 1);
+    $coderTask = createWorkflowTask($project, 2);
+
+    $reviewingTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::Reviewing]);
+    $coderTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::ChangesRequired]);
+
+    $claimedTask = app(ClaimTask::class)->handle($project, AgentRole::Coder);
+
+    expect($claimedTask?->id)->toBe($coderTask->id)
+        ->and($coderTask->refresh()->status)->toBe(TaskStatus::Coding)
+        ->and($reviewingTask->refresh()->status)->toBe(TaskStatus::Reviewing);
+});
+
 test('an exhausted reviewer operational retry blocks and can be requeued for review', function () {
     config()->set('aios.max_reviewer_attempts', 1);
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
