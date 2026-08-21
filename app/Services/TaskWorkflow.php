@@ -7,9 +7,12 @@ use App\Exceptions\InvalidTaskTransition;
 use App\Models\AuditEvent;
 use App\Models\Phase;
 use App\Models\Project;
+use App\Models\Review;
+use App\Models\ReviewFinding;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use App\ProjectStatus;
+use App\ReviewStatus;
 use App\TaskStatus;
 use Illuminate\Support\Facades\DB;
 
@@ -67,6 +70,70 @@ class TaskWorkflow
         $this->notes->writeState($transitionedTask->project);
 
         return $transitionedTask;
+    }
+
+    /** @param array<int, array<string, string>> $findings */
+    public function finalizeReviewerDecision(Task $task, TaskAttempt $attempt, ReviewStatus $outcome, ?string $summary = null, array $findings = []): Review
+    {
+        if (! in_array($outcome, [ReviewStatus::Approved, ReviewStatus::ChangesRequired], true)
+            || ($outcome === ReviewStatus::ChangesRequired && $findings === [])) {
+            throw new InvalidTaskTransition('A finalized review requires an approved outcome or actionable changes-required findings.');
+        }
+
+        return DB::transaction(function () use ($task, $attempt, $outcome, $summary, $findings): Review {
+            $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+            $lockedAttempt = TaskAttempt::query()->lockForUpdate()->findOrFail($attempt->id);
+            $this->assertReviewAttemptBelongsToTask($lockedTask, $lockedAttempt);
+
+            $existing = Review::query()->where('task_attempt_id', $lockedAttempt->id)->lockForUpdate()->first();
+            if ($existing !== null) {
+                $this->applyFinalizedReviewLocked($lockedTask, $lockedAttempt, $existing);
+
+                return $existing;
+            }
+
+            if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::Reviewing) {
+                throw new InvalidTaskTransition('Only a claimed review task can be decided.');
+            }
+
+            $review = Review::create([
+                'task_id' => $lockedTask->id,
+                'task_attempt_id' => $lockedAttempt->id,
+                'status' => $outcome,
+                'summary' => $summary,
+                'started_at' => now(),
+                'completed_at' => now(),
+            ]);
+
+            foreach ($findings as $finding) {
+                $reviewFinding = ReviewFinding::create(['review_id' => $review->id, ...$finding]);
+                $this->audit->record('review.finding_recorded', ['review_id' => $review->id, 'review_finding_id' => $reviewFinding->id, 'severity' => $reviewFinding->severity, 'location' => $reviewFinding->location], $lockedTask->project, $lockedTask);
+            }
+
+            $this->audit->record('review.completed', ['review_id' => $review->id, 'outcome' => $outcome->value, 'finding_count' => count($findings), 'attempt_number' => $lockedAttempt->number], $lockedTask->project, $lockedTask);
+            $this->applyFinalizedReviewLocked($lockedTask, $lockedAttempt, $review);
+
+            return $review->fresh('findings') ?? $review;
+        }, attempts: 3);
+    }
+
+    public function reconcileExistingReviewerDecision(Task $task, TaskAttempt $attempt): ?Review
+    {
+        return DB::transaction(function () use ($task, $attempt): ?Review {
+            $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+            $lockedAttempt = TaskAttempt::query()->lockForUpdate()->findOrFail($attempt->id);
+            $this->assertReviewAttemptBelongsToTask($lockedTask, $lockedAttempt);
+            $review = Review::query()->where('task_attempt_id', $lockedAttempt->id)->lockForUpdate()->first();
+
+            if ($review === null) {
+                return null;
+            }
+
+            $this->applyFinalizedReviewLocked($lockedTask, $lockedAttempt, $review);
+            $this->audit->record('review.finalization_recovered', ['review_id' => $review->id, 'attempt_number' => $lockedAttempt->number, 'outcome' => $review->getRawOriginal('status'), 'reason' => 'existing_finalized_review_before_reviewer_execution'], $lockedTask->project, $lockedTask);
+
+            return $review;
+        }, attempts: 3);
     }
 
     /** @param array<string, mixed> $failure */
@@ -162,6 +229,41 @@ class TaskWorkflow
             : [TaskStatus::Reviewing];
 
         return $project->tasks()->whereIn('status', $statuses)->exists();
+    }
+
+    private function assertReviewAttemptBelongsToTask(Task $task, TaskAttempt $attempt): void
+    {
+        if ((int) $attempt->task_id !== (int) $task->id) {
+            throw new InvalidTaskTransition('The Reviewer TaskAttempt does not belong to the claimed Task.');
+        }
+    }
+
+    private function applyFinalizedReviewLocked(Task $task, TaskAttempt $attempt, Review $review): void
+    {
+        if ((int) $review->task_id !== (int) $task->id
+            || (int) $review->task_attempt_id !== (int) $attempt->id
+            || $review->getRawOriginal('completed_at') === null) {
+            throw new InvalidTaskTransition('The persisted Review is not a finalized decision for this TaskAttempt.');
+        }
+
+        $outcome = ReviewStatus::from($review->getRawOriginal('status'));
+        if ($outcome === ReviewStatus::ChangesRequired && ! $review->findings()->exists()) {
+            throw new InvalidTaskTransition('A finalized changes-required Review must contain actionable findings.');
+        }
+
+        $target = $outcome === ReviewStatus::Approved ? TaskStatus::Done : TaskStatus::ChangesRequired;
+        $current = TaskStatus::from($task->getRawOriginal('status'));
+
+        if ($current === $target) {
+            return;
+        }
+
+        if ($current !== TaskStatus::Reviewing) {
+            throw new InvalidTaskTransition("A finalized {$outcome->value} Review cannot reconcile Task state {$current->value}.");
+        }
+
+        $this->transitionLocked($task, $target);
+        $this->audit->record($outcome === ReviewStatus::Approved ? 'task.approved' : 'task.rejected', ['review_id' => $review->id, 'attempt_number' => $attempt->number], $task->project, $task);
     }
 
     private function repositoryAllowsCoderClaim(Project $project, Task $task): bool
