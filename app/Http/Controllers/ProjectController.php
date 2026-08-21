@@ -329,7 +329,8 @@ class ProjectController extends Controller
             $harnesses[$key] ??= [
                 'run_count' => 0,
                 'token_usage_run_count' => 0,
-                'token_usage' => 0,
+                'token_usage' => null,
+                'known_token_usage' => 0,
                 'legacy_incomplete_run_count' => 0,
                 'legacy_token_usage' => 0,
                 'configurations' => [],
@@ -349,7 +350,7 @@ class ProjectController extends Controller
             }
 
             $harnesses[$key]['token_usage_run_count']++;
-            $harnesses[$key]['token_usage'] += $total;
+            $harnesses[$key]['known_token_usage'] += $total;
             $configuration = $this->usageConfiguration($run);
             $configurationKey = implode('|', [$configuration['model'] ?? 'unknown', $configuration['reasoning_setting'] ?? 'default']);
             $harnesses[$key]['configurations'][$configurationKey] ??= [...$configuration, 'run_count' => 0, 'token_usage' => 0];
@@ -358,12 +359,15 @@ class ProjectController extends Controller
         }
 
         foreach ($harnesses as &$usage) {
-            $usage['average_tokens_per_run'] = $usage['token_usage_run_count'] === 0 ? null : (int) round($usage['token_usage'] / $usage['token_usage_run_count']);
+            $usage['token_usage'] = $usage['token_usage_run_count'] === $usage['run_count']
+                ? $usage['known_token_usage']
+                : null;
+            $usage['average_tokens_per_run'] = $usage['token_usage_run_count'] === 0 ? null : (int) round($usage['known_token_usage'] / $usage['token_usage_run_count']);
             $usage['configurations'] = array_values($usage['configurations']);
         }
         unset($usage);
 
-        $totalProcessedTokens = array_sum(array_column($harnesses, 'token_usage'));
+        $totalProcessedTokens = array_sum(array_column($harnesses, 'known_token_usage'));
         $tokenUsageRunCount = array_sum(array_column($harnesses, 'token_usage_run_count'));
 
         return [

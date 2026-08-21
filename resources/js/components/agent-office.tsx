@@ -119,7 +119,8 @@ type GitEvidence = {
 
 type HarnessUsage = {
     run_count: number;
-    token_usage: number;
+    token_usage: number | null;
+    known_token_usage: number;
     token_usage_run_count: number;
     average_tokens_per_run: number | null;
     legacy_incomplete_run_count: number;
@@ -134,6 +135,7 @@ type HarnessUsage = {
 type TokenUsageEvidence = {
     window: { key: '24h' | '7d' | 'all'; label: string };
     run_count: number;
+    token_usage_run_count: number;
     total_processed_tokens: number;
     average_tokens_per_run: number | null;
     legacy_incomplete_run_count: number;
@@ -1541,7 +1543,8 @@ function TokenUsageCard({
             key: harness,
             usage: harnessUsage[harness] ?? {
                 run_count: 0,
-                token_usage: 0,
+                token_usage: null,
+                known_token_usage: 0,
                 token_usage_run_count: 0,
                 average_tokens_per_run: null,
                 legacy_incomplete_run_count: 0,
@@ -1551,12 +1554,15 @@ function TokenUsageCard({
         .filter(
             ({ usage }) =>
                 usage.run_count > 0 ||
-                usage.token_usage > 0 ||
+                usage.known_token_usage > 0 ||
                 Object.keys(harnessUsage).length === 0,
         );
     const barTotal = Math.max(
         1,
-        harnesses.reduce((sum, entry) => sum + entry.usage.token_usage, 0),
+        harnesses.reduce(
+            (sum, entry) => sum + entry.usage.known_token_usage,
+            0,
+        ),
     );
 
     return (
@@ -1570,7 +1576,12 @@ function TokenUsageCard({
                 {(['24h', '7d', 'all'] as const).map((window) => (
                     <Link
                         key={window}
-                        href={showProject({ project: projectId }, { query: { usage_window: window } }).url}
+                        href={
+                            showProject(
+                                { project: projectId },
+                                { query: { usage_window: window } },
+                            ).url
+                        }
                         preserveScroll
                         className={`rounded-md px-2 py-1 font-mono text-2xs ${
                             evidence.window.key === window
@@ -1581,12 +1592,16 @@ function TokenUsageCard({
                         {window === 'all' ? 'All time' : window}
                     </Link>
                 ))}
-                <span className="text-2xs text-muted-foreground">{evidence.window.label}</span>
+                <span className="text-2xs text-muted-foreground">
+                    {evidence.window.label}
+                </span>
             </div>
 
             <div className="execution-token-layout">
                 <div>
-                    <p className="execution-meta-label">Processed tokens</p>
+                    <p className="execution-meta-label">
+                        Recorded processed tokens
+                    </p>
                     <p className="mt-1 text-2xl font-semibold text-foreground">
                         {formatTokens(total)}
                     </p>
@@ -1596,7 +1611,7 @@ function TokenUsageCard({
                     {harnesses.length > 0 ? (
                         harnesses.map(({ key, usage }) => {
                             const percentage = Math.round(
-                                (usage.token_usage / barTotal) * 100,
+                                (usage.known_token_usage / barTotal) * 100,
                             );
 
                             return (
@@ -1606,23 +1621,54 @@ function TokenUsageCard({
                                             {labelForHarness(key)}
                                         </span>
                                         <span className="font-mono text-2xs text-primary">
-                                            {formatTokens(usage.token_usage)} · {usage.run_count} runs
+                                            {usage.token_usage === null
+                                                ? 'Unavailable'
+                                                : formatTokens(
+                                                      usage.token_usage,
+                                                  )}{' '}
+                                            · {usage.run_count} runs
                                         </span>
                                     </div>
                                     <p className="mt-1 text-2xs text-muted-foreground">
-                                        Avg {usage.average_tokens_per_run === null ? 'unavailable' : formatTokens(usage.average_tokens_per_run)} / recorded run
+                                        Avg{' '}
+                                        {usage.average_tokens_per_run === null
+                                            ? 'unavailable'
+                                            : formatTokens(
+                                                  usage.average_tokens_per_run,
+                                              )}{' '}
+                                        / recorded run
                                     </p>
-                                    {usage.configurations.map((configuration) => (
-                                        <p key={`${configuration.model}-${configuration.reasoning_setting}`} className="mt-0.5 text-2xs text-muted-foreground">
-                                            {configuration.model ?? 'Immutable config unavailable'} · {configuration.reasoning_setting ?? 'default'}: {formatTokens(configuration.token_usage)} / {configuration.run_count} runs
-                                        </p>
-                                    ))}
-                                    <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
-                                        <div
-                                            className="execution-token-bar h-full rounded-full"
-                                            style={{ width: `${percentage}%` }}
-                                        />
-                                    </div>
+                                    {usage.token_usage !== null &&
+                                        usage.configurations.map(
+                                            (configuration) => (
+                                                <p
+                                                    key={`${configuration.model}-${configuration.reasoning_setting}`}
+                                                    className="mt-0.5 text-2xs text-muted-foreground"
+                                                >
+                                                    {configuration.model ??
+                                                        'Immutable config unavailable'}{' '}
+                                                    ·{' '}
+                                                    {configuration.reasoning_setting ??
+                                                        'default'}
+                                                    :{' '}
+                                                    {formatTokens(
+                                                        configuration.token_usage,
+                                                    )}{' '}
+                                                    / {configuration.run_count}{' '}
+                                                    runs
+                                                </p>
+                                            ),
+                                        )}
+                                    {usage.token_usage !== null && (
+                                        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                                            <div
+                                                className="execution-token-bar h-full rounded-full"
+                                                style={{
+                                                    width: `${percentage}%`,
+                                                }}
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })
@@ -1635,8 +1681,15 @@ function TokenUsageCard({
             </div>
 
             <p className="mt-2 text-2xs text-muted-foreground">
-                {evidence.run_count} executions; average uses {evidence.window.key === 'all' ? 'all recorded' : 'windowed recorded'} usage. Raw harness totals are observational, not efficiency rankings.
-                {evidence.legacy_incomplete_run_count > 0 && ` ${evidence.legacy_incomplete_run_count} legacy/incomplete runs (${formatTokens(evidence.legacy_token_usage)} legacy tokens) are excluded from processed-token totals.`}
+                Usage recorded for {evidence.token_usage_run_count} of{' '}
+                {evidence.run_count} executions; averages use{' '}
+                {evidence.window.key === 'all'
+                    ? 'all recorded'
+                    : 'windowed recorded'}{' '}
+                usage. Raw harness totals are observational, not efficiency
+                rankings.
+                {evidence.legacy_incomplete_run_count > 0 &&
+                    ` ${evidence.legacy_incomplete_run_count} legacy/incomplete runs (${formatTokens(evidence.legacy_token_usage)} legacy tokens) are excluded from processed-token totals.`}
             </p>
 
             <div className="mt-3 border-t border-border-subtle pt-2.5">
@@ -2072,7 +2125,17 @@ export function AgentOffice({
                         total={pageProject?.token_usage_total ?? 0}
                         harnessUsage={pageProject?.harness_usage ?? {}}
                         observability={pageProject?.token_observability ?? {}}
-                        evidence={pageProject?.token_usage_evidence ?? { window: { key: 'all', label: 'All time' }, run_count: 0, total_processed_tokens: 0, average_tokens_per_run: null, legacy_incomplete_run_count: 0, legacy_token_usage: 0 }}
+                        evidence={
+                            pageProject?.token_usage_evidence ?? {
+                                window: { key: 'all', label: 'All time' },
+                                run_count: 0,
+                                token_usage_run_count: 0,
+                                total_processed_tokens: 0,
+                                average_tokens_per_run: null,
+                                legacy_incomplete_run_count: 0,
+                                legacy_token_usage: 0,
+                            }
+                        }
                     />
 
                     <HealthCard

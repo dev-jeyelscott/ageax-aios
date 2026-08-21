@@ -53,7 +53,8 @@ test('project overview exposes durable operational evidence without inventing mi
         ->toContain('harness_usage')
         ->toContain('token_usage_evidence')
         ->toContain('usage_window')
-        ->toContain('Raw harness totals are observational, not efficiency rankings');
+        ->toContain('Usage recorded for')
+        ->toContain('Raw harness totals are observational');
 });
 
 test('project overview keeps pause navigation and live polling behavior', function () {

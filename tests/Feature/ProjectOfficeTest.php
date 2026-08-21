@@ -153,7 +153,8 @@ test('the project office includes persisted worker agent git and harness evidenc
             )
             ->where('project.git_evidence.validation_results.passed', true)
             ->where('project.harness_usage.claude_code.run_count', 1)
-            ->where('project.harness_usage.claude_code.token_usage', 0)
+            ->where('project.harness_usage.claude_code.token_usage', null)
+            ->where('project.harness_usage.claude_code.known_token_usage', 0)
             ->where('project.harness_usage.claude_code.legacy_incomplete_run_count', 1)
             ->where('project.token_usage_evidence.legacy_token_usage', 1200)
             ->where('project.recent_agent_runs.0.harness', 'claude_code'));
@@ -273,6 +274,50 @@ test('normalized claude usage is persisted and aggregated by harness', function 
             ->where('project.token_usage_total', 130)
             ->where('project.harness_usage.claude_code.run_count', 1)
             ->where('project.harness_usage.claude_code.token_usage', 130));
+});
+
+test('incomplete harness telemetry is unavailable rather than treated as zero usage', function () {
+    $user = User::factory()->create();
+    $project = Project::create([
+        'name' => 'Mixed Claude Usage Example',
+        'path' => '/tmp/mixed-claude-usage-'.fake()->uuid(),
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+
+    AgentRun::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::Coder,
+        'harness' => AgentHarness::ClaudeCode->value,
+        'status' => AgentRunStatus::Completed,
+        'prompt_hash' => hash('sha256', 'complete-claude-usage'),
+        'token_usage' => 130,
+        'result' => ['token_usage' => ['status' => 'complete', 'canonical_total_tokens' => 130]],
+        'started_at' => now()->subMinute(),
+        'finished_at' => now()->subMinute(),
+    ]);
+
+    AgentRun::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::Coder,
+        'harness' => AgentHarness::ClaudeCode->value,
+        'status' => AgentRunStatus::Completed,
+        'prompt_hash' => hash('sha256', 'incomplete-claude-usage'),
+        'started_at' => now(),
+        'finished_at' => now(),
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('projects.show', $project))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/show')
+            ->where('project.token_usage_total', 130)
+            ->where('project.token_usage_evidence.token_usage_run_count', 1)
+            ->where('project.harness_usage.claude_code.run_count', 2)
+            ->where('project.harness_usage.claude_code.token_usage_run_count', 1)
+            ->where('project.harness_usage.claude_code.known_token_usage', 130)
+            ->where('project.harness_usage.claude_code.token_usage', null));
 });
 
 test('codex output usage remains the fallback when normalized usage is absent', function () {
