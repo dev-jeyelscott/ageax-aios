@@ -376,6 +376,23 @@ test('the worker applies a reviewer decision during a polling cycle', function (
         ->and($task->auditEvents()->where('event_type', 'task.approved')->exists())->toBeTrue();
 });
 
+test('the worker resumes an orphaned reviewer claim during a polling cycle', function () {
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    foreach (AgentRole::cases() as $role) {
+        AgentWorker::create(['project_id' => $project->id, 'role' => $role, 'status' => 'idle']);
+    }
+    $task = reviewTask($project);
+    TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'completed', 'started_at' => now(), 'finished_at' => now()]);
+    $review = ['outcome' => 'approved', 'summary' => 'The recovered review meets every criterion.', 'findings' => []];
+    Process::fake(['*' => Process::result(output: json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => json_encode($review, JSON_THROW_ON_ERROR)]], JSON_THROW_ON_ERROR))]);
+
+    $this->artisan('aios:work --once')->assertExitCode(0);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::Done)
+        ->and($task->runs()->where('role', AgentRole::Reviewer)->where('status', AgentRunStatus::Completed)->exists())->toBeTrue()
+        ->and($task->auditEvents()->where('event_type', 'review.started')->exists())->toBeTrue();
+});
+
 test('the worker waits for a cooldown after completing a task before claiming another for the same role', function () {
     config()->set('aios.worker_task_cooldown_seconds', 300);
     $vault = storage_path('framework/testing/obsidian-'.fake()->uuid());

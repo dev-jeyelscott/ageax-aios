@@ -19,6 +19,7 @@ use App\Models\TaskPlanningEscalation;
 use App\Models\TicketTriageAttempt;
 use App\ProjectStatus;
 use App\Services\TaskPlanningEscalationWorkflow;
+use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
 use App\TicketStatus;
 use Carbon\CarbonImmutable;
@@ -47,6 +48,7 @@ class RunAiosWorkers extends Command
         SetProjectStatus $setProjectStatus,
         WorkerHeartbeat $heartbeat,
         TaskPlanningEscalationWorkflow $planningEscalations,
+        TaskWorkflow $workflow,
     ): int {
         $workerInstanceId = (string) Str::uuid();
 
@@ -192,7 +194,9 @@ class RunAiosWorkers extends Command
                 }
 
                 foreach ([AgentRole::Coder, AgentRole::Reviewer] as $role) {
-                    if ($this->onTaskCooldown($project, $role)) {
+                    $task = $workflow->claimedTask($project, $role);
+
+                    if ($task === null && $this->onTaskCooldown($project, $role)) {
                         continue;
                     }
 
@@ -206,10 +210,10 @@ class RunAiosWorkers extends Command
                         continue;
                     }
 
-                    $task = $claimTask->handle($project, $role);
+                    $task ??= $claimTask->handle($project, $role);
 
                     if ($task !== null) {
-                        $this->info("Claimed {$task->key} for {$role->value}.");
+                        $this->info("Processing {$task->key} for {$role->value}.");
 
                         try {
                             if ($role === AgentRole::Coder) {

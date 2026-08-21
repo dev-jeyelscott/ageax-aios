@@ -72,6 +72,18 @@ class TaskWorkflow
         return $transitionedTask;
     }
 
+    public function claimedTask(Project $project, AgentRole $role): ?Task
+    {
+        $statuses = $role === AgentRole::Coder
+            ? [TaskStatus::Coding, TaskStatus::Validating]
+            : [TaskStatus::Reviewing];
+
+        return $project->tasks()
+            ->whereIn('status', $statuses)
+            ->orderBy('position')
+            ->first();
+    }
+
     /** @param array<int, array<string, string>> $findings */
     public function finalizeReviewerDecision(Task $task, TaskAttempt $attempt, ReviewStatus $outcome, ?string $summary = null, array $findings = []): Review
     {
@@ -224,11 +236,7 @@ class TaskWorkflow
 
     private function hasClaimedWork(Project $project, AgentRole $role): bool
     {
-        $statuses = $role === AgentRole::Coder
-            ? [TaskStatus::Coding, TaskStatus::Validating]
-            : [TaskStatus::Reviewing];
-
-        return $project->tasks()->whereIn('status', $statuses)->exists();
+        return $this->claimedTask($project, $role) !== null;
     }
 
     private function assertReviewAttemptBelongsToTask(Task $task, TaskAttempt $attempt): void
