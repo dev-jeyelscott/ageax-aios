@@ -337,6 +337,59 @@ class TaskWorkflow
         return $result['task'];
     }
 
+    public function blockRepeatedRejectedReviews(Task $task): bool
+    {
+        /**
+         * @var array{
+         *     task: Task,
+         *     blocked: bool,
+         *     transitioned: bool
+         * } $result
+         */
+        $result = DB::transaction(function () use ($task): array {
+            $lockedTask = Task::query()
+                ->lockForUpdate()
+                ->findOrFail($task->id);
+            $status = TaskStatus::from(
+                $lockedTask->getRawOriginal('status'),
+            );
+
+            if ($status === TaskStatus::Blocked) {
+                return [
+                    'task' => $lockedTask,
+                    'blocked' => $this->hasActiveRejectedReviewBlock(
+                        $lockedTask,
+                    ),
+                    'transitioned' => false,
+                ];
+            }
+
+            if ($status !== TaskStatus::ChangesRequired) {
+                return [
+                    'task' => $lockedTask,
+                    'blocked' => false,
+                    'transitioned' => false,
+                ];
+            }
+
+            $blocked = $this->blockRepeatedRejectedReviewsLocked(
+                $lockedTask,
+            );
+
+            return [
+                'task' => $lockedTask->refresh(),
+                'blocked' => $blocked,
+                'transitioned' => $blocked,
+            ];
+        }, attempts: 3);
+
+        if ($result['transitioned']) {
+            $this->scheduleStateNote($result['task']);
+        }
+
+        return $result['blocked'];
+    }
+
     public function approveTask(Task $task, ?TaskAttempt $attempt = null, ?string $reviewSummary = null): Task
     {
         $completedTask = DB::transaction(function () use ($task): Task {
@@ -401,6 +454,10 @@ class TaskWorkflow
         $current = TaskStatus::from($task->getRawOriginal('status'));
 
         if ($current === $target) {
+            if ($outcome === ReviewStatus::ChangesRequired) {
+                $this->blockRepeatedRejectedReviewsLocked($task);
+            }
+
             return;
         }
 
@@ -425,6 +482,197 @@ class TaskWorkflow
             'review_id' => $review->id,
             'attempt_number' => $attempt->number,
         ], $task->project, $task);
+
+        $this->blockRepeatedRejectedReviewsLocked($task);
+    }
+
+    private function blockRepeatedRejectedReviewsLocked(Task $task): bool
+    {
+        if (
+            TaskStatus::from($task->getRawOriginal('status'))
+            !== TaskStatus::ChangesRequired
+        ) {
+            return false;
+        }
+
+        $threshold = max(
+            1,
+            (int) config(
+                'aios.review_no_progress_block_threshold',
+                3,
+            ),
+        );
+
+        $latestRequeue = $task->auditEvents()
+            ->where('event_type', 'task.requeued')
+            ->orderByDesc('id')
+            ->first();
+
+        $reviews = Review::query()
+            ->whereBelongsTo($task)
+            ->whereNotNull('completed_at')
+            ->when(
+                $latestRequeue !== null,
+                fn ($query) => $query->where(
+                    'completed_at',
+                    '>',
+                    $latestRequeue->occurred_at,
+                ),
+            )
+            ->with('attempt')
+            ->orderByDesc('completed_at')
+            ->orderByDesc('id')
+            ->get();
+
+        /**
+         * Only the trailing consecutive changes-required reviews form the
+         * evidence window. An approval or any non-finalized outcome breaks it.
+         *
+         * @var list<array{review: Review, attempt: TaskAttempt}> $window
+         */
+        $window = [];
+
+        foreach ($reviews as $review) {
+            if (
+                ReviewStatus::from($review->getRawOriginal('status'))
+                !== ReviewStatus::ChangesRequired
+            ) {
+                break;
+            }
+
+            $attempt = $review->attempt;
+
+            if (! $attempt instanceof TaskAttempt) {
+                return false;
+            }
+
+            $window[] = [
+                'review' => $review,
+                'attempt' => $attempt,
+            ];
+
+            if (count($window) >= $threshold) {
+                break;
+            }
+        }
+
+        if (count($window) < $threshold) {
+            return false;
+        }
+
+        $window = array_reverse($window);
+        $firstAttempt = $window[0]['attempt'];
+        $baseSha = $firstAttempt->getAttribute('base_sha');
+        $headSha = $firstAttempt->getAttribute('head_sha');
+        $taskContractFingerprint = $this->taskContractFingerprint(
+            $firstAttempt,
+        );
+
+        if (
+            ! is_string($baseSha)
+            || $baseSha === ''
+            || ! is_string($headSha)
+            || $headSha === ''
+            || $baseSha !== $headSha
+            || $taskContractFingerprint === null
+        ) {
+            return false;
+        }
+
+        foreach ($window as $evidence) {
+            $attempt = $evidence['attempt'];
+            $attemptBaseSha = $attempt->getAttribute('base_sha');
+            $attemptHeadSha = $attempt->getAttribute('head_sha');
+            $changedFiles = $attempt->getAttribute('changed_files');
+
+            if (
+                $attemptBaseSha !== $baseSha
+                || $attemptHeadSha !== $headSha
+                || $attemptBaseSha !== $attemptHeadSha
+                || ! is_array($changedFiles)
+                || $changedFiles !== []
+                || $this->taskContractFingerprint($attempt)
+                    !== $taskContractFingerprint
+            ) {
+                return false;
+            }
+        }
+
+        $attemptNumbers = array_map(
+            fn (array $evidence): int => (int) $evidence['attempt']->number,
+            $window,
+        );
+        $reviewIds = array_map(
+            fn (array $evidence): int => (int) $evidence['review']->id,
+            $window,
+        );
+
+        $this->transitionLocked($task, TaskStatus::Blocked);
+
+        $this->audit->record(
+            'task.review_no_progress_blocked',
+            [
+                'operation' => 'reviewer',
+                'reason' => 'repeated_changes_required_without_repository_progress',
+                'threshold' => $threshold,
+                'attempt_numbers' => $attemptNumbers,
+                'review_ids' => $reviewIds,
+                'base_sha' => $baseSha,
+                'head_sha' => $headSha,
+                'changed_files' => [],
+                'task_contract_fingerprint' => $taskContractFingerprint,
+                'action' => 'Resolve the unmet acceptance criteria or task-contract prerequisite, then manually requeue the task. AIOS did not approve or cancel unresolved work.',
+            ],
+            $task->project,
+            $task,
+        );
+
+        return true;
+    }
+
+    private function taskContractFingerprint(
+        TaskAttempt $attempt,
+    ): ?string {
+        $validationResults = $attempt->getAttribute(
+            'validation_results',
+        );
+
+        if (! is_array($validationResults)) {
+            return null;
+        }
+
+        $taskContract = $validationResults['task_contract'] ?? null;
+
+        if (! is_array($taskContract)) {
+            return null;
+        }
+
+        $fingerprint = $taskContract['fingerprint'] ?? null;
+
+        return is_string($fingerprint) && $fingerprint !== ''
+            ? $fingerprint
+            : null;
+    }
+
+    private function hasActiveRejectedReviewBlock(Task $task): bool
+    {
+        $latestBlockId = $task->auditEvents()
+            ->where(
+                'event_type',
+                'task.review_no_progress_blocked',
+            )
+            ->max('id');
+
+        if ($latestBlockId === null) {
+            return false;
+        }
+
+        $latestRequeueId = $task->auditEvents()
+            ->where('event_type', 'task.requeued')
+            ->max('id');
+
+        return $latestRequeueId === null
+            || (int) $latestBlockId > (int) $latestRequeueId;
     }
 
     private function scheduleReviewerFinalizationNotes(Task $task, TaskAttempt $attempt, Review $review): void
