@@ -9,6 +9,7 @@ use App\Models\TaskAttempt;
 use App\ProjectStatus;
 use App\Services\CoderRepositoryGuard;
 use App\Services\CodexCliRunner;
+use App\Services\ProjectGitState;
 use App\Services\TaskCommitter;
 use App\Services\TaskValidator;
 use App\TaskStatus;
@@ -68,6 +69,19 @@ test('pre-existing unstaged changes block a new coder attempt without modifying 
         ->and($afterStatus)->toBe($beforeStatus)
         ->and($task->auditEvents()->where('event_type', 'task.blocked_dirty_repository')->exists())->toBeTrue()
         ->and($task->auditEvents()->where('event_type', 'task.blocked_dirty_repository')->firstOrFail()->payload['action'])->toContain('Resolve the repository state manually');
+});
+
+test('a Claude Code local settings artifact does not block a coder claim', function () {
+    $project = gitIsolationProject();
+    $task = gitIsolationTask($project);
+    File::ensureDirectoryExists($project->path.'/.claude');
+    File::put($project->path.'/.claude/settings.local.json', '{"permissions":[]}');
+
+    $claimed = app(ClaimTask::class)->handle($project, AgentRole::Coder);
+
+    expect($claimed?->id)->toBe($task->id)
+        ->and($task->refresh()->status)->toBe(TaskStatus::Coding)
+        ->and(app(ProjectGitState::class)->inspect($project->path)['untracked_files'])->toBe([]);
 });
 
 test('pre-existing staged changes block a new coder attempt without modifying the index', function () {

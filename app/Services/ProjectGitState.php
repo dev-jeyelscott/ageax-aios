@@ -7,6 +7,13 @@ use Throwable;
 
 class ProjectGitState
 {
+    /**
+     * Claude Code writes this machine-local permission file beside the managed project. It is
+     * harness runtime state, never task work, and must not depend on a developer's global Git
+     * excludes configuration to remain invisible to AIOS preflight.
+     */
+    private const array HarnessLocalFiles = ['.claude/settings.local.json'];
+
     public function __construct(private WorkspacePathResolver $paths) {}
 
     /**
@@ -53,7 +60,7 @@ class ProjectGitState
         $baseSha = $headSha ?? $this->emptyTreeSha($projectPath);
         $staged = $this->files($projectPath, ['git', 'diff', '--cached', '--name-only', '--no-renames', '-z', '--']);
         $unstaged = $this->files($projectPath, ['git', 'diff', '--name-only', '--no-renames', '-z', '--']);
-        $untracked = $this->files($projectPath, ['git', 'ls-files', '--others', '--exclude-standard', '-z', '--']);
+        $untracked = $this->untrackedFiles($projectPath);
         $errors = [];
 
         if ($baseSha === null) {
@@ -92,7 +99,7 @@ class ProjectGitState
         $projectPath = $this->paths->assertProjectPath($projectPath);
         $staged = $this->files($projectPath, ['git', 'diff', '--cached', '--name-only', '--no-renames', '-z', $baseSha, '--']);
         $unstaged = $this->files($projectPath, ['git', 'diff', '--name-only', '--no-renames', '-z', '--']);
-        $untracked = $this->files($projectPath, ['git', 'ls-files', '--others', '--exclude-standard', '-z', '--']);
+        $untracked = $this->untrackedFiles($projectPath);
 
         if ($staged === null || $unstaged === null || $untracked === null) {
             return null;
@@ -105,7 +112,7 @@ class ProjectGitState
     {
         $projectPath = $this->paths->assertProjectPath($projectPath);
         $diff = $this->result($projectPath, ['git', 'diff', '--binary', '--no-ext-diff', '--no-renames', $baseSha, '--']);
-        $untracked = $this->files($projectPath, ['git', 'ls-files', '--others', '--exclude-standard', '-z', '--']);
+        $untracked = $this->untrackedFiles($projectPath);
 
         if (! $diff['successful'] || $untracked === null) {
             return null;
@@ -167,6 +174,21 @@ class ProjectGitState
         }
 
         return $this->normalize(explode("\0", $result['output']));
+    }
+
+    /** @return array<int, string>|null */
+    private function untrackedFiles(string $projectPath): ?array
+    {
+        $files = $this->files($projectPath, ['git', 'ls-files', '--others', '--exclude-standard', '-z', '--']);
+
+        if ($files === null) {
+            return null;
+        }
+
+        return array_values(array_filter(
+            $files,
+            fn (string $file): bool => ! in_array($file, self::HarnessLocalFiles, true),
+        ));
     }
 
     private function emptyTreeSha(string $projectPath): ?string
