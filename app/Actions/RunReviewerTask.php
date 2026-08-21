@@ -58,7 +58,7 @@ class RunReviewerTask
             return $execution;
         }
 
-        if ($contract['drifted']) {
+        if ($contract['drifted'] && ! $this->isCompletedDependencyDocumentation($task, $contract['changed_inputs'])) {
             $this->audit->record('task.contract_drift_detected', [
                 'operation' => 'reviewer',
                 'baseline_attempt_number' => $contract['baseline_attempt_number'],
@@ -74,6 +74,14 @@ class RunReviewerTask
                 'output' => '',
                 'error_output' => 'Task contract drift detected before Reviewer execution. Explicitly requeue/replan/rebase the task before review.',
             ];
+        }
+
+        if ($contract['drifted']) {
+            $this->audit->record('task.contract_drift_observed', [
+                'operation' => 'reviewer',
+                'changed_inputs' => $contract['changed_inputs'],
+                'reason' => 'completed dependency documentation is additional reviewer context',
+            ], $task->project, $task);
         }
 
         $this->audit->record('review.started', ['attempt_number' => $attempt->number], $task->project, $task);
@@ -180,6 +188,28 @@ class RunReviewerTask
             $summary,
             $findings,
         );
+    }
+
+    /** @param list<string> $changedInputs */
+    private function isCompletedDependencyDocumentation(Task $task, array $changedInputs): bool
+    {
+        $documents = collect($changedInputs)
+            ->map(fn (string $input): ?string => str_starts_with($input, 'repository_documents:') ? substr($input, strlen('repository_documents:')) : null)
+            ->filter()
+            ->values();
+
+        if ($documents->isEmpty() || $documents->count() !== count($changedInputs)) {
+            return false;
+        }
+
+        $dependencyOutputs = $task->dependencies()
+            ->where('status', TaskStatus::Done)
+            ->get()
+            ->flatMap(fn (Task $dependency) => $dependency->attempts()->latest('number')->value('changed_files') ?? [])
+            ->filter(fn (mixed $path): bool => is_string($path))
+            ->unique();
+
+        return $documents->every(fn (string $document): bool => $dependencyOutputs->contains($document));
     }
 
     /** @return array{0: ?Agent, 1: ?AgentHarness} */
