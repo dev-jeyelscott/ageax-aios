@@ -1018,6 +1018,30 @@ test('rejects malformed successful stream output', function () {
         ->toBe('malformed_output');
 });
 
+test('accepts a successful result event when the stream includes a diagnostic line', function () {
+    fakeClaudeCodeExecution(
+        "Claude Code diagnostic\n".claudeCodeSuccessStream(),
+    );
+
+    $project = claudeCodeProject();
+    $agent = claudeCodeAgent($project);
+
+    $result = app(
+        ClaudeCodeHarness::class,
+    )->execute(
+        $project,
+        $agent,
+        'Implement the task.',
+    );
+
+    expect($result->exitCode)
+        ->toBe(0)
+        ->and($result->output)
+        ->toBe('completed')
+        ->and($result->externalRunId)
+        ->toBe('claude-session-123');
+});
+
 test('preserves the raw transcript when a result event is missing required metadata', function () {
     $stream = json_encode([
         'type' => 'result',

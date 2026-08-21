@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\RestoreSkippedTask;
 use App\Actions\SkipBlockedTask;
 use App\Actions\TransitionTask;
 use App\Models\AuditEvent;
@@ -47,7 +48,7 @@ test('skipping a blocked task records affected dependents in the audit evidence'
     $dependent->dependencies()->attach($task->id);
     $task = app(TransitionTask::class)->handle($task, TaskStatus::Blocked);
 
-    app(SkipBlockedTask::class)->handle($task, 'Cannot be automated.');
+    $task = app(SkipBlockedTask::class)->handle($task, 'Cannot be automated.');
 
     $event = AuditEvent::query()->whereBelongsTo($task)->where('event_type', 'task.skipped')->latest('occurred_at')->first();
 
@@ -61,4 +62,24 @@ test('only a blocked task may be skipped', function () {
     $task = skipTestTask($project, 1);
 
     app(SkipBlockedTask::class)->handle($task, 'Not applicable.');
+})->throws(HttpException::class);
+
+test('an explicitly skipped task may be restored to coder work with audit evidence', function () {
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = skipTestTask($project, 1);
+    $task = app(TransitionTask::class)->handle($task, TaskStatus::Blocked);
+    $task = app(SkipBlockedTask::class)->handle($task, 'Cannot be automated.');
+
+    $restored = app(RestoreSkippedTask::class)->handle($task);
+
+    expect($restored->status)->toBe(TaskStatus::ChangesRequired)
+        ->and(AuditEvent::query()->whereBelongsTo($task)->where('event_type', 'task.restored')->exists())->toBeTrue();
+});
+
+test('a cancelled task without skip evidence may not be restored', function () {
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = skipTestTask($project, 1);
+    $task = app(TransitionTask::class)->handle($task, TaskStatus::Cancelled);
+
+    app(RestoreSkippedTask::class)->handle($task);
 })->throws(HttpException::class);

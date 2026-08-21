@@ -167,7 +167,10 @@ final readonly class ClaudeCodeHarness implements AgentHarness
             );
         }
 
-        if ($stream['malformed'] || $result === null) {
+        // Claude Code can emit a non-stream diagnostic alongside a complete result event. The
+        // final result is the authoritative execution outcome; only reject malformed output
+        // when it prevents us from obtaining that result.
+        if ($result === null) {
             return $this->failure(
                 exitCode: self::NormalizationFailureExitCode,
                 message: 'Claude Code returned malformed stream output.',
@@ -252,7 +255,6 @@ final readonly class ClaudeCodeHarness implements AgentHarness
 
     /**
      * @return array{
-     *     malformed: bool,
      *     result: ?array<string, mixed>,
      *     session_id: ?string,
      *     api_error_category: ?string,
@@ -261,7 +263,6 @@ final readonly class ClaudeCodeHarness implements AgentHarness
      */
     private function parseStream(string $output): array
     {
-        $malformed = false;
         $result = null;
         $sessionId = null;
         $apiErrorCategory = null;
@@ -279,14 +280,10 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                     flags: JSON_THROW_ON_ERROR,
                 );
             } catch (JsonException) {
-                $malformed = true;
-
                 continue;
             }
 
             if (! is_array($event)) {
-                $malformed = true;
-
                 continue;
             }
 
@@ -313,7 +310,6 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         }
 
         return [
-            'malformed' => $malformed,
             'result' => $result,
             'session_id' => $sessionId,
             'api_error_category' => $apiErrorCategory,

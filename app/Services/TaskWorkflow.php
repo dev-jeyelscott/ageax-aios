@@ -226,7 +226,8 @@ class TaskWorkflow
             TaskStatus::Interrupted => [TaskStatus::Coding, TaskStatus::Reviewing, TaskStatus::Failed],
             TaskStatus::Blocked => [TaskStatus::Queued, TaskStatus::ChangesRequired, TaskStatus::ReadyForReview, TaskStatus::Cancelled],
             TaskStatus::Failed => [TaskStatus::Coding, TaskStatus::Blocked, TaskStatus::Cancelled],
-            TaskStatus::Done, TaskStatus::Cancelled => [],
+            TaskStatus::Done => [],
+            TaskStatus::Cancelled => [TaskStatus::ChangesRequired],
         };
     }
 
