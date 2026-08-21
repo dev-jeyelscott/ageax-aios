@@ -142,6 +142,21 @@ test('a task still genuinely being coded is left untouched by abandoned-finaliza
         ->and($run->refresh()->status)->toBe(AgentRunStatus::Running);
 });
 
+test('a completed reviewer run from an earlier attempt does not recover a fresh reviewer claim', function () {
+    $project = Project::create(['name' => 'Fresh review', 'path' => '/tmp/fresh-review-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $worker = leasedWorker($project, AgentRole::Reviewer);
+    $worker->update(['status' => 'idle', 'lease_id' => null, 'lease_expires_at' => null, 'last_heartbeat_at' => now()]);
+    $task = leasedTask($project, status: TaskStatus::Reviewing);
+    Task::query()->whereKey($task->id)->update(['updated_at' => now()->subMinutes(5)]);
+    $previousAttempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'completed', 'started_at' => now()->subMinutes(10), 'finished_at' => now()->subMinutes(9)]);
+    $currentAttempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 2, 'status' => 'completed', 'started_at' => now()->subMinutes(5), 'finished_at' => now()->subMinutes(4)]);
+    AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'task_attempt_id' => $previousAttempt->id, 'agent_worker_id' => $worker->id, 'role' => AgentRole::Reviewer, 'status' => AgentRunStatus::Completed, 'exit_code' => 0, 'prompt_hash' => hash('sha256', 'previous-review'), 'started_at' => now()->subMinutes(10), 'finished_at' => now()->subMinutes(9)]);
+
+    expect(app(StaleWorkerRecovery::class)->recover($project, 60))->toBe(0)
+        ->and($task->refresh()->status)->toBe(TaskStatus::Reviewing)
+        ->and($currentAttempt->refresh()->status)->toBe('completed');
+});
+
 test('two worker processes cannot acquire the same role lease or task execution', function () {
     $project = Project::create(['name' => 'Concurrent', 'path' => '/tmp/concurrent-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     leasedWorker($project);

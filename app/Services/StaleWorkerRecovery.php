@@ -293,12 +293,19 @@ class StaleWorkerRecovery
                 return false;
             }
 
+            $attempt = $lockedTask->attempts()->latest('number')->first();
+            if ($attempt === null) {
+                return false;
+            }
+
             // Elapsed time alone is never sufficient evidence (see class docblock): require a
-            // persisted AgentRun for this task/role to prove an execution genuinely happened, and
-            // that none of them are still Running to prove nothing is actively in flight.
+            // persisted AgentRun for this task, role, and current attempt to prove this exact
+            // execution genuinely happened. A completed run from an earlier attempt must not
+            // turn a fresh reviewer claim into an abandoned finalization.
             $runs = AgentRun::query()
                 ->whereBelongsTo($lockedTask)
                 ->where('role', $role)
+                ->where('task_attempt_id', $attempt->id)
                 ->get();
 
             if ($runs->isEmpty() || $runs->contains(fn (AgentRun $run): bool => AgentRunStatus::from($run->getRawOriginal('status')) === AgentRunStatus::Running)) {
