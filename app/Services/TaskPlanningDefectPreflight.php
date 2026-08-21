@@ -28,11 +28,14 @@ class TaskPlanningDefectPreflight
             return $this->defect('unsafe_relevant_paths', ['relevant_paths' => is_array($paths) ? array_values($paths) : []], ['relevant_paths']);
         }
 
-        $task->loadMissing('phase');
+        // A persistent worker can retain a Task instance after an operator corrects phase
+        // placement. Dependency validity must use the current persisted phase rather than an
+        // already-loaded Eloquent relation from an earlier scheduler cycle.
+        $taskPhase = $task->phase()->first();
         $invalidDependency = $task->dependencies()->with('phase')->get()->first(fn (Task $dependency): bool => $dependency->project_id !== $task->project_id
             || $dependency->id === $task->id
             || $dependency->position >= $task->position
-            || ($task->phase !== null && $dependency->phase !== null && $dependency->phase->position > $task->phase->position));
+            || ($taskPhase !== null && $dependency->phase !== null && $dependency->phase->position > $taskPhase->position));
         if ($invalidDependency !== null) {
             return $this->defect('invalid_dependency_placement', ['dependency_key' => $invalidDependency->key, 'dependency_position' => $invalidDependency->position], ['dependencies']);
         }

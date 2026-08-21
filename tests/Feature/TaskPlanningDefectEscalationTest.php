@@ -75,6 +75,25 @@ test('an earlier-phase dependency is valid planning input', function () {
     expect(app(TaskPlanningDefectPreflight::class)->evaluate($task->refresh()))->toBeNull();
 });
 
+test('planning preflight uses the current phase instead of a stale loaded relationship', function () {
+    $project = Project::create(['name' => 'Fresh phase placement project', 'path' => sys_get_temp_dir(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $dependencyPhase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Dependency', 'objective' => 'Provide a prerequisite.']);
+    $taskPhase = Phase::create(['project_id' => $project->id, 'position' => 0, 'title' => 'Target', 'objective' => 'Initially misplaced.']);
+    $dependency = Task::create([
+        'project_id' => $project->id, 'phase_id' => $dependencyPhase->id, 'key' => 'TASK-046', 'position' => 46, 'title' => 'Dependency',
+        'objective' => 'Provide a prerequisite.', 'acceptance_criteria' => ['The prerequisite exists.'], 'implementation_prompt' => 'Implement it.', 'context_capsule' => [], 'status' => TaskStatus::Queued,
+    ]);
+    $task = Task::create([
+        'project_id' => $project->id, 'phase_id' => $taskPhase->id, 'key' => 'TASK-058', 'position' => 58, 'title' => 'Target',
+        'objective' => 'Use the prerequisite.', 'acceptance_criteria' => ['The dependent behavior works.'], 'implementation_prompt' => 'Implement it.', 'context_capsule' => [], 'status' => TaskStatus::Queued,
+    ]);
+    $task->dependencies()->attach($dependency);
+    $task->load('phase');
+    $taskPhase->update(['position' => 2]);
+
+    expect(app(TaskPlanningDefectPreflight::class)->evaluate($task))->toBeNull();
+});
+
 test('the planning revision prompt states the verification command allowlist', function () {
     $source = file_get_contents(app_path('Actions/RunTaskPlanningRevision.php'));
 
