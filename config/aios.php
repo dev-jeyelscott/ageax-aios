@@ -29,6 +29,10 @@ return [
     'max_coder_attempts' => (int) env('AIOS_MAX_CODER_ATTEMPTS', 3),
     'max_reviewer_attempts' => (int) env('AIOS_MAX_REVIEWER_ATTEMPTS', 3),
     'no_progress_repeat_threshold' => (int) env('AIOS_NO_PROGRESS_REPEAT_THRESHOLD', 1),
+    // Stops a valid Coder → Reviewer rejection loop when each rejection has the same task
+    // contract and no repository progress. This blocks for an operator; it never approves
+    // or cancels a task whose acceptance criteria remain unmet.
+    'review_no_progress_block_threshold' => (int) env('AIOS_REVIEW_NO_PROGRESS_BLOCK_THRESHOLD', 3),
     'knowledge_improvement_occurrence_threshold' => (int) env('AIOS_KNOWLEDGE_IMPROVEMENT_OCCURRENCE_THRESHOLD', 3),
     'knowledge_improvement_reopen_threshold' => (int) env('AIOS_KNOWLEDGE_IMPROVEMENT_REOPEN_THRESHOLD', 3),
     'knowledge_improvement_scan_limit' => (int) env('AIOS_KNOWLEDGE_IMPROVEMENT_SCAN_LIMIT', 500),

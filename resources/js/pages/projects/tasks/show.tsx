@@ -24,6 +24,7 @@ import type { ReactNode } from 'react';
 import {
     show as showProject,
     showAgentRun,
+    requeueTask,
     skipTask,
     storeOperatorMessage,
 } from '@/actions/App/Http/Controllers/ProjectController';
@@ -1492,6 +1493,25 @@ export default function TaskShow({
                                         </CardDescription>
                                     </CardHeader>
                                     <CardContent className="grid gap-3">
+                                        {task.audit_events.some(
+                                            (event) =>
+                                                event.event_type ===
+                                                'task.review_no_progress_blocked',
+                                        ) && (
+                                            <div className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/5 p-3 text-xs text-warning-foreground">
+                                                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+                                                <span>
+                                                    AIOS stopped repeated
+                                                    Coder/Reviewer retries
+                                                    after three rejected
+                                                    attempts had no repository
+                                                    progress. Provide the
+                                                    missing external
+                                                    prerequisite before
+                                                    requeueing.
+                                                </span>
+                                            </div>
+                                        )}
                                         {recoveryEscalationReason && (
                                             <div className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/5 p-3 text-xs text-warning-foreground">
                                                 <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
@@ -1523,6 +1543,22 @@ export default function TaskShow({
                                                 </span>
                                             </div>
                                         )}
+                                        <Form
+                                            {...requeueTask.form({
+                                                project: project.id,
+                                                task: task.id,
+                                            })}
+                                        >
+                                            {({ processing }) => (
+                                                <Button
+                                                    type="submit"
+                                                    variant="outline"
+                                                    disabled={processing}
+                                                >
+                                                    Requeue after resolving prerequisite
+                                                </Button>
+                                            )}
+                                        </Form>
                                         <Form
                                             {...skipTask.form({
                                                 project: project.id,

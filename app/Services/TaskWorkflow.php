@@ -7,9 +7,11 @@ use App\Exceptions\InvalidTaskTransition;
 use App\Models\AuditEvent;
 use App\Models\Phase;
 use App\Models\Project;
+use App\Models\Review;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use App\ProjectStatus;
+use App\ReviewStatus;
 use App\TaskStatus;
 use Illuminate\Support\Facades\DB;
 
@@ -153,6 +155,84 @@ class TaskWorkflow
         $this->audit->record('task.approved', ['attempt_number' => $attempt?->number], $completedTask->project, $completedTask);
 
         return $completedTask;
+    }
+
+    /**
+     * Blocks a task after repeated valid review rejections demonstrate that no repository
+     * progress is possible. An operator requeue starts a new evidence window.
+     */
+    public function blockRepeatedRejectedReviews(Task $task): bool
+    {
+        $threshold = max(2, (int) config('aios.review_no_progress_block_threshold'));
+
+        $blocked = DB::transaction(function () use ($task, $threshold): bool {
+            $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+
+            if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::ChangesRequired) {
+                return false;
+            }
+
+            $lastRequeueAt = AuditEvent::query()
+                ->whereBelongsTo($lockedTask)
+                ->where('event_type', 'task.requeued')
+                ->latest('occurred_at')
+                ->value('occurred_at');
+
+            $reviews = Review::query()
+                ->whereBelongsTo($lockedTask)
+                ->where('status', ReviewStatus::ChangesRequired)
+                ->when($lastRequeueAt !== null, fn ($query) => $query->where('completed_at', '>=', $lastRequeueAt))
+                ->with('attempt')
+                ->latest('id')
+                ->limit($threshold)
+                ->get();
+
+            if ($reviews->count() !== $threshold) {
+                return false;
+            }
+
+            $attempts = $reviews->pluck('attempt');
+            $contractFingerprints = $attempts
+                ->map(fn (?TaskAttempt $attempt): ?string => is_array($attempt?->validation_results)
+                    ? ($attempt->validation_results['task_contract']['fingerprint'] ?? null)
+                    : null)
+                ->filter(fn (?string $fingerprint): bool => is_string($fingerprint) && $fingerprint !== '')
+                ->unique()
+                ->values();
+            $headShas = $attempts
+                ->map(fn (?TaskAttempt $attempt): ?string => $attempt?->head_sha)
+                ->filter(fn (?string $sha): bool => is_string($sha) && $sha !== '')
+                ->unique()
+                ->values();
+            $hasNoRepositoryProgress = $attempts->every(fn (?TaskAttempt $attempt): bool => $attempt instanceof TaskAttempt
+                && $attempt->base_sha !== null
+                && $attempt->base_sha === $attempt->head_sha
+                && ($attempt->changed_files ?? []) === []);
+
+            if (! $hasNoRepositoryProgress || $contractFingerprints->count() !== 1 || $headShas->count() !== 1) {
+                return false;
+            }
+
+            $this->transitionLocked($lockedTask, TaskStatus::Blocked);
+            $this->audit->record('task.review_no_progress_blocked', [
+                'threshold' => $threshold,
+                'review_ids' => $reviews->pluck('id')->sort()->values()->all(),
+                'attempt_numbers' => $attempts->map(fn (TaskAttempt $attempt): int => $attempt->number)->sort()->values()->all(),
+                'base_sha' => $attempts->first()?->base_sha,
+                'head_sha' => $headShas->first(),
+                'task_contract_fingerprint' => $contractFingerprints->first(),
+                'reason' => 'Consecutive Reviewer changes_required decisions had the same task contract and no repository progress.',
+                'operator_action' => 'Provide the external prerequisite or corrected task contract, then manually requeue. Skip only when an operator intentionally cancels the unmet work.',
+            ], $lockedTask->project, $lockedTask);
+
+            return true;
+        }, attempts: 3);
+
+        if ($blocked) {
+            $this->notes->writeState($task->project);
+        }
+
+        return $blocked;
     }
 
     private function hasClaimedWork(Project $project, AgentRole $role): bool
