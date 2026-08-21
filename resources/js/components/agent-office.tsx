@@ -920,16 +920,20 @@ function AgentNode({
 function WorkflowConnector({
     state,
     label,
+    reverse = false,
 }: {
     state: ConnectorState;
     label: string;
+    reverse?: boolean;
 }) {
     return (
         <div
             role="img"
-            aria-label={`${label}: ${state}`}
+            aria-label={`${reverse ? 'Reviewer to Coder' : label}: ${state}`}
             data-connector-state={state}
-            className={`workflow-connector workflow-connector--${state}`}
+            className={`workflow-connector workflow-connector--${state} ${
+                reverse ? 'workflow-connector--reverse' : ''
+            }`}
         >
             <div className="workflow-connector__rail">
                 <span className="workflow-connector__base" />
@@ -1886,6 +1890,9 @@ export function AgentOffice({
 
     let pmToCoderState: ConnectorState = 'idle';
     let coderToReviewerState: ConnectorState = 'idle';
+    const coderToReviewerReverse =
+        currentWorkflow?.role === 'coder' &&
+        workflowStatus === 'changes_required';
 
     if (projectPaused) {
         pmToCoderState = 'paused';
@@ -2075,6 +2082,7 @@ export function AgentOffice({
                                         <WorkflowConnector
                                             state={coderToReviewerState}
                                             label="Coder to Reviewer"
+                                            reverse={coderToReviewerReverse}
                                         />
                                     )}
                                     {node}

@@ -404,6 +404,10 @@ div:has(> div > [data-aios-execution-office='true']) > aside {
     height: 1.15rem;
 }
 
+.workflow-connector--reverse .workflow-connector__rail {
+    transform: rotate(180deg);
+}
+
 .workflow-connector__base,
 .workflow-connector__energy {
     position: absolute;
