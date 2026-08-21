@@ -170,9 +170,12 @@ PROMPT;
             if (! is_array($replacements['dependencies']) || collect($replacements['dependencies'])->contains(fn (mixed $key): bool => ! is_string($key))) {
                 throw ValidationException::withMessages(['dependencies' => 'Must contain task keys.']);
             }
-            $dependencies = Task::query()->where('project_id', $task->project_id)->whereIn('key', $replacements['dependencies'])->get();
-            if ($dependencies->count() !== count(array_unique($replacements['dependencies'])) || $dependencies->contains(fn (Task $dependency): bool => $dependency->id === $task->id || $dependency->position >= $task->position || $dependency->phase_id !== $task->phase_id)) {
-                throw ValidationException::withMessages(['dependencies' => 'Dependencies must be earlier Tasks in the same phase.']);
+            $task->loadMissing('phase');
+            $dependencies = Task::query()->where('project_id', $task->project_id)->whereIn('key', $replacements['dependencies'])->with('phase')->get();
+            if ($dependencies->count() !== count(array_unique($replacements['dependencies'])) || $dependencies->contains(fn (Task $dependency): bool => $dependency->id === $task->id
+                || $dependency->position >= $task->position
+                || ($task->phase !== null && $dependency->phase !== null && $dependency->phase->position > $task->phase->position))) {
+                throw ValidationException::withMessages(['dependencies' => 'Dependencies must be earlier Tasks and cannot belong to a later phase.']);
             }
         }
     }

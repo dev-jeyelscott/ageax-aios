@@ -28,7 +28,11 @@ class TaskPlanningDefectPreflight
             return $this->defect('unsafe_relevant_paths', ['relevant_paths' => is_array($paths) ? array_values($paths) : []], ['relevant_paths']);
         }
 
-        $invalidDependency = $task->dependencies()->get()->first(fn (Task $dependency): bool => $dependency->project_id !== $task->project_id || $dependency->id === $task->id || $dependency->position >= $task->position || ($task->phase_id !== null && $dependency->phase_id !== $task->phase_id));
+        $task->loadMissing('phase');
+        $invalidDependency = $task->dependencies()->with('phase')->get()->first(fn (Task $dependency): bool => $dependency->project_id !== $task->project_id
+            || $dependency->id === $task->id
+            || $dependency->position >= $task->position
+            || ($task->phase !== null && $dependency->phase !== null && $dependency->phase->position > $task->phase->position));
         if ($invalidDependency !== null) {
             return $this->defect('invalid_dependency_placement', ['dependency_key' => $invalidDependency->key, 'dependency_position' => $invalidDependency->position], ['dependencies']);
         }
