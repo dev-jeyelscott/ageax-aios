@@ -9,7 +9,7 @@ function taskStatusSemanticsMatrix(): array
         'coding' => [TaskStatus::Coding, false, false, false, false, false, true, false],
         'validating' => [TaskStatus::Validating, false, false, false, false, false, true, false],
         'ready for review' => [TaskStatus::ReadyForReview, false, false, true, true, false, true, true],
-        'reviewing' => [TaskStatus::Reviewing, false, false, false, false, false, true, false],
+        'reviewing' => [TaskStatus::Reviewing, false, false, false, false, false, true, true],
         'changes required' => [TaskStatus::ChangesRequired, false, true, false, false, false, true, false],
         'done' => [TaskStatus::Done, true, false, false, true, true, false, true],
         'blocked' => [TaskStatus::Blocked, false, false, false, false, false, true, false],

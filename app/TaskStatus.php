@@ -53,19 +53,25 @@ enum TaskStatus: string
     /** @return list<string> */
     public static function coderClaimableValues(): array
     {
-        return self::valuesMatching(fn (self $status): bool => $status->isCoderClaimable());
+        return self::valuesMatching(
+            fn (self $status): bool => $status->isCoderClaimable(),
+        );
     }
 
     /** @return list<string> */
     public static function reviewerClaimableValues(): array
     {
-        return self::valuesMatching(fn (self $status): bool => $status->isReviewerClaimable());
+        return self::valuesMatching(
+            fn (self $status): bool => $status->isReviewerClaimable(),
+        );
     }
 
     /** @return list<string> */
     public static function phaseCompletionSatisfiedValues(): array
     {
-        return self::valuesMatching(fn (self $status): bool => ! $status->blocksPhaseCompletion());
+        return self::valuesMatching(
+            fn (self $status): bool => ! $status->blocksPhaseCompletion(),
+        );
     }
 
     /**
@@ -119,7 +125,7 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'never',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => false,
+                'review_barrier_satisfied' => true,
             ],
             self::ChangesRequired => [
                 'terminal' => false,
