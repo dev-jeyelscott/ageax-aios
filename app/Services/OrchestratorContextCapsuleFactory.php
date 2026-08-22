@@ -325,7 +325,7 @@ final class OrchestratorContextCapsuleFactory
             ->all();
 
         /** @var list<TaskAttempt> $items */
-        return array_values($items);
+        return $items;
     }
 
     /**
@@ -485,7 +485,7 @@ final class OrchestratorContextCapsuleFactory
             ->all();
 
         /** @var list<array<string, mixed>> $items */
-        return array_values($items);
+        return $items;
     }
 
     /**
@@ -536,7 +536,7 @@ final class OrchestratorContextCapsuleFactory
             ->all();
 
         /** @var list<AgentRun> $items */
-        return array_values($items);
+        return $items;
     }
 
     /**
@@ -714,7 +714,7 @@ final class OrchestratorContextCapsuleFactory
             ->all();
 
         /** @var list<array<string, mixed>> $items */
-        return array_values($items);
+        return $items;
     }
 
     /**
@@ -844,7 +844,7 @@ final class OrchestratorContextCapsuleFactory
             ->all();
 
         /** @var list<RecoveryIncident> $items */
-        return array_values($items);
+        return $items;
     }
 
     /**
@@ -952,7 +952,7 @@ final class OrchestratorContextCapsuleFactory
             ->all();
 
         /** @var list<KnowledgeImprovementCandidate> $items */
-        return array_values($items);
+        return $items;
     }
 
     /**
