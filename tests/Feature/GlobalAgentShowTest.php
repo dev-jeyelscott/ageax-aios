@@ -1,5 +1,6 @@
 <?php
 
+use App\AgentRole;
 use App\Models\Agent;
 use App\Models\Project;
 use App\Models\RecoveryIncident;
@@ -8,8 +9,19 @@ use App\ProjectStatus;
 use App\RecoveryIncidentStatus;
 use Inertia\Testing\AssertableInertia as Assert;
 
+/**
+ * Resolve the singleton Workflow Recovery Engineer without relying on database row ordering.
+ */
+function globalAgentShowRecoveryEngineer(): Agent
+{
+    return Agent::query()
+        ->whereNull('project_id')
+        ->where('role', AgentRole::RecoveryEngineer)
+        ->sole();
+}
+
 test('the global agent show page renders without error', function () {
-    $agent = Agent::query()->whereNull('project_id')->first();
+    $agent = globalAgentShowRecoveryEngineer();
 
     $this->actingAs(User::factory()->create())
         ->get(route('agents.show', $agent))
@@ -17,7 +29,7 @@ test('the global agent show page renders without error', function () {
 });
 
 test('the global agent show page reports the agent as idle when no incident is being actively worked', function () {
-    $agent = Agent::query()->whereNull('project_id')->first();
+    $agent = globalAgentShowRecoveryEngineer();
 
     $this->actingAs(User::factory()->create())
         ->get(route('agents.show', $agent))
@@ -28,9 +40,21 @@ test('the global agent show page reports the agent as idle when no incident is b
 });
 
 test('the global agent show page reports the agent as in progress while an incident is being diagnosed', function () {
-    $agent = Agent::query()->whereNull('project_id')->first();
-    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
-    RecoveryIncident::create(['project_id' => $project->id, 'failure_type' => 'task_blocked', 'status' => RecoveryIncidentStatus::Diagnosing, 'detected_at' => now()]);
+    $agent = globalAgentShowRecoveryEngineer();
+
+    $project = Project::create([
+        'name' => 'Example',
+        'path' => '/tmp/example-'.fake()->uuid(),
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+
+    RecoveryIncident::create([
+        'project_id' => $project->id,
+        'failure_type' => 'task_blocked',
+        'status' => RecoveryIncidentStatus::Diagnosing,
+        'detected_at' => now(),
+    ]);
 
     $this->actingAs(User::factory()->create())
         ->get(route('agents.show', $agent))
@@ -41,7 +65,7 @@ test('the global agent show page reports the agent as in progress while an incid
 });
 
 test('the global agent show page supplies harness capabilities for the configuration form', function () {
-    $agent = Agent::query()->whereNull('project_id')->first();
+    $agent = globalAgentShowRecoveryEngineer();
 
     $this->actingAs(User::factory()->create())
         ->get(route('agents.show', $agent))
