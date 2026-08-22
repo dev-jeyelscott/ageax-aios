@@ -21,6 +21,20 @@ function p5001InfrastructureAgent(): Agent
         ->sole();
 }
 
+/**
+ * Create the minimal durable Project required by AgentRunRecorder.
+ *
+ * The repository's ProjectFactory intentionally has no default attributes,
+ * while the projects table requires both name and path.
+ */
+function p5001InfrastructureProject(): Project
+{
+    return Project::create([
+        'name' => 'Orchestrator Infrastructure '.fake()->uuid(),
+        'path' => sys_get_temp_dir().'/ageax-orchestrator-'.fake()->uuid(),
+    ]);
+}
+
 test('the Orchestrator supports Codex and Claude Code through the existing harness resolver', function () {
     $agent = p5001InfrastructureAgent();
     $resolver = app(AgentHarnessResolver::class);
@@ -106,7 +120,7 @@ test('an Orchestrator run uses the existing immutable AgentRun evidence path', f
         'default_context' => 'Provide advisory architecture analysis only.',
     ]);
 
-    $project = Project::factory()->create();
+    $project = p5001InfrastructureProject();
 
     $context = app(AgentContextAssembler::class)->assemble(
         $agent,
