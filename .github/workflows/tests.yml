@@ -31,6 +31,14 @@ jobs:
         with:
           node-version: '22'
 
+      # TaskValidator uses ripgrep for the mandatory secret scan.
+      # Install it explicitly instead of depending on the runner image.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep
+          rg --version
+
       - name: Setup Application
         run: composer setup
 
