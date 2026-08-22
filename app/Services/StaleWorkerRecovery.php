@@ -328,6 +328,17 @@ class StaleWorkerRecovery
                 return false;
             }
 
+            $worker = AgentWorker::query()
+                ->whereBelongsTo($lockedTask->project)
+                ->where('role', $role)
+                ->whereNotNull('lease_id')
+                ->where('lease_expires_at', '>', now())
+                ->first();
+
+            if ($worker !== null && $runs->contains(fn (AgentRun $run): bool => $run->worker_lease_id === $worker->lease_id)) {
+                return false;
+            }
+
             $evidence = $this->recoveryEvidence($lockedTask);
             $this->storeRecoveryEvidence($lockedTask, $evidence);
 

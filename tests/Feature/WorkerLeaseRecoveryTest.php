@@ -142,6 +142,21 @@ test('a task still genuinely being coded is left untouched by abandoned-finaliza
         ->and($run->refresh()->status)->toBe(AgentRunStatus::Running);
 });
 
+test('a completed run with an active matching lease is left for its worker to finalize', function () {
+    $project = Project::create(['name' => 'Finalizing', 'path' => '/tmp/finalizing-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $worker = leasedWorker($project);
+    $lease = app(WorkerHeartbeat::class)->acquire($project, AgentRole::Coder, fake()->uuid());
+    $task = leasedTask($project, status: TaskStatus::Coding);
+    Task::query()->whereKey($task->id)->update(['updated_at' => now()->subMinutes(5)]);
+    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'running', 'started_at' => now()->subMinutes(5)]);
+    $run = AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'agent_worker_id' => $worker->id, 'worker_instance_id' => $lease->workerInstanceId, 'worker_lease_id' => $lease->leaseId, 'role' => AgentRole::Coder, 'status' => AgentRunStatus::Completed, 'exit_code' => 0, 'prompt_hash' => hash('sha256', 'finalizing'), 'started_at' => now()->subMinutes(5), 'finished_at' => now()->subMinutes(4)]);
+
+    expect(app(StaleWorkerRecovery::class)->recover($project, 60))->toBe(0)
+        ->and($task->refresh()->status)->toBe(TaskStatus::Coding)
+        ->and($attempt->refresh()->status)->toBe('running')
+        ->and($run->refresh()->status)->toBe(AgentRunStatus::Completed);
+});
+
 test('a completed reviewer run from an earlier attempt does not recover a fresh reviewer claim', function () {
     $project = Project::create(['name' => 'Fresh review', 'path' => '/tmp/fresh-review-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $worker = leasedWorker($project, AgentRole::Reviewer);
