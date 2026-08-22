@@ -32,6 +32,9 @@ class StaleWorkerRecovery
         private WorkerHeartbeat $heartbeat,
     ) {}
 
+    /**
+     * Recover stale project worker executions and durable workflow attempts.
+     */
     public function recover(
         Project $project,
         ?int $staleAfterSeconds = null,
@@ -120,6 +123,9 @@ class StaleWorkerRecovery
         return $recovered;
     }
 
+    /**
+     * Recover one orphaned running AgentRun when its original worker lease is gone.
+     */
     private function recoverOrphanedRun(AgentRun $run): bool
     {
         return DB::transaction(function () use ($run): bool {
@@ -168,6 +174,7 @@ class StaleWorkerRecovery
                     TaskStatus::Reviewing,
                 ],
                 AgentRole::KnowledgeArchitect,
+                AgentRole::Orchestrator,
                 AgentRole::ProjectManager,
                 AgentRole::RecoveryEngineer => [],
             };
@@ -239,7 +246,7 @@ class StaleWorkerRecovery
      * This method exists for the harness finishing normally (or a lease-holding process crashing
      * before ever recording a run) but the surrounding orchestration code never reaching its own
      * validate/commit/transition step afterward (e.g. the host process was killed between
-     * AgentRunRecorder::complete() and RunCoderTask's subsequent validation) — a task in that
+     * AgentRunRecorder::complete() and RunCoderTask's subsequent validation). A task in that
      * state is invisible to both recoverOrphanedRuns() (its AgentRun is not Running) and
      * WorkflowRecoveryScanner::detectStuckTasks() (Coding/Reviewing are not tracked terminal-stuck
      * statuses), so without this it would block the role's single-task-in-flight claim (and, for
@@ -271,6 +278,9 @@ class StaleWorkerRecovery
         return $recovered;
     }
 
+    /**
+     * Recover one claimed task whose recorded execution ended without finalizing workflow state.
+     */
     private function recoverAbandonedFinalization(Task $task, AgentRole $role): bool
     {
         return DB::transaction(function () use ($task, $role): bool {
@@ -351,6 +361,9 @@ class StaleWorkerRecovery
         }, attempts: 3);
     }
 
+    /**
+     * Recover durable state owned by an expired project worker lease.
+     */
     private function recoverWorker(
         Project $project,
         AgentRole $role,
@@ -367,6 +380,7 @@ class StaleWorkerRecovery
                 TaskStatus::Reviewing,
             ],
             AgentRole::KnowledgeArchitect,
+            AgentRole::Orchestrator,
             AgentRole::ProjectManager,
             AgentRole::RecoveryEngineer => [],
         };
@@ -438,6 +452,9 @@ class StaleWorkerRecovery
         ], $project);
     }
 
+    /**
+     * Recover stale roadmap processing attempts owned by the Project Manager lane.
+     */
     private function recoverStaleRoadmaps(
         Project $project,
         int $staleAfterSeconds,
@@ -579,6 +596,9 @@ class StaleWorkerRecovery
             + ($lease === null ? 0 : 1);
     }
 
+    /**
+     * Recover stale Ticket triage attempts owned by the Project Manager lane.
+     */
     private function recoverStaleTicketTriage(
         Project $project,
         int $staleAfterSeconds,
@@ -776,6 +796,9 @@ class StaleWorkerRecovery
         return $recovered;
     }
 
+    /**
+     * Interrupt running AgentRun records associated with an expired worker lease.
+     */
     private function interruptRuns(
         Project $project,
         AgentRole $role,
@@ -803,7 +826,11 @@ class StaleWorkerRecovery
             ]);
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Capture durable task, attempt, run, and repository evidence before recovery mutates state.
+     *
+     * @return array<string, mixed>
+     */
     private function recoveryEvidence(Task $task): array
     {
         $task->loadMissing('project');
@@ -871,7 +898,11 @@ class StaleWorkerRecovery
         return $evidence;
     }
 
-    /** @param array<string, mixed> $evidence */
+    /**
+     * Persist captured recovery evidence on the latest Task attempt.
+     *
+     * @param  array<string, mixed>  $evidence
+     */
     private function storeRecoveryEvidence(
         Task $task,
         array $evidence,
