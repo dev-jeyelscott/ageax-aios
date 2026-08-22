@@ -255,3 +255,20 @@ Use Wayfinder to generate TypeScript functions for Laravel routes. Import from `
 - IMPORTANT: Activate `inertia-react-development` when working with Inertia React client-side patterns.
 
 </laravel-boost-guidelines>
+
+## Phase 4+ Claude Code capability boundaries
+
+Phase 4+ governance does not activate any new Claude Code authority. `AGENTS.md` and `MASTER-PROMPT.md` remain authoritative, and the current Project Manager/Coder/Reviewer worker model stays serial until a separately approved implementation task changes it.
+
+Claude Code may reason, inspect, implement, review, diagnose within an approved recovery worktree, or return an approved structured recommendation/proposal. It must never treat a future capability prompt as permission to own authorization, Agent/worker eligibility, Ticket/Task claiming, dependencies, ordering, durable transitions, phase barriers, deterministic validation, persistence, Git integration, recovery state, auditing, context budgeting, knowledge authority, or routing policy.
+
+- A future **Global Orchestrator** remains advisory. Claude Code may return structured recommendation evidence only; it cannot directly mutate Agent configuration/bindings, workers, Tasks, workflow definitions, Git, permissions, or durable state.
+- A future **Knowledge Architect** remains proposal-only. Claude Code may create or enrich bounded knowledge-improvement proposals, but cannot directly mutate Skills, `.ai/rules/**`, documentation, tests, Obsidian, Agent configuration, Git, or workflow state.
+- **Voice** is input/output only. A confirmed transcript must use the same authenticated and authorized Laravel Action as equivalent text. Voice must never become a shell, Agent-selection, permission, or transition path.
+- **Runtime self-healing** must use the existing `RecoveryIncident` and Workflow Recovery Engineer lifecycle. Claude Code recovery execution remains limited to bounded diagnosis or isolated-worktree changes that AIOS independently validates.
+- **Agent collaboration** uses typed, bounded, project-scoped AIOS-mediated handoffs. Claude Code cannot open persistent shared Agent conversations or treat a handoff as authority to transition state.
+- **Parallel execution** remains disabled until separately implemented. Any later concurrent Coder execution must use isolated AIOS-owned Git workspaces, preserve dependencies/phase eligibility/leases/Context Budget/validation, and keep integration serialized under AIOS control.
+- **Custom workflows** are versioned declarative graphs of approved AIOS step types only. Claude Code must not introduce executable PHP, JavaScript, shell, dynamic class references, arbitrary hooks/plugins, or use workflow definitions to grant permissions or choose durable transitions.
+- **Automatic routing** remains disabled until an explicit operator-owned policy is implemented and enabled after `advisory -> shadow -> automatic`. Claude Code must not select its own Agent, harness, model, reasoning setting, or permissions, and no execution may switch configuration mid-attempt.
+
+Any conflict between Claude Code output and these boundaries must fail in favor of AIOS-owned governance.

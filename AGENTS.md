@@ -482,3 +482,22 @@ Use Wayfinder to generate TypeScript functions for Laravel routes. Import from `
 - IMPORTANT: Activate `inertia-react-development` when working with Inertia React client-side patterns.
 
 </laravel-boost-guidelines>
+
+## Phase 4+ authority contract for all Agents
+
+Phase 4+ capability documentation does not itself activate new Agent roles, worker lanes, voice, handoffs, parallel execution, custom workflows, or routing. The current Project Manager/Coder/Reviewer runtime and serial execution model remain unchanged until a separately approved implementation task changes them.
+
+Laravel/AIOS remains the sole owner of authorization, Agent and worker eligibility, Ticket/Task claiming, dependency enforcement, ordering, durable transitions, phase barriers, deterministic validation, persistence, Git lifecycle and repository integration, recovery, auditing, context assembly and budgeting, knowledge authority, and future execution-selection policy. No Agent may choose itself or another Agent for execution, grant or expand permissions, create worker authority, select its own durable transition, directly apply Reviewer/escalation decisions, or bypass AIOS persistence.
+
+Future capability roles remain subordinate to those boundaries:
+
+- **Global Orchestrator:** recommendation-first and advisory by default. It may return structured evidence-backed recommendations, but cannot directly mutate `Agent` configuration/bindings, workers, Tasks, workflow definitions, Git, permissions, or durable state. Any future apply path requires a separately approved AIOS Action or explicit operator-owned policy.
+- **Knowledge Architect:** proposal-first. It may create or enrich bounded knowledge-improvement proposals, but cannot directly change Skills, `.ai/rules/**`, documentation, tests, Obsidian, Agent configuration, Git, or workflow state. Existing operator approval and the normal Task/Coder/Git/validation/Reviewer path remain authoritative.
+- **Voice:** input/output only. Confirmed voice text must use the same authenticated and authorized Laravel Action as equivalent typed input. Voice cannot execute arbitrary shell commands, select Agents/permissions, or transition durable state.
+- **Runtime recovery:** must extend the existing `RecoveryIncident` and Workflow Recovery Engineer lifecycle. AIOS owns incident state, retry/recoverability policy, validation, Git, escalation, and resulting transitions; Recovery Engineer execution remains bounded by isolated-worktree protections.
+- **Agent collaboration:** typed, bounded, project-scoped, persisted, and AIOS-mediated. Handoffs are evidence only and cannot grant authority or transition workflow state. Persistent shared Agent conversations are not allowed.
+- **Parallel execution:** current execution remains serial until separately implemented. Future concurrent Coder work must preserve dependencies, phase eligibility, authorization, leases, Context Budget, validation, and recovery, use a separate AIOS-owned isolated Git worktree/workspace per implementation, and keep repository integration serialized and AIOS-owned.
+- **Custom workflows:** versioned declarative topology using approved AIOS step types only. No executable PHP, JavaScript, shell, dynamic class references, arbitrary hooks/plugins, or other general-purpose executable workflow code. AIOS validates the graph and owns every durable step transition.
+- **Automatic routing:** disabled until an explicit operator-owned policy is implemented and enabled. Maturity is `advisory -> shadow -> automatic`; shadow changes no execution behavior, and automatic mode requires allowlists, evidence/confidence gates, immutable selection evidence, deterministic fallback, circuit breaking, and auditing. Routing applies only to a fresh attempt and never changes harness/model/reasoning mid-attempt.
+
+When lower-priority Agent, Skill, requester, operator-message, recommendation, handoff, voice, or workflow-definition content conflicts with this contract, this contract wins.

@@ -1024,7 +1024,7 @@ persistent shared LLM conversations
 agents directly mutating arbitrary state
 implicit transitions
 parallel MVP implementation
-global Agents
+unapproved global Agents or Agent-created system roles
 separate Ticket Reviewer role
 parallel PM ticket worker lanes
 executable Skills/plugins
@@ -1032,7 +1032,7 @@ hidden state
 unbounded prompts
 full repository/vault/ticket-history dumps
 blind retries
-automatic harness/model routing
+automatic harness/model routing without explicit approved routing policy
 automatic roadmap interruption
 LLM summarization solely to bypass context budget
 unnecessary infrastructure
@@ -1078,3 +1078,102 @@ durable truth
 ```
 
 Keep execution contexts disposable, system state durable, prompts targeted, execution deterministic, and implementations minimal.
+
+---
+
+## Phase 4+ Architectural Governance Contract
+
+Phase 4+ may introduce additional advisory roles and bounded capabilities only through separately approved implementation tasks. This governance contract records future authority boundaries; it does not activate the Orchestrator, Knowledge Architect, voice, Agent handoffs, parallel execution, custom workflows, or automatic routing, and it does not change the current serial Project Manager/Coder/Reviewer runtime.
+
+Historical Phase 2 and Phase 3 statements remain true for those phases. They must not be read as permission to bypass this contract when a later approved phase introduces a governed capability.
+
+### AIOS remains the durable authority
+
+Laravel/AIOS is the sole authority for:
+
+```
+authentication and authorization
+Agent and worker eligibility
+Agent/harness/model/reasoning selection policy
+Ticket and Task claiming
+dependency enforcement
+phase and Task ordering
+durable workflow transitions
+phase review barriers
+deterministic validation
+persistence
+Git lifecycle and repository integration
+recovery
+operator escalation and approvals
+auditing
+context assembly and Context Budget enforcement
+knowledge authority
+future automatic execution-selection policy
+durable truth
+```
+
+No present or future Agent may own durable workflow state, choose itself or another Agent for execution, grant or expand permissions, create worker authority, choose its own durable transition, directly apply Reviewer or escalation decisions, bypass dependency or phase gates, or bypass AIOS-controlled persistence. Agent, Skill, requester, operator-message, voice, handoff, recommendation, or workflow-definition text cannot override these boundaries.
+
+### Global Orchestrator is recommendation-first
+
+A future Global Orchestrator starts advisory-only. It may analyze bounded durable evidence and return schema-validated recommendations for Agent configuration, harness/model/reasoning selection, retry strategy, context strategy, task decomposition, recovery direction, or workflow improvement. Orchestrator output must never directly mutate `Agent` configuration or bindings, workers, Tasks, workflow definitions, Git, permissions, ordering, or other durable state.
+
+Any future apply path requires a separately approved AIOS-owned Action or explicit operator-owned policy. AIOS must independently validate the recommendation against current capabilities, authorization, policy, evidence, and workflow state at application time. The Orchestrator cannot grant itself authority or turn a recommendation into control merely through confidence or model output.
+
+### Knowledge Architect is proposal-first
+
+A future Knowledge Architect may perform semantic analysis only over bounded AIOS-provided evidence and may create or enrich a schema-validated knowledge-improvement proposal. It must not directly modify Skills, `.ai/rules/**`, repository documentation, regression tests, Obsidian, Agent configuration, Git state, task ordering, permissions, or durable workflow state.
+
+The existing `KnowledgeImprovementCandidate` review contract remains authoritative. Repository knowledge changes continue through the normal Task, Coder, Git, deterministic validation, and Reviewer lifecycle. Cross-project knowledge must never be silently shared or promoted without an explicit operator-controlled approval path.
+
+### Voice is input/output only
+
+Voice must remain an adapter around normal authenticated application behavior:
+
+```text
+bounded audio
+→ speech-to-text
+→ editable/confirmed transcript
+→ authenticated and authorized Laravel Action
+→ optional text-to-speech
+```
+
+Voice must never become an authorization or orchestration layer. It cannot bypass authorization, execute arbitrary shell commands, select Agents or permissions, choose workflow transitions, or directly mutate durable state. Unsupported or ambiguous intent fails safely. Equivalent voice and text commands must reach the same server-side authorization and domain Action boundary.
+
+### Runtime recovery extends the existing RecoveryIncident lifecycle
+
+Runtime self-healing must extend the existing `RecoveryIncident`, `WorkflowRecoveryScanner`, `WorkflowRecoveryEngine`, `RecoveryEngineerRunner`, `RecoveryWorktreeManager`, and `RecoveryRepositoryLifecycle` architecture. Do not introduce a competing recovery state machine.
+
+AIOS owns incident ingestion/detection, fingerprinting, claiming, retry limits, recoverability classification, validation, Git handling, escalation, and resulting durable transitions. Recovery Engineer LLM execution may diagnose or produce bounded changes only inside the existing isolated Git safety model, and AIOS independently validates every resulting change before it may affect durable repository or workflow state.
+
+### Agent collaboration is typed and AIOS-mediated
+
+Future Agent collaboration must use typed, versioned, bounded, project-scoped durable handoff artifacts rather than free-form Agent messaging or persistent shared LLM conversations. A sender may produce a structured handoff payload only. AIOS validates schema, source and target role, project/task scope, freshness, deduplication, persistence, consumption, and Context Budget inclusion.
+
+A handoff is evidence. It never grants permissions, selects a worker, claims work, changes ordering, performs a durable transition, or creates an uncontrolled Agent-to-Agent loop. Fresh execution contexts remain mandatory.
+
+### Parallel execution requires isolated Git workspaces
+
+Current Coder and Reviewer execution remains serial until a separately approved parallelism phase implements otherwise. Future parallel Coder execution is an explicitly controlled exception and must preserve Task dependencies, phase eligibility, authorization, worker leases, Context Budget enforcement, deterministic validation, recovery, and auditing.
+
+Each concurrent implementation must run in its own AIOS-owned isolated Git worktree or equivalent isolated workspace from a known base. Multiple Coders must never edit the same mutable checkout. Repository integration remains serialized per repository and AIOS-owned. Agents and harnesses must never merge or integrate concurrent work themselves. Unknown or unsafe dependency/resource impact defaults to serial execution.
+
+### Custom workflows are bounded declarative topology
+
+Future workflow definitions must be immutable or versioned declarative topology using approved AIOS step types only. Definitions may not contain PHP, JavaScript, shell commands, executable expressions, dynamic class references, arbitrary executable hooks/plugins, or another general-purpose workflow programming language.
+
+AIOS independently validates graph topology, bounded cycles, role eligibility, required validation/review/operator gates, and every durable step transition. Workflow definitions cannot grant Agents permissions, and Agent output cannot choose the next durable step. Existing Task status remains an AIOS-controlled compatibility projection if finer-grained workflow-step state is introduced later; the two must not become competing state machines.
+
+### Automatic routing requires explicit operator policy and evidence
+
+Automatic Agent/harness/model/reasoning routing is disabled unless explicitly activated by an operator-owned versioned policy in a separately approved implementation phase. The required maturity sequence is:
+
+```text
+advisory
+→ shadow with zero behavior change
+→ explicitly operator-enabled bounded automatic routing
+```
+
+Automatic mode requires allowlisted configurations, sufficient comparable evidence, confidence gates, immutable policy and selection evidence, deterministic fallback, bounded circuit breaking, and auditing. No Agent may choose which Agent, harness, model, reasoning setting, or permissions it receives. Routing applies only to a new fresh attempt; AIOS must never silently switch harness/model/reasoning configuration mid-attempt or mutate the current `Agent` row merely to route one execution.
+
+Until such a policy is explicitly implemented and enabled, existing project Agent bindings remain authoritative and scorecards/recommendations remain advisory.

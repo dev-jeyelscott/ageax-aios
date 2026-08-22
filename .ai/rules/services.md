@@ -234,3 +234,35 @@ They are not an automatic routing system.
 Scorecard services must never automatically mutate Agent bindings/configuration, harness/model/reasoning settings, task ordering, phase placement, worker selection, or workflow state.
 
 Recommendations may inform an operator's later explicit configuration change through the existing validated configuration workflow only.
+
+## Phase 4+ capability services remain subordinate to AIOS authority
+
+Future services may assemble evidence, validate schemas, execute a selected harness, classify bounded outcomes, or prepare proposals. They must not become a competing workflow/state system. Laravel/AIOS remains authoritative for authorization, Agent and worker eligibility, claiming, dependencies, ordering, durable transitions, phase barriers, deterministic validation, persistence, Git integration, recovery, auditing, context assembly and budgeting, knowledge authority, and future execution-selection policy.
+
+### Orchestrator services
+
+A future Global Orchestrator is advisory first. Its context must be bounded and evidence-backed, and its result must be structured, schema-validated recommendation evidence. Orchestrator execution must not directly mutate `Agent` configuration, Agent bindings, workers, Tasks, workflow definitions, Git, or other durable state. A later apply path, if separately approved, must pass through an explicit authorized AIOS Action or operator-owned policy and independently revalidate the proposed configuration at application time.
+
+### Runtime recovery services
+
+Runtime self-healing must extend the existing `RecoveryIncident`, `WorkflowRecoveryScanner`, `WorkflowRecoveryEngine`, `RecoveryEngineerRunner`, `RecoveryWorktreeManager`, and `RecoveryRepositoryLifecycle` boundaries rather than creating another recovery state machine. AIOS owns incident detection/ingestion, fingerprinting, claiming, retry limits, recoverability policy, validation, Git lifecycle, escalation, and resulting transitions. Recovery Engineer LLM execution may diagnose or produce bounded changes only inside an AIOS-owned isolated worktree, and AIOS must independently validate every resulting change.
+
+### Collaboration services
+
+Agent collaboration must use typed, versioned, bounded, project-scoped durable handoff artifacts. A sender may produce a structured payload only. AIOS validates sender/target role, project/task scope, schema, freshness, deduplication, persistence, consumption, and Context Budget inclusion. Handoffs are evidence, not messages with authority. They cannot grant permissions, select a worker, transition a Task, bypass phase/dependency rules, or create an uncontrolled Agent-to-Agent conversation loop.
+
+### Voice services
+
+Voice is an input/output adapter only. Speech-to-text, transcript handling, intent classification, and optional text-to-speech must not own authentication, authorization, shell execution, Agent selection, workflow transitions, or durable domain state. A confirmed transcript enters the same authenticated, authorized Laravel Action used by equivalent text input. Unsupported or ambiguous intent fails safely. Audio/TTS availability must never be a workflow dependency.
+
+### Parallel execution services
+
+Current execution remains serial until a separately approved parallelism task changes it. Future concurrent Coder execution is allowed only after deterministic safety evaluation and must preserve dependency/phase eligibility, authorization, worker leases, Context Budget enforcement, validation, and recovery. Each concurrent implementation must receive its own AIOS-owned isolated Git worktree or equivalent isolated workspace. Multiple Coders must never edit the same mutable checkout. Repository integration remains serialized per repository and AIOS-owned; an Agent or harness must never merge or integrate concurrent branches/worktrees itself.
+
+### Custom workflow services
+
+Custom workflow definitions must be immutable or versioned declarative topology composed only of approved AIOS step kinds. Definitions may not contain PHP, JavaScript, shell commands, executable expressions, dynamic class references, arbitrary webhooks/hooks, package/plugin code, or another general-purpose workflow programming language. AIOS independently validates graph topology, bounded cycles, role eligibility, required validation/review/operator gates, and every durable step transition. Agent output cannot grant permissions or choose the next durable step.
+
+### Automatic routing services
+
+Automatic Agent/harness/model/reasoning routing remains disabled until an explicit operator-owned policy activates it after the maturity sequence `advisory -> shadow -> automatic`. Shadow mode must have zero execution-behavior change. Automatic mode requires allowlisted configurations, sufficient comparable evidence, confidence gates, immutable policy/selection evidence, deterministic fallback, bounded circuit breaking, and auditability. Selection applies only to a new fresh attempt; services must never silently switch configuration mid-attempt or mutate the current `Agent` row merely to route one execution. In the absence of an enabled valid policy or sufficient evidence, use the existing bound configuration or fail according to the explicit policy contract.

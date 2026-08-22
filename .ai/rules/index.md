@@ -2,6 +2,8 @@
 
 Before planning or editing, find every row whose glob matches a file in scope and read every applicable rule file. If multiple rows match, all matching rules apply.
 
+For any Phase 4+ capability work involving orchestration recommendations, knowledge intelligence, runtime recovery, Agent collaboration, voice, parallel execution, custom workflows, or automatic execution routing, also read the canonical governance contracts in `MASTER-PROMPT.md`, `AGENTS.md`, and the selected harness supplement such as `CLAUDE.md`, plus every path-specific rule matched below. Phase 4+ governance does not grant runtime authority by itself. Only separately approved implementation tasks may introduce capability code, and their Actions/Services remain subordinate to the AIOS-owned authority boundaries defined by those contracts.
+
 | Applies to | Rule file |
 | --- | --- |
 | app/Actions/** | .ai/rules/actions.md |

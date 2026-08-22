@@ -33,3 +33,11 @@ Approval of a `.ai/rules/**`, regression-test, or documentation proposal does no
 
 ## Detection and decisions are project-scoped, idempotent, and auditable
 The same project/fingerprint pair must resolve to one candidate. Scans may safely repeat without duplicate candidates or duplicate evidence. Candidate creation, evidence growth, reopen, decision, and approved Skill application must be auditable and must preserve project isolation.
+
+## Phase 4+ Knowledge Architect remains proposal-only
+
+`KnowledgeArchitect` may be activated only by a separately approved implementation task. When activated, it is an advisory semantic-analysis role over bounded AIOS-provided evidence. It may create or enrich a schema-validated knowledge-improvement proposal, but it must never directly mutate Skills, Agent bindings or configuration, `.ai/rules/**`, repository documentation, regression tests, Obsidian knowledge, Git state, Task ordering, worker state, permissions, or durable workflow transitions.
+
+Deterministic detection remains preferred where an objective rule can identify a gap, stale source, conflict, or recurring failure. Knowledge Architect output is evidence or proposal only. AIOS validates and persists any resulting candidate, and the existing operator-review contract remains mandatory.
+
+Approved repository knowledge changes still enter the normal Task, Coder, Git, deterministic validation, and Reviewer lifecycle. Approval of a Knowledge Architect proposal must not become a second repository mutation path. Cross-project knowledge must never be silently promoted or injected into another project; any future reusable global pattern requires explicit operator-controlled promotion, bounded/redacted evidence, and immutable provenance.
