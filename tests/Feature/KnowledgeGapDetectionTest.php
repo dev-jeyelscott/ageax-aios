@@ -97,6 +97,7 @@ function knowledgeGapReviewFinding(Project $project, int $position): ReviewFindi
         'context_capsule' => [],
         'status' => TaskStatus::ChangesRequired,
     ]);
+
     $attempt = TaskAttempt::query()->create([
         'task_id' => $task->id,
         'number' => 1,
@@ -106,6 +107,7 @@ function knowledgeGapReviewFinding(Project $project, int $position): ReviewFindi
         'started_at' => now()->subMinute(),
         'finished_at' => now(),
     ]);
+
     $review = Review::query()->create([
         'task_id' => $task->id,
         'task_attempt_id' => $attempt->id,
@@ -123,18 +125,17 @@ function knowledgeGapReviewFinding(Project $project, int $position): ReviewFindi
         'expected_implementation' => 'Reuse the existing architecture and service boundary.',
         'why_incorrect' => 'The implementation introduces a parallel system.',
         'required_fix' => 'Use the existing repository-consistent service.',
-        'verification_requirement' => 'Run focused architecture regression coverage.',
+        'verification_requirement' => 'Verify the existing architecture service boundary remains in use.',
         'implementation_fix_context' => 'Preserve existing architecture consistency.',
     ]);
 }
 
+/**
+ * Configure an isolated external workspace so WorkspacePathResolver exercises the same production boundary as managed projects.
+ */
 beforeEach(function (): void {
-    $workspace = storage_path(
-        'framework/testing/knowledge-gap-workspace-'.Str::uuid(),
-    );
-    $vault = storage_path(
-        'framework/testing/knowledge-gap-vault-'.Str::uuid(),
-    );
+    $workspace = sys_get_temp_dir().'/ageax-aios-knowledge-gap-'.Str::uuid();
+    $vault = $workspace.'/vault';
 
     File::ensureDirectoryExists($workspace);
     File::ensureDirectoryExists($vault);
@@ -145,6 +146,17 @@ beforeEach(function (): void {
     config()->set('aios.knowledge_improvement_reopen_threshold', 3);
     config()->set('aios.knowledge_improvement_scan_limit', 500);
     config()->set('aios.knowledge_improvement_lookback_days', 180);
+});
+
+/**
+ * Remove the isolated workspace and vault after every test so repeated local runs do not leave temporary knowledge fixtures behind.
+ */
+afterEach(function (): void {
+    $workspace = config('aios.workspace_root');
+
+    if (is_string($workspace) && $workspace !== '') {
+        File::deleteDirectory($workspace);
+    }
 });
 
 test('broken project local wiki links create one immediate idempotent candidate while valid links are ignored', function (): void {
@@ -200,8 +212,10 @@ test('removed repository paths are detected only from allowlisted path shaped re
 
     File::ensureDirectoryExists($project->path.'/app/Services');
     File::put($project->path.'/app/Services/Existing.php', '<?php');
+
     File::ensureDirectoryExists($directory.'/Specifications');
     File::put($directory.'/STATE.md', '# State');
+
     File::put(
         $directory.'/Specifications/Paths.md',
         <<<'MD'
@@ -231,6 +245,7 @@ test('implementation notes referencing removed repository paths are classified a
 
     File::ensureDirectoryExists($directory.'/Implementation');
     File::put($directory.'/STATE.md', '# State');
+
     File::put(
         $directory.'/Implementation/Legacy.md',
         'Legacy implementation lives at `app/Legacy/RemovedService.php`.',
@@ -277,14 +292,17 @@ test('only explicitly approved decisions with explicit supersedes metadata creat
 
     File::ensureDirectoryExists($directory.'/Decisions');
     File::put($directory.'/STATE.md', '# State');
+
     File::put(
         $directory.'/Decisions/Old Decision.md',
         "# Old Decision\n\nStatus: approved\n",
     );
+
     File::put(
         $directory.'/Decisions/New Decision.md',
         "# New Decision\n\nStatus: approved\nSupersedes: [[Decisions/Old Decision]]\n",
     );
+
     File::put(
         $directory.'/Decisions/Unapproved Decision.md',
         "# Unapproved\n\nStatus: proposed\nSupersedes: [[Decisions/Old Decision]]\n",
@@ -324,6 +342,7 @@ test('recurring failures keep the occurrence threshold and only enabled applicab
         ->and($unguided->occurrence_count)->toBe(3);
 
     $guidedProject = knowledgeGapProject('Guided Failure Family');
+
     $skill = Skill::factory()->for($guidedProject)->create([
         'name' => 'Minimal Production Ready Implementation',
         'slug' => 'coder-minimal-production-ready-implementation',
@@ -357,10 +376,12 @@ test('unavailable knowledge sources fail safely instead of fabricating stale fin
 test('knowledge gap scans remain project isolated', function (): void {
     $firstProject = knowledgeGapProject('First Isolated Knowledge Project');
     $secondProject = knowledgeGapProject('Second Isolated Knowledge Project');
+
     $firstDirectory = knowledgeGapProjectDirectory($firstProject);
     $secondDirectory = knowledgeGapProjectDirectory($secondProject);
 
     File::put($firstDirectory.'/STATE.md', '[[Specifications/Missing]]');
+
     File::ensureDirectoryExists($secondDirectory.'/Specifications');
     File::put($secondDirectory.'/STATE.md', '[[Specifications/Present]]');
     File::put($secondDirectory.'/Specifications/Present.md', '# Present');
@@ -374,12 +395,14 @@ test('knowledge gap scans remain project isolated', function (): void {
 test('detection never mutates knowledge documents or skill configuration', function (): void {
     $project = knowledgeGapProject('No Automatic Knowledge Mutation');
     $directory = knowledgeGapProjectDirectory($project);
+
     $skill = Skill::factory()->for($project)->create([
         'name' => 'Existing Guidance',
         'slug' => 'existing-guidance',
         'instructions' => 'Preserve this exact approved guidance.',
         'enabled' => true,
     ]);
+
     $content = "# State\n\n[[Specifications/Missing]]\n";
 
     File::put($directory.'/STATE.md', $content);
