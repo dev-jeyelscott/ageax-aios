@@ -43,6 +43,54 @@ Codex and Claude Code are supported execution harnesses. Harness runners, adapte
 
 Provider-specific behavior must remain behind the harness boundary. Services must not introduce a fixed Codex assumption where the effective project Agent configuration selects Claude Code, and they must not silently substitute one harness/model for another when persisted configuration is unsupported or invalid.
 
+## Phase 4+ service boundaries preserve recommendation versus control
+
+Laravel and AIOS remain the sole authority for durable workflow state, authorization, claiming, ordering, dependencies, transitions, `AgentWorker` leases, Git lifecycle, deterministic validation, persistence, recovery, auditing, context assembly, Context Budget decisions, and operator-controlled policy. `TaskWorkflow` remains the canonical durable Task claim/transition authority, and `RunAiosWorkers` remains the current centrally controlled execution loop. Future Services may extend these mechanisms only through explicit AIOS-owned contracts and must not create competing state machines, schedulers, worker lanes, recovery systems, Git controllers, context authorities, or policy owners.
+
+### Recommendation services do not become control services
+
+A future Orchestrator may observe bounded durable evidence and produce schema-validated structured recommendations that AIOS may persist as immutable evidence. Recommendation generation must remain separate from execution control. Orchestrator output must never directly mutate Agent configuration or bindings, harness/model/reasoning settings, Tasks, `AgentWorker` state, Git state, workflow definitions, routing policy, or durable transitions. Any later control capability requires a separately approved bounded policy and AIOS-owned validation path.
+
+Scorecards, Orchestrator recommendations, and other evidence remain advisory until an explicitly approved routing phase activates otherwise. Evidence alone must never be treated as authorization to mutate persisted configuration or route an attempt.
+
+### Harness services never absorb orchestration authority
+
+Harness adapters may execute one already-authorized attempt using the AIOS-approved immutable configuration snapshot and context. They may not select themselves, select another Agent, change concurrency, create worker lanes, activate workflow definitions, choose the next durable workflow step, bypass an approval gate, or mutate routing policy. A provider result is structured evidence, not a durable state transition.
+
+### Runtime recovery extends the existing recovery lifecycle
+
+Runtime self-healing must extend the existing `RecoveryIncident`, Workflow Recovery Engineer, `WorkflowRecoveryEngine`, isolated `RecoveryWorktreeManager`, deterministic validation, `RecoveryRepositoryLifecycle`, retry/no-progress, and escalation mechanisms. Do not create a second runtime-recovery subsystem.
+
+Agents may diagnose a `RecoveryIncident` and propose repairs. AIOS owns incident state, recoverability classification, attempt limits, no-progress detection, whether a proposed fix may be applied, deterministic validation, Git integration, resolution, and escalation. Recovery work must continue to use isolated AIOS-owned worktrees and must never grant a harness direct mutation authority over the live AIOS checkout.
+
+### Agent collaboration is typed and AIOS-mediated
+
+Future Agent collaboration must use typed, bounded, project-scoped, schema-validated durable handoff artifacts. Services must not implement persistent shared LLM conversations, direct Agent-to-Agent context mutation, or uncontrolled messaging loops.
+
+A handoff may contribute immutable evidence to a fresh execution context, subject to Context Budget policy. It must not transition Tasks, schedule Agents, grant permissions, create worker lanes, bypass phase barriers, or become an alternate workflow state machine. AIOS validates creation, scope, consumption, freshness, and authorization.
+
+### Voice remains an input/output adapter
+
+Speech-to-text, transcript, intent, and text-to-speech services are adapters only. Confirmed transcripts and voice-derived intents must enter the same authenticated, authorized, validated application Actions used by typed input. Voice services must not directly execute shell commands, transition workflow state, modify permissions, bypass confirmation, persist hidden authority, or create a separate authorization path. TTS failure must never affect durable workflow state.
+
+### Parallel execution requires isolated AIOS-owned workspaces
+
+Future concurrent Coder execution is forbidden until AIOS has deterministically evaluated dependencies, phase eligibility, task eligibility, shared-resource safety, and repository risk. Unknown safety must resolve to serial execution.
+
+Each concurrent Coder must receive a separate AIOS-owned Git workspace or worktree rooted at an exact approved base. No two Coders may modify the same checkout concurrently. Dependency ordering, phase barriers, validation, task eligibility, and AIOS-owned serialized Git integration remain authoritative even when implementation work is concurrent. Parallelism must evolve the existing worker and Git lifecycle, not replace them.
+
+### Workflow definitions are declarative data, never executable extensions
+
+Future custom workflow definitions must be immutable/versioned definitions composed only of explicitly approved declarative step types. They must not contain arbitrary PHP, shell commands, executable code, dynamic class references, unrestricted plugins, or another executable DSL.
+
+AIOS alone validates workflow graphs, activation safety, bounded cycles, permissions, and durable next-step selection. An Agent may return the structured result for its current approved step, but its output cannot choose, activate, or directly persist the next workflow step.
+
+### Automatic routing is disabled until explicit operator policy activates it
+
+Automatic Agent, harness, model, or reasoning routing remains disabled by default. Maturity must proceed through `advisory`, then `shadow`, then explicit operator opt-in, then bounded `automatic` operation under a versioned routing policy with sufficient comparable evidence, allowlisted configurations, deterministic fallback, audit evidence, and circuit breakers.
+
+No Agent may self-route, select itself, create or bind Agents, or mutate its persisted configuration because a scorecard or Orchestrator recommendation prefers another configuration. A future execution-selection service may choose only within an operator-approved policy for a fresh attempt and must preserve the immutable `AgentRun` configuration snapshot and known deterministic fallback.
+
 ## Agent context and run configuration are attempt-scoped
 
 Project Agent configuration must remain distinct from `AgentWorker` runtime and lease state. AIOS-managed Agent Skills are project-scoped declarative context only: instructions, constraints, and guidance may influence reasoning, but Skills must never execute shell commands, install packages, register hooks, mutate workflow state, or otherwise become executable plugins.

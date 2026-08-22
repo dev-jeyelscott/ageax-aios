@@ -8,8 +8,8 @@
 - Durable truth: PostgreSQL, Git, repository docs, scoped Obsidian notes, and audit logs.
 - Project Agents are project-scoped execution configuration; `AgentWorker` is durable orchestration, lease, heartbeat, and runtime state.
 - Supported execution harnesses are **Codex** and **Claude Code**.
-- No global Agents or parallel task execution are introduced in Phase 2.
-- Phase 3 adds Ticket intake/PM triage, AIOS-owned deterministic Context Budget enforcement, and evidence-derived harness scorecards without adding a Ticket Reviewer role, parallel PM lane, or automatic harness/model routing.
+- Phase 2 did not introduce global Agents or parallel task execution. That is a historical Phase 2 scope statement, not permission for an Agent to create either capability and not an absolute ban on later AIOS-governed capabilities. The current repository supports the global Recovery Engineer as an AIOS system/reliability Agent. `AgentRole::KnowledgeArchitect` exists at enum level but is not currently an allowed persisted global Agent role.
+- Phase 3 added Ticket intake/PM triage, AIOS-owned deterministic Context Budget enforcement, and evidence-derived harness scorecards without adding a Ticket Reviewer role, parallel PM lane, parallel task execution, or automatic harness/model routing. Those remain Phase 3 historical boundaries; later capabilities require separate explicit governance and implementation approval.
 
 ## Rules of precedence
 
@@ -44,6 +44,20 @@ Priority: correctness → security → data integrity → deterministic workflow
 - Recovery of the same interrupted execution attempt must preserve its persisted snapshot/evidence; a new retry or future attempt captures a new snapshot from the then-current valid configuration.
 - Send only targeted context: Task/Ticket objective, criteria/triage contract, scope, constraints, dependencies, relevant paths/docs, prior evidence, findings/requester evidence, and verification commands.
 - Never send full conversations, repositories, roadmaps, logs, ticket histories, or vaults unless required.
+
+## Phase 4+ capability governance
+
+- Laravel and AIOS are the sole authority for durable workflow state, authentication/authorization, claiming, ordering, dependencies, transitions, `AgentWorker` leases, Git lifecycle, deterministic validation, persistence, recovery, auditing, context assembly, Context Budget decisions, and operator-controlled policy. `TaskWorkflow` remains the canonical durable Task claim/transition authority. `RunAiosWorkers` remains the current centrally controlled execution loop.
+- No current or future Agent may select itself, create or bind Agents, change its own permissions or persisted configuration, create worker lanes, change concurrency, activate workflow definitions, alter routing policy, bypass approval gates, or directly decide durable state transitions.
+- A future Orchestrator must recommend before it controls. It may observe durable evidence and return schema-validated structured recommendations, but those recommendations cannot directly mutate Agent configuration/bindings, harness/model/reasoning settings, Tasks, `AgentWorker` state, Git state, workflow definitions, routing policy, or durable transitions.
+- `AgentRole::KnowledgeArchitect` is not activated by the existence of its enum value. A future Knowledge Architect may detect, analyze, enrich, or propose knowledge improvements only. It cannot directly mutate Skills, repository docs, Obsidian sources, `.ai/rules/**`, tests, Agent configuration, Git state, or workflow state. Authoritative repository knowledge changes require operator approval and the normal Task, Coder, Git, validation, and Reviewer lifecycle.
+- Voice is input/output only. A confirmed transcript or voice-derived intent must pass through the same authenticated, authorized, validated application Actions as typed input. Voice cannot directly execute shell commands, transition workflow state, modify permissions, bypass confirmation, or create another authorization path.
+- Runtime self-healing must extend the existing `RecoveryIncident`, Workflow Recovery Engineer, isolated recovery worktree, deterministic validation, Git lifecycle, retry/no-progress, and escalation mechanisms. Agents may diagnose or propose repairs, but AIOS owns incident state, recoverability decisions, attempt limits, application of fixes, validation, Git integration, resolution, and escalation.
+- Agent collaboration must use typed, bounded, project-scoped, AIOS-validated durable handoff artifacts. Do not create persistent shared LLM conversations, direct Agent-to-Agent context mutation, or uncontrolled messaging loops. Handoffs may provide evidence to a fresh context, but cannot transition Tasks, schedule Agents, grant permissions, or create worker lanes.
+- Current Coder execution remains serial. Future parallel execution is allowed only after deterministic dependency and safety evaluation, with each concurrent Coder in an isolated AIOS-owned Git workspace/worktree. No two Coders may modify the same checkout concurrently. Dependency ordering, phase barriers, task eligibility, deterministic validation, and AIOS-owned serialized Git integration remain authoritative. Unknown safety falls back to serial execution.
+- Future custom workflows must be immutable/versioned declarative definitions composed only of explicitly approved step types. They cannot contain arbitrary PHP, shell commands, executable code, dynamic class references, unrestricted plugins, or another executable DSL. AIOS validates the graph and selects the durable next step. Agent output cannot choose the next durable workflow transition.
+- Automatic Agent/harness/model/reasoning routing is disabled by default. It may progress only through `advisory` → `shadow` → explicit operator opt-in → bounded `automatic` operation under a versioned policy with sufficient comparable evidence, allowlisted configurations, deterministic fallback, audit evidence, and circuit breakers. No Agent may self-route or mutate its persisted configuration because a scorecard or Orchestrator recommendation prefers another configuration.
+- Preserve fresh execution contexts, immutable `AgentRun` configuration snapshots, AIOS-owned Context Budget authority, deterministic `Ticket != Task` governance, Reviewer phase barriers, Git protections, and scorecards as advisory evidence until a later explicitly approved routing phase states otherwise.
 
 ## Role contracts
 
@@ -192,7 +206,7 @@ queued → coding → validating → ready_for_review → reviewing → done
 
 - Exceptional states: `blocked`, `interrupted`, `failed`, `cancelled`.
 - AIOS alone validates transitions, with database transactions and row locks.
-- Execution remains strictly serial. Serial means one active Coder task at a time and one active Reviewer task at a time according to AIOS-owned ordering; it does not require every same-phase implementation to be reviewed before the next eligible same-phase Coder task may start.
+- Current execution remains strictly serial. Serial means one active Coder task at a time and one active Reviewer task at a time according to AIOS-owned ordering; it does not require every same-phase implementation to be reviewed before the next eligible same-phase Coder task may start. A later explicitly approved parallel-execution phase must preserve dependency/safety evaluation, isolated AIOS-owned workspaces, phase barriers, validation, and serialized AIOS-owned Git integration, with unknown safety falling back to this serial behavior.
 - Within the current phase, a Coder task reaching `ready_for_review` may allow the next eligible same-phase Coder task to be claimed when persisted dependency rules permit.
 - Explicit task dependencies remain authoritative and must never be bypassed merely to fill a phase review batch.
 - Before the first review in a phase, every required task in that phase must be `ready_for_review`.
@@ -282,9 +296,9 @@ clean/recoverable preflight
 ## Guardrails
 
 - Prefer framework-native code, explicit state machines, transactions, locking, schema-validated structured output, immutable attempts, append-only audit logs, idempotency, focused services, and versioned deterministic policies.
-- Do not add persistent shared LLM chats, global Agent templates, executable Skills/plugins, a Ticket Reviewer role, parallel PM lanes, agent self-scheduling, parallel task execution, hidden state, broad prompts, full vault/repo/ticket-history dumps, blind retries, automatic harness/model routing, automatic roadmap interruption, LLM summarization solely to bypass Context Budget limits, or new infrastructure without a demonstrated need.
-- Agents and harnesses may reason, inspect, implement, review, and return structured triage proposals.
-- **AIOS controls state, permissions, Ticket claiming/state/escalation/conversion, phase placement, task ordering, roadmap interruption, phase review barriers, worker task cooldowns, validation, Git lifecycle, persistence, recovery, auditing, context assembly/budgeting/reduction, knowledge storage, worker leases, run configuration snapshots, scorecard calculation, and recommendation eligibility.**
+- Do not introduce persistent shared LLM chats, executable Skills/plugins, a Ticket Reviewer role, parallel PM lanes, agent self-scheduling, hidden state, broad prompts, full vault/repo/ticket-history dumps, blind retries, automatic roadmap interruption, LLM summarization solely to bypass Context Budget limits, or new infrastructure without a demonstrated need. Global Agents, parallel Coder execution, custom workflows, and automatic routing may exist only when a separately approved later-phase contract explicitly enables them under the Phase 4+ boundaries above; they must never be created or activated by an Agent or harness itself.
+- Agents and harnesses may reason, inspect, implement, review, diagnose, and return bounded structured proposals/recommendations within their approved role or future capability contract.
+- **AIOS controls durable state, authorization, Ticket/Task claiming and transitions, dependencies and ordering, phase placement, roadmap interruption, phase review barriers, `AgentWorker` leases/cooldowns, Agent binding/configuration policy, Git lifecycle/integration, deterministic validation, persistence, `RecoveryIncident` state/recovery, auditing, context assembly/budgeting/reduction, knowledge mutation, worker scheduling, run configuration snapshots, scorecard calculation, routing-policy activation, workflow-definition activation/next-step selection, and every operator-controlled policy decision.**
 
 <laravel-boost-guidelines>
 === foundation rules ===

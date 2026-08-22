@@ -39,6 +39,18 @@ Project Manager, Coder, and Reviewer remain the executable core workflow roles. 
 
 Every new roadmap-analysis, Project Manager `ticket_triage`, implementation, fix/retry, or review attempt must start a fresh harness execution context and capture a new immutable effective configuration snapshot before execution. Recovery of the same interrupted attempt must continue from its persisted snapshot, Git state, run evidence, and audit evidence rather than resolving mutable current Agent, Skill, or harness configuration into that existing attempt.
 
+## Phase 4+ proposals still cross the controlled mutation boundary
+
+Application Actions remain the controlled mutation boundary for authenticated, authorized, validated operator or system requests. Agent-produced proposals, recommendations, transcripts, handoffs, diagnoses, scorecards, or workflow suggestions are evidence only until an AIOS-owned Action or authoritative Service independently validates the request and applies an allowed durable mutation.
+
+`TaskWorkflow` remains the canonical durable Task claim and transition authority. `RunAiosWorkers` remains the existing centrally controlled execution loop for Project Manager, Coder, and Reviewer work. Future capabilities must extend those boundaries through explicitly approved AIOS-owned Actions and Services instead of duplicating them or creating an Agent-owned state machine, scheduler, worker lane, or transition path.
+
+No current or future Agent, including Project Manager, Coder, Reviewer, Recovery Engineer, Orchestrator, or Knowledge Architect, may directly grant permissions, create or bind Agents, select itself, change its own persisted configuration, create worker lanes, alter concurrency, activate workflow definitions, change routing policy, bypass operator approval gates, or decide a durable workflow transition. Structured Agent output may request or recommend an operation, but it cannot make the operation authoritative.
+
+Voice-derived intents must enter the same authenticated, authorized, validated application Actions used by typed input. A confirmed transcript does not create a voice-specific mutation path and cannot directly execute shell commands, transition workflow state, change permissions, or bypass confirmation.
+
+Custom workflow execution must also preserve the Action/Service mutation boundary. Agent output can report a structured result for the current approved step, but AIOS alone validates the graph and selects the next durable workflow transition.
+
 ## Ticket triage and conversion remain AIOS-owned Actions
 
 `Ticket != Task`. A Ticket is durable project intake, conversation, triage, and escalation state. A Task is executable implementation work and enters the existing Coder, validation, Git, phase-review, and Reviewer workflow only after an AIOS-controlled conversion.

@@ -16,6 +16,18 @@ paths:
 ## Candidates are proposals, not self-modifying memory
 Knowledge-improvement candidates are durable operator-review records derived from existing structured AIOS evidence. They are not workflow state, persistent LLM memory, Agent configuration, or executable Skills. Detection must not mutate Skills, Agent bindings, `.ai/rules/**`, tests, documentation, task ordering, Git state, or workflow transitions.
 
+## Future Knowledge Architect remains proposal-only
+`AgentRole::KnowledgeArchitect` exists as an enum value, but it is not currently an allowed persisted global Agent role in `Agent::GlobalRoles`. The currently supported persisted global Agent role is `RecoveryEngineer`. P4-001 does not activate, provision, bind, schedule, or create a worker lane for Knowledge Architect.
+
+A future Knowledge Architect may detect, analyze, correlate, enrich, or propose knowledge improvements from bounded AIOS evidence. It must not directly create, enable, disable, assign, unassign, reorder, or rewrite Skills; edit repository documentation, Obsidian sources, `.ai/rules/**`, or tests; mutate Agent configuration or bindings; change Git state; or transition workflow state. Its output is advisory structured evidence only.
+
+Any authoritative repository knowledge mutation proposed by a Knowledge Architect must remain operator-approved and must follow the existing normal Task, Coder, Git, deterministic validation, and Reviewer lifecycle. Knowledge analysis must never become a second repository mutation path.
+
+## Cross-project knowledge intelligence never implies cross-project mutation
+Current candidate detection and decisions remain project-scoped. Future cross-project knowledge intelligence may compare bounded, privacy-safe evidence and propose reusable guidance, stale/conflicting knowledge findings, or promotion candidates, but it must not silently inject one project's knowledge into another project or mutate any project's authoritative sources.
+
+Cross-project promotion or reuse requires an explicit operator-approved policy and durable evidence identifying the source, scope, version, and intended applicability. Until that later policy exists, cross-project findings remain proposals only and cannot alter Skills, Agent context, repository docs, Obsidian notes, workflow definitions, routing policy, or Agent configuration.
+
 ## Fingerprints must be deterministic and safe
 Build recurring-failure fingerprints only from bounded project-scoped evidence such as structured review fields, deterministic validation check identifiers, known audit event types, recovery root-cause categories, and normalized subsystem/path identifiers. Do not persist chain-of-thought or use arbitrary model prose as the durable fingerprint payload. When prose is needed for classification, reduce it to a deterministic bounded family or hash and keep raw text out of the candidate.
 

@@ -33,9 +33,9 @@ Core principle:
 
 Persistent truth belongs in PostgreSQL, Git, repository documentation, Obsidian, and audit logs. Never depend on Codex or Claude Code conversation history for project or workflow state.
 
-No global Agents or parallel task execution are introduced in Phase 2.
+Phase 2 did not introduce global Agents or parallel task execution. That is a historical Phase 2 scope statement, not an absolute prohibition on later AIOS-governed capabilities. The current repository supports the Workflow Recovery Engineer as a persisted global Agent role. `AgentRole::KnowledgeArchitect` exists at enum level but is not currently allowed in `Agent::GlobalRoles` and is not activated by P4-001.
 
-Phase 3 adds project Ticket intake and Project Manager ticket triage, deterministic Context Budget enforcement, and evidence-derived harness scorecards without adding another project workflow role, another PM worker lane, parallel task execution, or automatic harness/model routing.
+Phase 3 added project Ticket intake and Project Manager ticket triage, deterministic Context Budget enforcement, and evidence-derived harness scorecards without adding another project workflow role, another PM worker lane, parallel task execution, or automatic harness/model routing. Those remain historical Phase 3 boundaries. Later capabilities require separately approved governance and implementation and do not gain authority merely by existing in a roadmap or Agent output.
 
 ---
 
@@ -135,6 +135,247 @@ Do not send entire conversations, repositories, roadmaps, logs, ticket histories
 
 ---
 
+## Phase 4+ Architectural Governance Contract
+
+The Phase 4+ contract expands what AIOS may eventually coordinate without transferring durable authority to an Agent, harness, voice adapter, recommendation layer, workflow definition, or collaboration mechanism.
+
+### Durable authority remains AIOS-owned
+
+No current or future Agent owns durable workflow state.
+
+Laravel and AIOS remain the sole authority for:
+
+```
+authentication and authorization
+durable workflow state
+Ticket and Task claiming
+Task dependencies and ordering
+phase placement and phase barriers
+durable transitions
+AgentWorker leases, heartbeats, cooldowns, and worker scheduling
+Agent creation, binding, configuration, and permission policy
+Git lifecycle and integration
+deterministic validation
+persistence
+RecoveryIncident state and recovery decisions
+auditing
+context assembly
+Context Budget policy and reduction
+workflow-definition activation and durable next-step selection
+routing-policy activation
+operator-controlled policy
+```
+
+`TaskWorkflow` remains the canonical durable Task transition and claim authority. `RunAiosWorkers` remains the existing centrally controlled Project Manager, Coder, and Reviewer execution loop. Future capabilities must extend these AIOS-owned boundaries instead of creating a competing state machine, scheduler, worker system, recovery subsystem, Git controller, or authorization path.
+
+Project Agent configuration remains distinct from AIOS-owned `AgentWorker` orchestration state. Every new execution uses a fresh execution context and an immutable `AgentRun` configuration snapshot. Recovery of the same interrupted attempt preserves its existing snapshot; a later retry is a new attempt with a fresh context and a new validated snapshot.
+
+No Agent, including Project Manager, Coder, Reviewer, Workflow Recovery Engineer, future Orchestrator, or future Knowledge Architect, may select itself, create or bind Agents, change its own permissions or persisted configuration, create worker lanes, change concurrency, activate workflow definitions, alter routing policy, bypass operator approval gates, or directly decide durable state transitions.
+
+### Orchestrator recommends before it controls
+
+A future Orchestrator may observe bounded durable evidence and produce schema-validated structured recommendations. Recommendations may be persisted as immutable evidence independently of mutable Agent configuration.
+
+Orchestrator output must never directly mutate:
+
+```
+Agent configuration or bindings
+harness selection
+model selection
+reasoning settings
+Tasks
+AgentWorker state
+Git state
+workflow definitions
+routing policy
+durable transitions
+```
+
+A recommendation is evidence, not authorization. Any future transition from recommendation to bounded control requires a separately approved AIOS-owned policy and deterministic validation path.
+
+### Knowledge Architect proposes before authoritative mutation
+
+`AgentRole::KnowledgeArchitect` existing at enum level does not activate it as a persisted global Agent. `Agent::GlobalRoles` currently permits `RecoveryEngineer`; Knowledge Architect remains unprovisioned and unscheduled by this task.
+
+A future Knowledge Architect may detect, analyze, correlate, enrich, or propose knowledge improvements from bounded evidence. It must not directly mutate:
+
+```
+Skills
+repository documentation
+Obsidian sources
+.ai/rules/**
+tests
+Agent configuration or bindings
+Git state
+workflow state
+```
+
+Authoritative repository knowledge mutation remains operator-approved and follows the existing normal lifecycle:
+
+```
+proposal
+→ operator approval
+→ Task
+→ Coder
+→ AIOS-owned Git lifecycle
+→ deterministic validation
+→ Reviewer
+→ durable approved result
+```
+
+Cross-project knowledge intelligence may produce bounded proposals, but it must never silently inject one project's knowledge into another project or create a second mutation path.
+
+### Voice is input/output only
+
+Voice does not create new authority.
+
+The required path is:
+
+```
+voice input
+→ bounded transcription
+→ user-confirmed transcript / supported intent
+→ normal authenticated request
+→ normal authorization
+→ normal validation
+→ existing application Action
+→ durable AIOS result
+```
+
+Voice must never directly execute shell commands, transition workflow state, modify permissions, bypass confirmation, bypass authorization, bypass validation, or create a separate authentication/authorization path. Optional voice output must never be required for durable workflow correctness.
+
+### Runtime self-healing extends the existing recovery lifecycle
+
+Do not create a second runtime-recovery subsystem.
+
+Runtime self-healing must extend the existing:
+
+```
+RecoveryIncident
+Workflow Recovery Engineer
+WorkflowRecoveryEngine
+RecoveryWorktreeManager
+RecoveryRepositoryLifecycle
+bounded retry
+no-progress detection
+deterministic validation
+Git lifecycle
+operator escalation
+```
+
+Agents may diagnose an incident and propose a repair. AIOS owns incident state, recoverability decisions, attempt limits, no-progress/circuit-breaking decisions, whether a proposed fix may be applied, deterministic validation, Git integration, resolution, and escalation.
+
+Recovery work remains isolated. A Recovery Engineer or other harness must never receive authority to mutate the live AIOS checkout directly.
+
+### Agent collaboration uses typed durable handoffs
+
+Future Agent collaboration must use typed, bounded, project-scoped, AIOS-validated durable handoff artifacts rather than persistent shared LLM conversations or direct Agent-to-Agent context mutation.
+
+A handoff may provide immutable evidence to a later fresh execution context, subject to Context Budget policy. A handoff must not:
+
+```
+transition a Task
+schedule an Agent
+create a worker lane
+grant permissions
+change Agent configuration
+bypass a phase barrier
+select a durable next workflow step
+create an uncontrolled Agent messaging loop
+```
+
+AIOS validates handoff scope, schema, authorization, freshness, persistence, and consumption.
+
+### Parallel execution requires deterministic safety and isolated Git workspaces
+
+Current implementation remains serial. Future concurrent Coder execution may occur only after deterministic dependency and safety evaluation.
+
+Before concurrency, AIOS must prove eligibility from durable evidence such as dependencies, phase state, task status, relevant paths/resources, repository risk, and active execution/integration state. The safety result must fail closed:
+
+```
+safe    → eligible for bounded concurrency
+unsafe  → serial
+unknown → serial
+```
+
+Every concurrent Coder must use a separate AIOS-owned Git workspace/worktree rooted at an approved base SHA. No two Coders may modify the same checkout concurrently.
+
+Parallel implementation must never bypass:
+
+```
+Task dependencies
+phase barriers
+task eligibility
+safety evaluation
+deterministic validation
+Reviewer requirements
+AIOS-owned serialized Git integration
+```
+
+Implementation concurrency does not grant Agents merge authority. Git integration remains AIOS-owned and serialized.
+
+### Custom workflows are immutable declarative definitions
+
+Future custom workflow definitions must be immutable/versioned data composed only of explicitly approved declarative step types.
+
+They must never contain:
+
+```
+arbitrary PHP
+shell commands
+executable code
+dynamic class references
+unrestricted plugins
+another executable DSL
+```
+
+AIOS alone validates the workflow graph, bounded cycles, permissions, activation safety, and durable next transition. Agent output may report the structured result of its current approved step but can never choose or persist the next durable workflow step.
+
+### Automatic routing is disabled until explicitly activated by policy
+
+Evidence-based automatic Agent, harness, model, or reasoning routing remains disabled by default.
+
+Required maturity sequence:
+
+```
+advisory
+→ shadow
+→ explicit operator opt-in
+→ bounded automatic operation
+```
+
+Bounded automatic operation requires a versioned operator-owned routing policy with sufficient comparable evidence, allowlisted configurations, deterministic fallback, durable audit evidence, and circuit breakers.
+
+No Agent may self-route, select itself, create or bind another Agent, or mutate its persisted configuration merely because a scorecard or Orchestrator recommendation prefers another configuration. Scorecards remain advisory evidence until a later explicitly approved routing phase activates otherwise.
+
+A future routing decision applies only to a new fresh attempt and must be captured in that attempt's immutable `AgentRun` configuration evidence. Running attempts must never silently change configuration.
+
+### Existing Phase 2 and Phase 3 contracts remain authoritative
+
+The Phase 4+ contract is additive. It does not weaken:
+
+```
+Ticket != Task
+deterministic Ticket conversion and escalation
+Context Budget authority
+fresh execution contexts
+immutable AgentRun snapshots
+project Agent vs AgentWorker separation
+current TaskWorkflow ownership
+current RunAiosWorkers central scheduling
+Reviewer phase barriers
+dependency ordering
+Git protections
+deterministic validation
+RecoveryIncident lifecycle
+scorecards as advisory evidence
+operator approval requirements
+```
+
+Earlier statements that Phase 2 or Phase 3 did not introduce global Agents, parallel execution, or automatic routing describe those phases accurately. They must not be read as invalidating the repository's current global Recovery Engineer or as pre-authorizing any later capability. Later capabilities remain disabled or proposal-only until their own approved phase explicitly implements them under this contract.
+
+---
+
 ## Agent Responsibilities
 
 ### Project Manager
@@ -181,7 +422,7 @@ changes_required
 
 Within the current phase, reaching `ready_for_review` completes the Coder's implementation work for that task. AIOS may then allow the Coder to claim the next eligible task in the same phase without waiting for the previous task to become `done`, provided persisted dependency rules allow that task to start.
 
-This phase batching does not permit parallel coding. Only one Coder task may be actively claimed or executed at a time.
+Current phase batching does not permit parallel coding. Only one Coder task may be actively claimed or executed at a time. A future parallel-execution phase may change that implementation concurrency only under the Phase 4+ safety, isolation, dependency, and serialized Git-integration contract above.
 
 The Coder must:
 
@@ -634,7 +875,7 @@ Agents must not arbitrarily change task state.
 
 ### Serial Phase Execution
 
-Execution remains strictly serial. Serial means AIOS permits only one active Coder task and one active Reviewer task according to the authoritative workflow rules; it does **not** require every Coder task to become `done` before the next same-phase implementation may begin.
+Current execution remains strictly serial. Serial means AIOS permits only one active Coder task and one active Reviewer task according to the authoritative workflow rules; it does **not** require every Coder task to become `done` before the next same-phase implementation may begin. A future explicitly approved parallel-execution phase may increase Coder implementation concurrency only under the Phase 4+ dependency/safety evaluation, isolated workspace, deterministic validation, phase-barrier, and serialized Git-integration contract. Unknown safety remains serial.
 
 The normal phase lifecycle is:
 
@@ -670,7 +911,7 @@ all required Phase N tasks done
 → Phase N+1 may begin
 ```
 
-Coder execution remains one task at a time:
+Current Coder execution remains one task at a time:
 
 ```
 TASK-N implementation active
@@ -729,7 +970,7 @@ Reviewer finishes review
 
 The cooldown is AIOS-owned scheduling state. Agents, harnesses, prompts, or frontend code must not bypass or implement their own competing timer.
 
-Enforce phase barriers, task ordering, cooldown eligibility, and serial execution through application/database concurrency controls rather than prompts alone.
+Enforce phase barriers, task ordering, cooldown eligibility, and current serial execution through application/database concurrency controls rather than prompts alone.
 
 Use transactions and row locking where appropriate.
 
@@ -1023,16 +1264,17 @@ Avoid:
 persistent shared LLM conversations
 agents directly mutating arbitrary state
 implicit transitions
-parallel MVP implementation
-global Agents
+parallel implementation without deterministic safety and isolated AIOS-owned workspaces
+ungoverned global Agents
 separate Ticket Reviewer role
 parallel PM ticket worker lanes
 executable Skills/plugins
+executable custom workflow definitions
 hidden state
 unbounded prompts
 full repository/vault/ticket-history dumps
 blind retries
-automatic harness/model routing
+automatic harness/model routing without explicit operator policy
 automatic roadmap interruption
 LLM summarization solely to bypass context budget
 unnecessary infrastructure
@@ -1040,40 +1282,47 @@ premature abstractions
 unrelated refactors
 ```
 
+Global Agents, parallel Coder execution, custom workflows, voice, collaboration, and automatic routing may be added only by their separately approved later phases and only under the Phase 4+ governance contract. The presence of a recommendation, enum value, scorecard, roadmap item, or Agent output is never sufficient to activate a capability.
+
 Do not add Redis, Horizon, Reverb, Docker, vector databases, multi-agent frameworks, microservices, external ticket platforms, tokenizer services, pricing services, or other infrastructure without an actual requirement.
 
 ---
 
 ## Final Rule
 
-AI agents and supported harnesses may reason, inspect, implement, review, and return structured triage recommendations.
+AI agents and supported harnesses may reason, inspect, implement, review, diagnose, and return bounded structured proposals or recommendations within their approved contracts.
+
+They do not own durable authority.
 
 **AIOS exclusively controls:**
 
 ```
-state
+authentication and authorization
+durable state and transitions
 permissions
-ticket claiming
-ticket transitions
-ticket escalation
+Agent creation, binding, configuration, and routing policy
+Ticket claiming
+Ticket transitions
+Ticket escalation
 Ticket-to-Task conversion
+Task claiming, dependencies, and ordering
 phase placement
-task ordering
 roadmap interruption/reordering
 phase review barriers
-worker task cooldowns
-Git lifecycle
+AgentWorker leases, heartbeats, cooldowns, and worker scheduling
+workflow-definition activation and durable next-step selection
+Git lifecycle and integration
 deterministic validation
 persistence
-recovery
+RecoveryIncident state, recoverability, application, and escalation
 auditing
 context assembly
-context budgeting and reduction
-worker leases
-knowledge storage
-run configuration snapshots
+Context Budget policy and reduction
+knowledge mutation
+immutable run configuration snapshots
 scorecard derivation
 recommendation eligibility
+operator-controlled policy
 durable truth
 ```
 
