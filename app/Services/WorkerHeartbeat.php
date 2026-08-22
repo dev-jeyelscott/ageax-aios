@@ -16,7 +16,10 @@ class WorkerHeartbeat
     public function acquire(Project $project, AgentRole $role, string $workerInstanceId, string $status = 'working'): ?WorkerLease
     {
         return DB::transaction(function () use ($project, $role, $workerInstanceId, $status): ?WorkerLease {
-            $worker = AgentWorker::query()->whereBelongsTo($project)->where('role', $role)->lockForUpdate()->firstOrFail();
+            $worker = AgentWorker::query()->whereBelongsTo($project)->where('role', $role)->lockForUpdate()->first();
+            if ($worker === null) {
+                return null;
+            }
             if ($worker->lease_id !== null && AgentWorker::query()->whereKey($worker)->where('lease_expires_at', '>', now())->exists()) {
                 return null;
             }

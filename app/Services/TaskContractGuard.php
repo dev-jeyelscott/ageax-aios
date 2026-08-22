@@ -65,6 +65,7 @@ final readonly class TaskContractGuard
 
     /**
      * @param  array<string, mixed>  $context
+     * @param  list<string>  $excludedRepositoryDocuments
      * @return array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>}
      */
     public function evidence(Task $task, array $context, array $excludedRepositoryDocuments = []): array
@@ -138,6 +139,10 @@ final readonly class TaskContractGuard
     }
 
     /** @return array<string, string> */
+    /**
+     * @param  list<string>  $excludedRepositoryDocuments
+     * @return array<string, string>
+     */
     private function repositoryDocumentHashes(Task $task, array $excludedRepositoryDocuments = []): array
     {
         $projectPath = $this->paths->assertProjectPath($task->project->path);
@@ -192,13 +197,13 @@ final readonly class TaskContractGuard
             return [];
         }
 
-        $relevantDocumentation = collect($this->normalizeStringList($task->relevant_paths, true))
-            ->filter(fn (string $path): bool => $this->isDocumentationPath($path));
-
-        return $relevantDocumentation
-            ->intersect($this->normalizeStringList($changedFiles, true))
-            ->values()
-            ->all();
+        return array_values(array_intersect(
+            array_filter(
+                $this->normalizeStringList($task->relevant_paths, true),
+                fn (string $path): bool => $this->isDocumentationPath($path),
+            ),
+            $this->normalizeStringList($changedFiles, true),
+        ));
     }
 
     /**

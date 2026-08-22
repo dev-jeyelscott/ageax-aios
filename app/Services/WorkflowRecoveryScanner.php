@@ -83,10 +83,12 @@ class WorkflowRecoveryScanner
                         return;
                     }
 
-                    $payload = $latestBlockDecision->payload ?? [];
-                    $escalationId = is_array($payload) ? $payload['planning_escalation_id'] ?? null : null;
-                    $escalation = is_int($escalationId)
-                        ? $lockedTask->planningEscalations()->whereKey($escalationId)->where('status', 'blocked')->lockForUpdate()->first()
+                    $eventPayload = $latestBlockDecision->getAttribute('payload');
+                    $planningEscalationId = is_array($eventPayload)
+                        ? $eventPayload['planning_escalation_id'] ?? null
+                        : null;
+                    $escalation = is_int($planningEscalationId)
+                        ? $lockedTask->planningEscalations()->whereKey($planningEscalationId)->where('status', 'blocked')->lockForUpdate()->first()
                         : null;
                     if ($escalation === null || $this->planningPreflight->evaluate($lockedTask) !== null) {
                         return;

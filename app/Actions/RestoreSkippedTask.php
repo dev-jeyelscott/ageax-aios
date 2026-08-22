@@ -24,7 +24,7 @@ class RestoreSkippedTask
 
         $this->audit->record('task.restored', [
             'reason' => 'operator_restored_skipped_task',
-            'status' => $task->status->value,
+            'status' => TaskStatus::from($task->getRawOriginal('status'))->value,
         ], $task->project, $task);
 
         return $task;

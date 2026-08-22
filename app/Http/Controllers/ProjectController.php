@@ -431,7 +431,8 @@ class ProjectController extends Controller
      *         id: int,
      *         key: string,
      *         title: string,
-     *         status: string
+     *         status: string,
+     *         return_from_reviewer: bool
      *     }
      * }>
      */
@@ -660,7 +661,8 @@ class ProjectController extends Controller
      *         id: int,
      *         key: string,
      *         title: string,
-     *         status: string
+     *         status: string,
+     *         return_from_reviewer: bool
      *     }
      * }> $workers
      * @return array{

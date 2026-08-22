@@ -125,7 +125,8 @@ PROMPT;
                 throw ValidationException::withMessages(['attempt' => 'Planning revision is no longer active.']);
             }
             $replacements = $proposal['replacements'] ?? null;
-            if (! is_string($proposal['reason'] ?? null) || trim($proposal['reason']) === '' || ! is_array($replacements) || $replacements === [] || array_diff(array_keys($replacements), $escalation->allowed_fields) !== []) {
+            $allowedFields = $this->allowedFields($escalation);
+            if (! is_string($proposal['reason'] ?? null) || trim($proposal['reason']) === '' || ! is_array($replacements) || $replacements === [] || array_diff(array_keys($replacements), $allowedFields) !== []) {
                 throw ValidationException::withMessages(['proposal' => 'Only non-empty allowlisted replacements are permitted.']);
             }
             $this->validateReplacements($task, $replacements);
@@ -163,7 +164,7 @@ PROMPT;
         if (isset($replacements['verification_commands']) && ! $this->validator->verificationCommandsAreSafe($replacements['verification_commands'])) {
             throw ValidationException::withMessages(['verification_commands' => 'Contains an unsafe command.']);
         }
-        if (isset($replacements['relevant_paths']) && collect($replacements['relevant_paths'])->contains(fn (string $path): bool => str_starts_with($path, '/') || str_contains($path, '\\') || in_array('..', explode('/', $path), true))) {
+        if (isset($replacements['relevant_paths']) && is_array($replacements['relevant_paths']) && collect($replacements['relevant_paths'])->contains(fn (string $path): bool => str_starts_with($path, '/') || str_contains($path, '\\') || in_array('..', explode('/', $path), true))) {
             throw ValidationException::withMessages(['relevant_paths' => 'Contains a path outside the project.']);
         }
         if (isset($replacements['dependencies'])) {
@@ -178,6 +179,16 @@ PROMPT;
                 throw ValidationException::withMessages(['dependencies' => 'Dependencies must be earlier Tasks and cannot belong to a later phase.']);
             }
         }
+    }
+
+    /** @return list<string> */
+    private function allowedFields(TaskPlanningEscalation $escalation): array
+    {
+        $allowedFields = $escalation->getAttribute('allowed_fields');
+
+        return is_array($allowedFields)
+            ? array_values(array_filter($allowedFields, is_string(...)))
+            : [];
     }
 
     private function fail(TaskPlanningRevisionAttempt $attempt, string $reason): void

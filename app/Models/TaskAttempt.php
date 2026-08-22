@@ -10,7 +10,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable(['task_id', 'number', 'base_sha', 'head_sha', 'commit_sha', 'status', 'validation_results', 'changed_files', 'log_path', 'started_at', 'finished_at'])]
-/** @property array<int, string>|null $changed_files */
+/**
+ * @property array<string, mixed>|null $validation_results
+ * @property list<string>|null $changed_files
+ */
 class TaskAttempt extends Model
 {
     /** @use HasFactory<TaskAttemptFactory> */

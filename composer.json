@@ -57,10 +57,10 @@
             "@php artisan dev"
         ],
         "lint": [
-            "pint --parallel"
+            "pint"
         ],
         "lint:check": [
-            "pint --parallel --test"
+            "pint --test"
         ],
         "format": [
             "composer run lint",
@@ -75,7 +75,7 @@
             "@test"
         ],
         "types:check": [
-            "phpstan analyse"
+            "phpstan analyse --debug"
         ],
         "test": [
             "@php artisan config:clear --ansi",

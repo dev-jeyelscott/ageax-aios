@@ -18,14 +18,15 @@ class TaskPlanningDefectPreflight
     /** @return array{type: string, fingerprint: string, evidence: array<string, mixed>, allowed_fields: list<string>}|null */
     public function evaluate(Task $task): ?array
     {
-        $commands = $task->verification_commands ?? [];
-        if (! is_array($commands) || collect($commands)->contains(fn (mixed $command): bool => ! is_string($command)) || ! $this->validator->verificationCommandsAreSafe($commands)) {
-            return $this->defect('unsafe_verification_commands', ['verification_commands' => is_array($commands) ? array_values($commands) : []], ['verification_commands']);
+        $rawCommands = $task->getAttribute('verification_commands') ?? [];
+        $commands = $this->stringList($rawCommands);
+        if ($commands === null || ! $this->verificationCommandsAreSafe($commands)) {
+            return $this->defect('unsafe_verification_commands', ['verification_commands' => $rawCommands], ['verification_commands']);
         }
 
         $paths = $task->relevant_paths ?? [];
         if (! is_array($paths) || collect($paths)->contains(fn (mixed $path): bool => ! is_string($path) || ! $this->safeRelativePath($path))) {
-            return $this->defect('unsafe_relevant_paths', ['relevant_paths' => is_array($paths) ? array_values($paths) : []], ['relevant_paths']);
+            return $this->defect('unsafe_relevant_paths', ['relevant_paths' => $paths], ['relevant_paths']);
         }
 
         // A persistent worker can retain a Task instance after an operator corrects phase
@@ -43,7 +44,11 @@ class TaskPlanningDefectPreflight
         return null;
     }
 
-    /** @param array<string, mixed> $evidence @param list<string> $allowedFields @return array{type: string, fingerprint: string, evidence: array<string,mixed>, allowed_fields: list<string>} */
+    /**
+     * @param  array<string, mixed>  $evidence
+     * @param  list<string>  $allowedFields
+     * @return array{type: string, fingerprint: string, evidence: array<string, mixed>, allowed_fields: list<string>}
+     */
     private function defect(string $type, array $evidence, array $allowedFields): array
     {
         return ['type' => $type, 'fingerprint' => hash('sha256', json_encode([$type, $evidence], JSON_THROW_ON_ERROR)), 'evidence' => $evidence, 'allowed_fields' => $allowedFields];
@@ -52,5 +57,30 @@ class TaskPlanningDefectPreflight
     private function safeRelativePath(string $path): bool
     {
         return $path !== '' && ! Str::startsWith($path, ['/', '\\']) && ! str_contains($path, '\\') && ! collect(explode('/', $path))->contains('..');
+    }
+
+    /** @param list<string> $commands */
+    private function verificationCommandsAreSafe(array $commands): bool
+    {
+        return $commands === [] || $this->validator->verificationCommandsAreSafe($commands);
+    }
+
+    /** @return list<string>|null */
+    private function stringList(mixed $value): ?array
+    {
+        if (! is_array($value)) {
+            return null;
+        }
+
+        $strings = [];
+        foreach ($value as $item) {
+            if (! is_string($item)) {
+                return null;
+            }
+
+            $strings[] = $item;
+        }
+
+        return $strings;
     }
 }

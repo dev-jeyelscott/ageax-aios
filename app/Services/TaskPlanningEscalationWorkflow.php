@@ -41,8 +41,10 @@ class TaskPlanningEscalationWorkflow
                 ])
                 : TaskAttempt::query()->lockForUpdate()->findOrFail($sourceAttempt->id);
             if ($sourceAttempt !== null) {
-                $validation = $attempt->validation_results ?? [];
-                $attempt->update(['status' => 'failed', 'validation_results' => [...$validation, 'passed' => false, 'checks' => [...($validation['checks'] ?? []), 'planning_defect' => false], 'planning_defect' => ['type' => $defect['type'], 'fingerprint' => $defect['fingerprint'], 'evidence' => $defect['evidence']]], 'finished_at' => now()]);
+                $validationResults = $attempt->getAttribute('validation_results');
+                $validation = is_array($validationResults) ? $validationResults : [];
+                $checks = is_array($validation['checks'] ?? null) ? $validation['checks'] : [];
+                $attempt->update(['status' => 'failed', 'validation_results' => [...$validation, 'passed' => false, 'checks' => [...$checks, 'planning_defect' => false], 'planning_defect' => ['type' => $defect['type'], 'fingerprint' => $defect['fingerprint'], 'evidence' => $defect['evidence']]], 'finished_at' => now()]);
             }
             $escalation = TaskPlanningEscalation::create([
                 'task_id' => $lockedTask->id, 'source_task_attempt_id' => $attempt->id,

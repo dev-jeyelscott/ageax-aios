@@ -205,11 +205,25 @@ class RunReviewerTask
         $dependencyOutputs = $task->dependencies()
             ->where('status', TaskStatus::Done)
             ->get()
-            ->flatMap(fn (Task $dependency) => $dependency->attempts()->latest('number')->value('changed_files') ?? [])
-            ->filter(fn (mixed $path): bool => is_string($path))
+            ->flatMap(fn (Task $dependency): array => $this->latestChangedFiles($dependency))
             ->unique();
 
         return $documents->every(fn (string $document): bool => $dependencyOutputs->contains($document));
+    }
+
+    /** @return list<string> */
+    private function latestChangedFiles(Task $task): array
+    {
+        $attempt = $task->attempts()->latest('number')->first();
+        if ($attempt === null) {
+            return [];
+        }
+
+        $changedFiles = $attempt->getAttribute('changed_files');
+
+        return is_array($changedFiles)
+            ? array_values(array_filter($changedFiles, is_string(...)))
+            : [];
     }
 
     /** @return array{0: ?Agent, 1: ?AgentHarness} */

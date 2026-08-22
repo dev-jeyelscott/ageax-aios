@@ -305,7 +305,13 @@ class StaleWorkerRecovery
             $runs = AgentRun::query()
                 ->whereBelongsTo($lockedTask)
                 ->where('role', $role)
-                ->where('task_attempt_id', $attempt->id)
+                ->where(function ($query) use ($attempt): void {
+                    $query->where('attempt_number', $attempt->number)
+                        ->orWhere(function ($query) use ($attempt): void {
+                            $query->whereNull('attempt_number')
+                                ->where('started_at', '>=', $attempt->started_at);
+                        });
+                })
                 ->get();
 
             if ($runs->isEmpty() || $runs->contains(fn (AgentRun $run): bool => AgentRunStatus::from($run->getRawOriginal('status')) === AgentRunStatus::Running)) {
@@ -324,10 +330,10 @@ class StaleWorkerRecovery
                     ]);
 
                 $this->workflow->transition($lockedTask, TaskStatus::Failed);
-            } else {
+            } elseif ($this->workflow->reconcileExistingReviewerDecision($lockedTask, $attempt) === null) {
                 $this->workflow->recordReviewerOperationalFailure(
                     $lockedTask,
-                    $lockedTask->attempts()->latest('number')->first(),
+                    $attempt,
                     [
                         'reason' => 'abandoned_finalization',
                         'evidence' => $evidence,

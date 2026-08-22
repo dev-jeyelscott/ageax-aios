@@ -412,10 +412,14 @@ class ObsidianProjectNotes
             return null;
         }
 
-        $directory .= '/'.$directoryName;
-        $this->files->ensureDirectoryExists($directory);
-        $path = $directory.'/'.$filename;
-        $this->files->put($path, $content);
+        try {
+            $directory .= '/'.$directoryName;
+            $this->files->ensureDirectoryExists($directory);
+            $path = $directory.'/'.$filename;
+            $this->files->put($path, $content);
+        } catch (Throwable) {
+            return null;
+        }
 
         return $path;
     }
