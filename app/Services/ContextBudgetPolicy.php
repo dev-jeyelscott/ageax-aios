@@ -29,12 +29,11 @@ final class ContextBudgetPolicy
         'coder' => self::NormalTargetPercent,
         'reviewer' => self::NormalTargetPercent,
         'orchestrator' => self::NormalTargetPercent,
+        'knowledge_architect' => self::NormalTargetPercent,
     ];
 
     /**
      * Retained source quotas are percentages of the resolved target token budget.
-     * They are maximum retained shares once reduction is triggered; AIOS never
-     * trims a protected source merely to consume the remaining quota.
      *
      * @var array<string, int>
      */

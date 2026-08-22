@@ -28,6 +28,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'occurrence_count',
     'reopen_after_occurrence',
     'evidence_hash',
+    'knowledge_architect_agent_run_id',
+    'knowledge_architect_evidence_hash',
     'first_seen_at',
     'last_seen_at',
     'decided_at',
@@ -38,6 +40,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property KnowledgeImprovementCandidateStatus $status
  * @property KnowledgeImprovementTarget $target_type
  * @property array<int, array<string, mixed>> $evidence
+ * @property string|null $knowledge_architect_evidence_hash
  * @property CarbonImmutable $first_seen_at
  * @property CarbonImmutable $last_seen_at
  * @property CarbonImmutable|null $decided_at
@@ -48,6 +51,9 @@ class KnowledgeImprovementCandidate extends Model
     /** @use HasFactory<KnowledgeImprovementCandidateFactory> */
     use HasFactory;
 
+    /**
+     * Cast durable candidate state to its domain types.
+     */
     protected function casts(): array
     {
         return [
@@ -64,21 +70,46 @@ class KnowledgeImprovementCandidate extends Model
         ];
     }
 
-    /** @return BelongsTo<Project, $this> */
+    /**
+     * Return the project that owns this knowledge-improvement proposal.
+     *
+     * @return BelongsTo<Project, $this>
+     */
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
     }
 
-    /** @return BelongsTo<Skill, $this> */
+    /**
+     * Return the optional project Skill targeted by this proposal.
+     *
+     * @return BelongsTo<Skill, $this>
+     */
     public function targetSkill(): BelongsTo
     {
         return $this->belongsTo(Skill::class, 'target_skill_id');
     }
 
-    /** @return BelongsTo<User, $this> */
+    /**
+     * Return the operator who made the durable candidate decision.
+     *
+     * @return BelongsTo<User, $this>
+     */
     public function decidedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'decided_by_user_id');
+    }
+
+    /**
+     * Return the immutable Knowledge Architect execution that produced the current semantic advisory.
+     *
+     * @return BelongsTo<AgentRun, $this>
+     */
+    public function knowledgeArchitectRun(): BelongsTo
+    {
+        return $this->belongsTo(
+            AgentRun::class,
+            'knowledge_architect_agent_run_id',
+        );
     }
 }

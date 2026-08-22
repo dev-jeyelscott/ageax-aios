@@ -137,6 +137,7 @@ class Agent extends Model
     private const array GlobalRoles = [
         AgentRole::RecoveryEngineer,
         AgentRole::Orchestrator,
+        AgentRole::KnowledgeArchitect,
     ];
 
     /**

@@ -7,7 +7,7 @@ use App\Services\GlobalAgentResolver;
 use Illuminate\Database\QueryException;
 
 /**
- * Resolve exactly one seeded global Agent for the requested system role.
+ * Resolve a specific persisted global Agent without relying on database row ordering.
  */
 function p5001ResolverAgent(AgentRole $role): Agent
 {
@@ -17,10 +17,17 @@ function p5001ResolverAgent(AgentRole $role): Agent
         ->sole();
 }
 
-test('it resolves each approved singleton global system Agent by role', function () {
-    foreach ([AgentRole::RecoveryEngineer, AgentRole::Orchestrator] as $role) {
+test('the resolver returns every explicitly activated global system Agent', function () {
+    foreach ([
+        AgentRole::RecoveryEngineer,
+        AgentRole::Orchestrator,
+        AgentRole::KnowledgeArchitect,
+    ] as $role) {
         $agent = p5001ResolverAgent($role);
-        $resolved = app(GlobalAgentResolver::class)->forRole($role);
+
+        $resolved = app(
+            GlobalAgentResolver::class,
+        )->forRole($role);
 
         expect($resolved->id)->toBe($agent->id)
             ->and($resolved->project_id)->toBeNull()
@@ -29,47 +36,138 @@ test('it resolves each approved singleton global system Agent by role', function
     }
 });
 
-test('it refuses to resolve a disabled global Orchestrator', function () {
-    $agent = p5001ResolverAgent(AgentRole::Orchestrator);
+test('a disabled Orchestrator is rejected', function () {
+    $agent = p5001ResolverAgent(
+        AgentRole::Orchestrator,
+    );
+
     $agent->update(['enabled' => false]);
 
-    app(GlobalAgentResolver::class)->forRole(AgentRole::Orchestrator);
-})->throws(LogicException::class);
+    expect(
+        fn () => app(
+            GlobalAgentResolver::class,
+        )->forRole(AgentRole::Orchestrator),
+    )->toThrow(LogicException::class);
+});
 
-test('it refuses to resolve a missing global Orchestrator without falling back', function () {
-    p5001ResolverAgent(AgentRole::Orchestrator)->delete();
+test('a missing Orchestrator is rejected without fallback', function () {
+    p5001ResolverAgent(
+        AgentRole::Orchestrator,
+    )->delete();
 
-    app(GlobalAgentResolver::class)->forRole(AgentRole::Orchestrator);
-})->throws(LogicException::class);
+    expect(
+        fn () => app(
+            GlobalAgentResolver::class,
+        )->forRole(AgentRole::Orchestrator),
+    )->toThrow(LogicException::class);
+});
 
-test('enum membership alone does not make Knowledge Architect a resolvable global Agent', function () {
-    app(GlobalAgentResolver::class)->forRole(AgentRole::KnowledgeArchitect);
-})->throws(LogicException::class);
+test('a disabled Knowledge Architect is rejected distinctly', function () {
+    $agent = p5001ResolverAgent(
+        AgentRole::KnowledgeArchitect,
+    );
 
-test('a misconfigured Orchestrator is rejected by the existing harness boundary', function () {
-    $agent = p5001ResolverAgent(AgentRole::Orchestrator);
+    $agent->update(['enabled' => false]);
+
+    expect(
+        fn () => app(
+            GlobalAgentResolver::class,
+        )->forRole(
+            AgentRole::KnowledgeArchitect,
+        ),
+    )->toThrow(
+        LogicException::class,
+        'The global Agent configured for the [knowledge_architect] system role is disabled.',
+    );
+});
+
+test('a missing Knowledge Architect is rejected distinctly without fallback', function () {
+    p5001ResolverAgent(
+        AgentRole::KnowledgeArchitect,
+    )->delete();
+
+    expect(
+        fn () => app(
+            GlobalAgentResolver::class,
+        )->forRole(
+            AgentRole::KnowledgeArchitect,
+        ),
+    )->toThrow(
+        LogicException::class,
+        'The global Agent configured for the [knowledge_architect] system role is missing.',
+    );
+});
+
+test('a misconfigured Orchestrator is rejected by the existing harness capability boundary', function () {
+    $agent = p5001ResolverAgent(
+        AgentRole::Orchestrator,
+    );
 
     $agent->update([
         'model' => 'future-unapproved-orchestrator-model',
+        'reasoning_setting' => null,
     ]);
 
-    $resolved = app(GlobalAgentResolver::class)
-        ->forRole(AgentRole::Orchestrator);
+    $resolved = app(
+        GlobalAgentResolver::class,
+    )->forRole(AgentRole::Orchestrator);
 
-    expect(fn () => app(AgentHarnessResolver::class)->resolve($resolved))
-        ->toThrow(LogicException::class);
+    expect(
+        fn () => app(
+            AgentHarnessResolver::class,
+        )->resolve($resolved),
+    )->toThrow(LogicException::class);
+});
+
+test('a misconfigured Knowledge Architect is rejected by the existing harness capability boundary', function () {
+    $agent = p5001ResolverAgent(
+        AgentRole::KnowledgeArchitect,
+    );
+
+    $agent->update([
+        'model' => 'future-unapproved-knowledge-model',
+        'reasoning_setting' => null,
+    ]);
+
+    $resolved = app(
+        GlobalAgentResolver::class,
+    )->forRole(
+        AgentRole::KnowledgeArchitect,
+    );
+
+    expect(
+        fn () => app(
+            AgentHarnessResolver::class,
+        )->resolve($resolved),
+    )->toThrow(LogicException::class);
 });
 
 test('the database prevents a second global Orchestrator singleton', function () {
-    $agent = p5001ResolverAgent(AgentRole::Orchestrator);
+    $agent = p5001ResolverAgent(
+        AgentRole::Orchestrator,
+    );
 
     expect(fn () => Agent::query()->create([
         'name' => 'Duplicate Global Orchestrator',
         'role' => AgentRole::Orchestrator,
-        'harness' => $agent->getRawOriginal('harness'),
+        'harness' => $agent->harness,
         'model' => $agent->model,
         'reasoning_setting' => $agent->reasoning_setting,
-        'default_context' => null,
+        'enabled' => true,
+    ]))->toThrow(QueryException::class);
+});
+
+test('the database prevents a second global Knowledge Architect singleton', function () {
+    $agent = p5001ResolverAgent(
+        AgentRole::KnowledgeArchitect,
+    );
+
+    expect(fn () => Agent::query()->create([
+        'name' => 'Duplicate Global Knowledge Architect',
+        'role' => AgentRole::KnowledgeArchitect,
+        'harness' => $agent->harness,
+        'model' => $agent->model,
+        'reasoning_setting' => $agent->reasoning_setting,
         'enabled' => true,
     ]))->toThrow(QueryException::class);
 });
