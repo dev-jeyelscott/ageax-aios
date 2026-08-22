@@ -111,33 +111,53 @@ class CreateOrchestrationRecommendation
      */
     private function assertEligibleSourceRun(AgentRun $run): void
     {
-        if ($run->role !== AgentRole::Orchestrator) {
-            throw new LogicException('Only an Orchestrator AgentRun may produce an orchestration recommendation.');
+        $role = $run->getRawOriginal('role');
+
+        if (! is_string($role) || $role !== AgentRole::Orchestrator->value) {
+            throw new LogicException(
+                'Only an Orchestrator AgentRun may produce an orchestration recommendation.',
+            );
         }
 
-        if ($run->status !== AgentRunStatus::Completed || $run->finished_at === null) {
-            throw new LogicException('An orchestration recommendation requires a completed Orchestrator AgentRun.');
+        $status = $run->getRawOriginal('status');
+
+        if (! is_string($status)
+            || $status !== AgentRunStatus::Completed->value
+            || $run->finished_at === null) {
+            throw new LogicException(
+                'An orchestration recommendation requires a completed Orchestrator AgentRun.',
+            );
         }
 
         if ($run->agent_worker_id !== null) {
-            throw new LogicException('A Global Orchestrator AgentRun must not be attached to an AgentWorker.');
+            throw new LogicException(
+                'A Global Orchestrator AgentRun must not be attached to an AgentWorker.',
+            );
         }
 
         if ($run->agent_id === null) {
-            throw new LogicException('The Orchestrator AgentRun is missing its durable Agent identity.');
+            throw new LogicException(
+                'The Orchestrator AgentRun is missing its durable Agent identity.',
+            );
         }
 
-        $snapshot = $run->configuration_snapshot;
-        $agentSnapshot = is_array($snapshot)
-            ? ($snapshot['agent'] ?? null)
-            : null;
+        $snapshot = $run->getAttribute('configuration_snapshot');
 
-        if (! is_array($snapshot)
-            || ! is_array($agentSnapshot)
+        if (! is_array($snapshot)) {
+            throw new LogicException(
+                'The Orchestrator AgentRun is missing valid immutable configuration evidence.',
+            );
+        }
+
+        $agentSnapshot = $snapshot['agent'] ?? null;
+
+        if (! is_array($agentSnapshot)
             || ($agentSnapshot['id'] ?? null) !== $run->agent_id
             || ($agentSnapshot['role'] ?? null) !== AgentRole::Orchestrator->value
             || ($snapshot['context_schema_version'] ?? null) !== $run->context_schema_version) {
-            throw new LogicException('The Orchestrator AgentRun is missing valid immutable configuration evidence.');
+            throw new LogicException(
+                'The Orchestrator AgentRun is missing valid immutable configuration evidence.',
+            );
         }
 
         $this->evaluatedEvidenceHashes($run);
@@ -153,15 +173,21 @@ class CreateOrchestrationRecommendation
         ?RecoveryIncident $recoveryIncident,
     ): ?int {
         if ($project !== null && ! $project->exists) {
-            throw new LogicException('Recommendation project scope must be persisted.');
+            throw new LogicException(
+                'Recommendation project scope must be persisted.',
+            );
         }
 
         if ($task !== null && ! $task->exists) {
-            throw new LogicException('Recommendation task scope must be persisted.');
+            throw new LogicException(
+                'Recommendation task scope must be persisted.',
+            );
         }
 
         if ($recoveryIncident !== null && ! $recoveryIncident->exists) {
-            throw new LogicException('Recommendation recovery scope must be persisted.');
+            throw new LogicException(
+                'Recommendation recovery scope must be persisted.',
+            );
         }
 
         $runProjectId = (int) $run->project_id;
@@ -190,14 +216,18 @@ class CreateOrchestrationRecommendation
             $recoveryTaskProjectId,
         ] as $scopeProjectId) {
             if ($scopeProjectId !== null && $scopeProjectId !== $runProjectId) {
-                throw new LogicException('Recommendation scope cannot cross the source AgentRun project boundary.');
+                throw new LogicException(
+                    'Recommendation scope cannot cross the source AgentRun project boundary.',
+                );
             }
         }
 
         if ($task !== null
             && $recoveryIncident?->task_id !== null
             && (int) $recoveryIncident->task_id !== (int) $task->id) {
-            throw new LogicException('Recommendation Task and RecoveryIncident scope must refer to the same Task.');
+            throw new LogicException(
+                'Recommendation Task and RecoveryIncident scope must refer to the same Task.',
+            );
         }
 
         return $projectId
@@ -267,9 +297,15 @@ class CreateOrchestrationRecommendation
      */
     private function evaluatedEvidenceHashes(AgentRun $run): array
     {
-        $budget = $run->context_budget_snapshot;
+        $budget = $run->getAttribute('context_budget_snapshot');
 
-        if (is_array($budget)) {
+        if ($budget !== null) {
+            if (! is_array($budget)) {
+                throw new LogicException(
+                    'The Orchestrator AgentRun has invalid final Context Budget evidence.',
+                );
+            }
+
             $contextHash = $budget['final_context_hash'] ?? null;
             $promptHash = $budget['final_prompt_hash'] ?? null;
             $budgetSchemaVersion = $run->context_budget_schema_version;
@@ -278,9 +314,13 @@ class CreateOrchestrationRecommendation
                 || ! is_int($budgetSchemaVersion)
                 || $budgetSchemaVersion < 1
                 || ($budget['schema_version'] ?? null) !== $budgetSchemaVersion
+                || ! is_string($contextHash)
                 || ! $this->isSha256($contextHash)
+                || ! is_string($promptHash)
                 || ! $this->isSha256($promptHash)) {
-                throw new LogicException('The Orchestrator AgentRun has invalid final Context Budget evidence.');
+                throw new LogicException(
+                    'The Orchestrator AgentRun has invalid final Context Budget evidence.',
+                );
             }
 
             return [
@@ -290,14 +330,24 @@ class CreateOrchestrationRecommendation
             ];
         }
 
-        $snapshot = $run->configuration_snapshot;
-        $contextHash = is_array($snapshot)
-            ? ($snapshot['context_hash'] ?? null)
-            : null;
-        $promptHash = $run->prompt_hash;
+        $snapshot = $run->getAttribute('configuration_snapshot');
 
-        if (! $this->isSha256($contextHash) || ! $this->isSha256($promptHash)) {
-            throw new LogicException('The Orchestrator AgentRun is missing valid immutable evidence hashes.');
+        if (! is_array($snapshot)) {
+            throw new LogicException(
+                'The Orchestrator AgentRun is missing valid immutable evidence hashes.',
+            );
+        }
+
+        $contextHash = $snapshot['context_hash'] ?? null;
+        $promptHash = $run->getAttribute('prompt_hash');
+
+        if (! is_string($contextHash)
+            || ! $this->isSha256($contextHash)
+            || ! is_string($promptHash)
+            || ! $this->isSha256($promptHash)) {
+            throw new LogicException(
+                'The Orchestrator AgentRun is missing valid immutable evidence hashes.',
+            );
         }
 
         return [
@@ -308,11 +358,10 @@ class CreateOrchestrationRecommendation
     }
 
     /**
-     * Determine whether a value is a canonical 64-character SHA-256 hexadecimal digest.
+     * Determine whether a string is a canonical 64-character SHA-256 hexadecimal digest.
      */
-    private function isSha256(mixed $value): bool
+    private function isSha256(string $value): bool
     {
-        return is_string($value)
-            && preg_match('/\A[a-f0-9]{64}\z/', $value) === 1;
+        return preg_match('/\A[a-f0-9]{64}\z/', $value) === 1;
     }
 }
