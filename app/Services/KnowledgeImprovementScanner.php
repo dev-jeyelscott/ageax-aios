@@ -43,8 +43,17 @@ class KnowledgeImprovementScanner
         'architecture_consistency' => ['architecture', 'parallel system', 'duplicate service', 'existing pattern', 'framework-native'],
     ];
 
-    public function __construct(private AuditLogger $audit) {}
+    /**
+     * Inject durable candidate auditing plus deterministic point-gap detection.
+     */
+    public function __construct(
+        private AuditLogger $audit,
+        private KnowledgeGapDetector $knowledgeGaps,
+    ) {}
 
+    /**
+     * Scan deterministic recurring evidence and objective point defects into the existing candidate queue.
+     */
     public function scan(Project $project): int
     {
         $groups = [];
@@ -65,10 +74,14 @@ class KnowledgeImprovementScanner
             $this->addToGroup($groups, $item);
         }
 
+        foreach ($this->knowledgeGaps->detect($project) as $item) {
+            $this->addToGroup($groups, $item);
+        }
+
         $changed = 0;
 
         foreach ($groups as $fingerprint => $group) {
-            if (count($group['references']) < $this->occurrenceThreshold()) {
+            if (count($group['references']) < $group['minimum_occurrences']) {
                 continue;
             }
 
@@ -81,6 +94,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Normalize actionable Reviewer findings into recurring deterministic evidence.
+     *
      * @return list<array{
      *     fingerprint_payload: array<string, mixed>,
      *     source_kind: string,
@@ -153,6 +168,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Normalize failed deterministic Task validation checks into recurring evidence.
+     *
      * @return list<array{
      *     fingerprint_payload: array<string, mixed>,
      *     source_kind: string,
@@ -233,6 +250,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Normalize known AIOS audit blocks into recurring deterministic evidence.
+     *
      * @return list<array{
      *     fingerprint_payload: array<string, mixed>,
      *     source_kind: string,
@@ -300,6 +319,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Normalize durable non-transient RecoveryIncident root causes into recurring evidence.
+     *
      * @return list<array{
      *     fingerprint_payload: array<string, mixed>,
      *     source_kind: string,
@@ -368,6 +389,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Add one item to its deterministic fingerprint group and preserve its occurrence policy.
+     *
      * @param array<string, array{
      *     source_kind: string,
      *     failure_code: string,
@@ -377,7 +400,8 @@ class KnowledgeImprovementScanner
      *     target_skill_slug: ?string,
      *     proposed_change: string,
      *     references: list<array<string, mixed>>,
-     *     occurred_at: list<string>
+     *     occurred_at: list<string>,
+     *     minimum_occurrences: int
      * }> $groups
      * @param array{
      *     fingerprint_payload: array<string, mixed>,
@@ -389,12 +413,17 @@ class KnowledgeImprovementScanner
      *     target_skill_slug: ?string,
      *     proposed_change: string,
      *     reference: array<string, mixed>,
-     *     occurred_at: string
+     *     occurred_at: string,
+     *     minimum_occurrences?: int
      * } $item
      */
     private function addToGroup(array &$groups, array $item): void
     {
         $fingerprint = $this->fingerprint($item['fingerprint_payload']);
+        $minimumOccurrences = max(
+            1,
+            (int) ($item['minimum_occurrences'] ?? $this->occurrenceThreshold()),
+        );
 
         $groups[$fingerprint] ??= [
             'source_kind' => $item['source_kind'],
@@ -406,13 +435,20 @@ class KnowledgeImprovementScanner
             'proposed_change' => $item['proposed_change'],
             'references' => [],
             'occurred_at' => [],
+            'minimum_occurrences' => $minimumOccurrences,
         ];
 
         $groups[$fingerprint]['references'][] = $item['reference'];
         $groups[$fingerprint]['occurred_at'][] = $item['occurred_at'];
+        $groups[$fingerprint]['minimum_occurrences'] = min(
+            $groups[$fingerprint]['minimum_occurrences'],
+            $minimumOccurrences,
+        );
     }
 
     /**
+     * Create, update, or reopen one existing KnowledgeImprovementCandidate fingerprint atomically.
+     *
      * @param array{
      *     source_kind: string,
      *     failure_code: string,
@@ -422,7 +458,8 @@ class KnowledgeImprovementScanner
      *     target_skill_slug: ?string,
      *     proposed_change: string,
      *     references: list<array<string, mixed>>,
-     *     occurred_at: list<string>
+     *     occurred_at: list<string>,
+     *     minimum_occurrences: int
      * } $group
      */
     private function persistGroup(Project $project, string $fingerprint, array $group): bool
@@ -434,7 +471,11 @@ class KnowledgeImprovementScanner
         sort($dates, SORT_STRING);
         $firstSeenAt = $dates[0] ?? now()->toIso8601String();
         $lastSeenAt = $dates[count($dates) - 1] ?? $firstSeenAt;
-        $targetSkill = $this->targetSkill($project, $group['target_skill_slug']);
+        $targetSkill = $this->targetSkill(
+            $project,
+            $group['target_skill_slug'],
+            $group['affected_role'],
+        );
         $targetType = $group['target_type'];
 
         if ($targetType === KnowledgeImprovementTarget::Skill && $targetSkill === null) {
@@ -537,6 +578,9 @@ class KnowledgeImprovementScanner
         }, attempts: 3);
     }
 
+    /**
+     * Reduce Reviewer prose to one bounded deterministic failure family.
+     */
     private function reviewFamily(ReviewFinding $finding): string
     {
         $text = Str::lower(Str::squish(implode(' ', [
@@ -558,6 +602,9 @@ class KnowledgeImprovementScanner
         return 'task_contract';
     }
 
+    /**
+     * Map a normalized Reviewer family to its preferred existing same-project Skill slug.
+     */
     private function reviewTargetSkillSlug(string $family): string
     {
         return match ($family) {
@@ -569,6 +616,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Return failed deterministic checks while excluding operational/provider failures.
+     *
      * @param  array<string, mixed>  $validation
      * @return list<string>
      */
@@ -590,7 +639,11 @@ class KnowledgeImprovementScanner
         return array_values(array_unique($failed));
     }
 
-    /** @param list<string> $checks */
+    /**
+     * Map deterministic validation families to their preferred existing same-project Skill slug.
+     *
+     * @param  list<string>  $checks
+     */
     private function validationTargetSkillSlug(array $checks): string
     {
         foreach ($checks as $check) {
@@ -609,6 +662,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Resolve the most specific deterministic affected area from failed evidence and changed files.
+     *
      * @param  array<string, mixed>  $validation
      * @param  array<int, string>  $changedFiles
      */
@@ -622,6 +677,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Recursively collect files only from validation evidence explicitly marked failed.
+     *
      * @param  array<mixed>  $value
      * @param  array<int, string>  $files
      */
@@ -643,6 +700,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Map known blocking audit events to bounded candidate metadata.
+     *
      * @param  array<string, mixed>  $payload
      * @return array{
      *     source_kind: string,
@@ -693,6 +752,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Map a normalized RecoveryIncident root-cause category to a bounded proposal target.
+     *
      * @return array{
      *     affected_role: ?string,
      *     target_type: KnowledgeImprovementTarget,
@@ -730,16 +791,41 @@ class KnowledgeImprovementScanner
         };
     }
 
-    private function targetSkill(Project $project, ?string $slug): ?Skill
-    {
+    /**
+     * Resolve only enabled same-project Skill guidance that is applicable to the affected role.
+     */
+    private function targetSkill(
+        Project $project,
+        ?string $slug,
+        ?string $affectedRole = null,
+    ): ?Skill {
         if ($slug === null) {
             return null;
         }
 
-        return $project->skills()->where('slug', $slug)->first();
+        $skill = $project->skills()
+            ->enabled()
+            ->where('slug', $slug)
+            ->first();
+
+        if (! $skill instanceof Skill || $affectedRole === null) {
+            return $skill;
+        }
+
+        $roles = $skill->getAttribute('applicable_roles');
+
+        if (! is_array($roles)) {
+            return null;
+        }
+
+        return $roles === [] || in_array($affectedRole, $roles, true)
+            ? $skill
+            : null;
     }
 
     /**
+     * Deduplicate evidence using the stable source type and source identity pair.
+     *
      * @param  list<array<string, mixed>>  $references
      * @return list<array<string, mixed>>
      */
@@ -758,6 +844,8 @@ class KnowledgeImprovementScanner
     }
 
     /**
+     * Produce concise evidence text that distinguishes immediate point defects from recurring patterns.
+     *
      * @param array{
      *     source_kind: string,
      *     failure_code: string,
@@ -767,16 +855,24 @@ class KnowledgeImprovementScanner
      *     target_skill_slug: ?string,
      *     proposed_change: string,
      *     references: list<array<string, mixed>>,
-     *     occurred_at: list<string>
+     *     occurred_at: list<string>,
+     *     minimum_occurrences: int
      * } $group
      */
     private function evidenceSummary(array $group, int $occurrenceCount): string
     {
         $role = $group['affected_role'] ?? 'system';
 
+        if ($group['minimum_occurrences'] === 1) {
+            return "Deterministic {$group['source_kind']} finding matched [{$group['failure_code']}] in [{$group['affected_area']}] for [{$role}] with {$occurrenceCount} durable evidence reference(s).";
+        }
+
         return "{$occurrenceCount} recurring {$group['source_kind']} occurrences matched [{$group['failure_code']}] in [{$group['affected_area']}] for [{$role}].";
     }
 
+    /**
+     * Normalize an arbitrary finding location into a bounded repository/subsystem area.
+     */
     private function areaFromLocation(?string $location): string
     {
         $location = Str::squish((string) $location);
@@ -794,7 +890,11 @@ class KnowledgeImprovementScanner
         return Str::limit(Str::lower($withoutLines), 160, '');
     }
 
-    /** @param array<int, mixed> $files */
+    /**
+     * Resolve the first stable affected area from a list of changed/evidence paths.
+     *
+     * @param  array<int, mixed>  $files
+     */
     private function areaFromFiles(array $files): ?string
     {
         $areas = [];
@@ -811,6 +911,9 @@ class KnowledgeImprovementScanner
         return $areas[0] ?? null;
     }
 
+    /**
+     * Collapse a repository path to a bounded subsystem-level area.
+     */
     private function pathArea(string $path): string
     {
         $path = str_replace('\\', '/', trim($path));
@@ -829,6 +932,9 @@ class KnowledgeImprovementScanner
         return implode('/', array_slice($segments, 0, $depth));
     }
 
+    /**
+     * Convert a bounded string value into a stable snake-case identifier.
+     */
     private function normalizedIdentifier(mixed $value): string
     {
         if (! is_string($value)) {
@@ -838,6 +944,9 @@ class KnowledgeImprovementScanner
         return Str::snake(Str::lower(Str::squish($value)));
     }
 
+    /**
+     * Return only supported workflow/recovery role identifiers from arbitrary metadata.
+     */
     private function normalizedRole(mixed $value): ?string
     {
         if (! is_string($value)) {
@@ -851,7 +960,11 @@ class KnowledgeImprovementScanner
             : null;
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Safely read a cast Eloquent array attribute.
+     *
+     * @return array<string, mixed>
+     */
     private function arrayAttribute(Model $model, string $attribute): array
     {
         $value = $model->getAttribute($attribute);
@@ -859,7 +972,11 @@ class KnowledgeImprovementScanner
         return is_array($value) ? $value : [];
     }
 
-    /** @return list<string> */
+    /**
+     * Safely read only string entries from a cast Eloquent array attribute.
+     *
+     * @return list<string>
+     */
     private function stringListAttribute(Model $model, string $attribute): array
     {
         $value = $model->getAttribute($attribute);
@@ -879,6 +996,9 @@ class KnowledgeImprovementScanner
         return $items;
     }
 
+    /**
+     * Serialize a model date attribute into deterministic ISO-8601 evidence.
+     */
     private function dateValue(Model $model, string $attribute): string
     {
         $value = $model->getAttribute($attribute);
@@ -888,7 +1008,11 @@ class KnowledgeImprovementScanner
             : now()->toIso8601String();
     }
 
-    /** @param array<string, mixed>|list<array<string, mixed>> $payload */
+    /**
+     * Hash canonical bounded evidence into a stable SHA-256 fingerprint.
+     *
+     * @param  array<string, mixed>|list<array<string, mixed>>  $payload
+     */
     private function fingerprint(array $payload): string
     {
         return hash('sha256', json_encode(
@@ -897,6 +1021,9 @@ class KnowledgeImprovementScanner
         ));
     }
 
+    /**
+     * Recursively sort associative payload keys while preserving list ordering.
+     */
     private function canonicalize(mixed $value): mixed
     {
         if (! is_array($value)) {
@@ -916,16 +1043,25 @@ class KnowledgeImprovementScanner
         return $value;
     }
 
+    /**
+     * Return the configured minimum recurrence threshold, never below the established floor of three.
+     */
     private function occurrenceThreshold(): int
     {
         return max(3, (int) config('aios.knowledge_improvement_occurrence_threshold', 3));
     }
 
+    /**
+     * Return the bounded evidence query limit shared by all recurring detectors.
+     */
     private function scanLimit(): int
     {
         return max(50, min(5000, (int) config('aios.knowledge_improvement_scan_limit', 500)));
     }
 
+    /**
+     * Return the oldest timestamp eligible for recurring evidence collection.
+     */
     private function since(): CarbonInterface
     {
         $days = max(1, min(3650, (int) config('aios.knowledge_improvement_lookback_days', 180)));
