@@ -40,6 +40,12 @@ return [
     'knowledge_improvement_lookback_days' => (int) env('AIOS_KNOWLEDGE_IMPROVEMENT_LOOKBACK_DAYS', 180),
     'roadmap_scan_interval_hours' => (int) env('AIOS_ROADMAP_SCAN_INTERVAL_HOURS', 24),
 
+    // Global Orchestrator bootstrap defaults. These values provision only the configurable
+    // advisory Agent identity. They do not schedule, invoke, route, or mutate anything.
+    'orchestrator_harness' => env('AIOS_ORCHESTRATOR_HARNESS', 'claude_code'),
+    'orchestrator_model' => env('AIOS_ORCHESTRATOR_MODEL'),
+    'orchestrator_reasoning_setting' => env('AIOS_ORCHESTRATOR_REASONING_SETTING'),
+
     // Workflow Recovery Engineer (AIOS system/reliability agent, not a project workflow role).
     'recovery_stale_status_after_seconds' => (int) env('AIOS_RECOVERY_STALE_STATUS_AFTER_SECONDS', 90),
     'recovery_claim_stale_after_seconds' => (int) env('AIOS_RECOVERY_CLAIM_STALE_AFTER_SECONDS', 900),

@@ -28,6 +28,7 @@ final class ContextBudgetPolicy
         'project_manager' => self::NormalTargetPercent,
         'coder' => self::NormalTargetPercent,
         'reviewer' => self::NormalTargetPercent,
+        'orchestrator' => self::NormalTargetPercent,
     ];
 
     /**
@@ -46,6 +47,8 @@ final class ContextBudgetPolicy
     ];
 
     /**
+     * Resolve deterministic Context Budget limits for an approved role.
+     *
      * @return array{
      *     schema_version: int,
      *     policy_version: int,
@@ -137,6 +140,9 @@ final class ContextBudgetPolicy
         ];
     }
 
+    /**
+     * Convert a percentage of a token count to a deterministic integer token budget.
+     */
     private function tokensAtPercent(int $tokens, int $percent): int
     {
         return (int) floor($tokens * ($percent / 100));

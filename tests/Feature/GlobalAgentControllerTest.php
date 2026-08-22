@@ -14,8 +14,20 @@ use App\RecoveryIncidentStatus;
 use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia as Assert;
 
-test('the agents index exposes durable command center signals', function () {
-    $agent = Agent::query()->whereNull('project_id')->sole();
+/**
+ * Resolve a specific global Agent without relying on row ordering.
+ */
+function p5001ControllerAgent(AgentRole $role): Agent
+{
+    return Agent::query()
+        ->whereNull('project_id')
+        ->where('role', $role)
+        ->sole();
+}
+
+test('the agents index exposes both singleton global Agents by role', function () {
+    $recoveryAgent = p5001ControllerAgent(AgentRole::RecoveryEngineer);
+    $orchestrator = p5001ControllerAgent(AgentRole::Orchestrator);
 
     $project = Project::create([
         'name' => 'Example',
@@ -33,7 +45,7 @@ test('the agents index exposes durable command center signals', function () {
 
     $run = AgentRun::create([
         'project_id' => $project->id,
-        'agent_id' => $agent->id,
+        'agent_id' => $recoveryAgent->id,
         'recovery_incident_id' => $incident->id,
         'role' => AgentRole::RecoveryEngineer,
         'status' => AgentRunStatus::Completed,
@@ -46,7 +58,7 @@ test('the agents index exposes durable command center signals', function () {
         'project_id' => $project->id,
         'event_type' => 'recovery.scan.completed',
         'payload' => [
-            'agent_id' => $agent->id,
+            'agent_id' => $recoveryAgent->id,
         ],
         'occurred_at' => now(),
     ]);
@@ -56,16 +68,33 @@ test('the agents index exposes durable command center signals', function () {
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('agents/index')
-            ->where('agents.0.id', $agent->id)
-            ->where('agents.0.name', 'AIOS Workflow Recovery Engineer')
-            ->where('agents.0.open_incident_count', 1)
-            ->where('agents.0.runtime_status', 'working')
-            ->where('agents.0.latest_run.id', $run->id)
-            ->where('agents.0.latest_run.status', 'completed')
-            ->where('agents.0.recent_activity.0.id', $run->id)
-            ->where('agents.0.recent_activity.0.duration_seconds', 4)
-            ->where('system.total_agents', 1)
-            ->where('system.enabled_agents', 1)
+            ->where('agents', function ($agents) use (
+                $orchestrator,
+                $recoveryAgent,
+                $run,
+            ): bool {
+                $byRole = collect($agents)->keyBy('role');
+                $orchestratorPayload = $byRole->get('orchestrator');
+                $recoveryPayload = $byRole->get('recovery_engineer');
+
+                return is_array($orchestratorPayload)
+                    && is_array($recoveryPayload)
+                    && $byRole->count() === 2
+                    && ($orchestratorPayload['id'] ?? null) === $orchestrator->id
+                    && ($orchestratorPayload['name'] ?? null) === 'AIOS Global Orchestrator'
+                    && ($orchestratorPayload['runtime_status'] ?? null) === 'idle'
+                    && ($orchestratorPayload['open_incident_count'] ?? null) === 0
+                    && ($recoveryPayload['id'] ?? null) === $recoveryAgent->id
+                    && ($recoveryPayload['name'] ?? null) === 'AIOS Workflow Recovery Engineer'
+                    && ($recoveryPayload['open_incident_count'] ?? null) === 1
+                    && ($recoveryPayload['runtime_status'] ?? null) === 'working'
+                    && data_get($recoveryPayload, 'latest_run.id') === $run->id
+                    && data_get($recoveryPayload, 'latest_run.status') === 'completed'
+                    && data_get($recoveryPayload, 'recent_activity.0.id') === $run->id
+                    && data_get($recoveryPayload, 'recent_activity.0.duration_seconds') === 4;
+            })
+            ->where('system.total_agents', 2)
+            ->where('system.enabled_agents', 2)
             ->where('system.open_incidents', 1)
             ->where('system.active_recoveries', 1)
             ->where('active_incidents.0.id', $incident->id)
@@ -83,32 +112,48 @@ test('a project agent is never resolved through the global agent show route', fu
         ->assertNotFound();
 });
 
-test('updating a global agent bumps its configuration version and records an audit event', function () {
-    $agent = Agent::query()->whereNull('project_id')->sole();
+test('the Orchestrator uses the shared global Agent detail flow without recovery runtime state', function () {
+    $agent = p5001ControllerAgent(AgentRole::Orchestrator);
+
+    $this->actingAs(User::factory()->create())
+        ->get(route('agents.show', $agent))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('agents/show')
+            ->where('agent.id', $agent->id)
+            ->where('agent.role', AgentRole::Orchestrator->value)
+            ->where('agent.invoke_in_progress', false)
+            ->where('incidents.data', []));
+});
+
+test('updating the Orchestrator bumps its configuration version and preserves global identity', function () {
+    $agent = p5001ControllerAgent(AgentRole::Orchestrator);
 
     $this->actingAs(User::factory()->create())
         ->patch(route('agents.update', $agent), [
             'name' => $agent->name,
             'harness' => $agent->getRawOriginal('harness'),
-            'model' => 'claude-opus-5',
-            'reasoning_setting' => null,
-            'default_context' => null,
+            'model' => $agent->model,
+            'reasoning_setting' => $agent->reasoning_setting,
+            'default_context' => 'Advisory Orchestrator context.',
             'enabled' => true,
         ])
         ->assertRedirect(route('agents.show', $agent));
 
     $agent->refresh();
 
-    expect($agent->model)->toBe('claude-opus-5')
-        ->and($agent->configuration_version)->toBe(2);
+    expect($agent->default_context)->toBe('Advisory Orchestrator context.')
+        ->and($agent->configuration_version)->toBe(2)
+        ->and($agent->role)->toBe(AgentRole::Orchestrator)
+        ->and($agent->project_id)->toBeNull();
 
     $this->assertDatabaseHas('audit_events', [
         'event_type' => 'agent.updated',
     ]);
 });
 
-test('disabling a global agent records an agent.disabled audit event', function () {
-    $agent = Agent::query()->whereNull('project_id')->sole();
+test('disabling the Orchestrator records an agent.disabled audit event', function () {
+    $agent = p5001ControllerAgent(AgentRole::Orchestrator);
 
     $this->actingAs(User::factory()->create())
         ->patch(route('agents.update', $agent), [
@@ -143,8 +188,8 @@ test('a project agent cannot be edited through the global agent update route', f
         ->assertNotFound();
 });
 
-test('a global agent run console renders for its own run', function () {
-    $agent = Agent::query()->whereNull('project_id')->sole();
+test('a global Recovery Engineer run console renders for its own run', function () {
+    $agent = p5001ControllerAgent(AgentRole::RecoveryEngineer);
 
     $project = Project::create([
         'name' => 'Example',
@@ -176,10 +221,10 @@ test('a global agent run console renders for its own run', function () {
             ]));
 });
 
-test('invoking a global agent dispatches a manual recovery scan and records an audit event', function () {
+test('invoking the Recovery Engineer dispatches the existing manual recovery job', function () {
     Queue::fake();
 
-    $agent = Agent::query()->whereNull('project_id')->sole();
+    $agent = p5001ControllerAgent(AgentRole::RecoveryEngineer);
 
     $this->actingAs(User::factory()->create())
         ->post(route('agents.invoke', $agent))
@@ -195,10 +240,22 @@ test('invoking a global agent dispatches a manual recovery scan and records an a
     ]);
 });
 
-test('a disabled global agent cannot be invoked', function () {
+test('the Orchestrator cannot be invoked through the Recovery Engineer route', function () {
     Queue::fake();
 
-    $agent = Agent::query()->whereNull('project_id')->sole();
+    $agent = p5001ControllerAgent(AgentRole::Orchestrator);
+
+    $this->actingAs(User::factory()->create())
+        ->post(route('agents.invoke', $agent))
+        ->assertNotFound();
+
+    Queue::assertNothingPushed();
+});
+
+test('a disabled Recovery Engineer cannot be invoked', function () {
+    Queue::fake();
+
+    $agent = p5001ControllerAgent(AgentRole::RecoveryEngineer);
     $agent->update(['enabled' => false]);
 
     $this->actingAs(User::factory()->create())
@@ -208,10 +265,10 @@ test('a disabled global agent cannot be invoked', function () {
     Queue::assertNothingPushed();
 });
 
-test('a global agent already diagnosing an incident cannot be invoked again', function () {
+test('a Recovery Engineer already diagnosing an incident cannot be invoked again', function () {
     Queue::fake();
 
-    $agent = Agent::query()->whereNull('project_id')->sole();
+    $agent = p5001ControllerAgent(AgentRole::RecoveryEngineer);
 
     $project = Project::create([
         'name' => 'Example',
@@ -247,7 +304,7 @@ test('a project agent cannot be invoked through the global agent invoke route', 
 });
 
 test('a run belonging to another agent cannot be viewed through this agent', function () {
-    $agent = Agent::query()->whereNull('project_id')->sole();
+    $agent = p5001ControllerAgent(AgentRole::RecoveryEngineer);
     $otherAgent = Agent::factory()->create();
 
     $project = Project::create([

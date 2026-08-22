@@ -21,6 +21,9 @@ beforeEach(function (): void {
     );
 });
 
+/**
+ * Create an isolated running project for future-capability governance tests.
+ */
 function futureGovernanceProject(string $name): Project
 {
     $path = sys_get_temp_dir().'/ageax-future-governance-'.Str::uuid();
@@ -34,6 +37,9 @@ function futureGovernanceProject(string $name): Project
     ]);
 }
 
+/**
+ * Create one queued task whose workflow authority must remain AIOS-owned.
+ */
 function futureGovernanceTask(Project $project): Task
 {
     return Task::create([
@@ -49,7 +55,11 @@ function futureGovernanceTask(Project $project): Task
     ]);
 }
 
-/** @param list<string> $clauses */
+/**
+ * Assert that a governance document still contains all required authority clauses.
+ *
+ * @param  list<string>  $clauses
+ */
 function expectFutureGovernanceClauses(string $path, array $clauses): void
 {
     $contents = (string) str(File::get(base_path($path)))->squish();
@@ -100,9 +110,14 @@ test('phase four governance contracts keep future capabilities subordinate to AI
     ]);
 });
 
-test('enum membership does not grant a role global Agent authority', function (): void {
+test('enum membership does not grant unapproved roles global Agent authority', function (): void {
+    $approvedGlobalRoles = [
+        AgentRole::RecoveryEngineer,
+        AgentRole::Orchestrator,
+    ];
+
     foreach (AgentRole::cases() as $role) {
-        if ($role === AgentRole::RecoveryEngineer) {
+        if (in_array($role, $approvedGlobalRoles, true)) {
             continue;
         }
 
@@ -118,7 +133,7 @@ test('enum membership does not grant a role global Agent authority', function ()
     }
 });
 
-test('the current persisted global system Agent authority remains Recovery Engineer only', function (): void {
+test('the persisted global system Agent authority is exactly Recovery Engineer and Orchestrator', function (): void {
     $roles = Agent::query()
         ->whereNull('project_id')
         ->get()
@@ -127,19 +142,39 @@ test('the current persisted global system Agent authority remains Recovery Engin
         ->values()
         ->all();
 
-    expect($roles)->toBe([AgentRole::RecoveryEngineer->value]);
+    expect($roles)->toBe([
+        AgentRole::Orchestrator->value,
+        AgentRole::RecoveryEngineer->value,
+    ]);
 });
 
-test('global Agent role identity cannot be mutated into an unapproved future role', function (): void {
-    $agent = Agent::query()
-        ->whereNull('project_id')
-        ->where('role', AgentRole::RecoveryEngineer)
-        ->sole();
+test('approved global Agent role identities cannot be mutated into an unapproved future role', function (): void {
+    foreach ([AgentRole::RecoveryEngineer, AgentRole::Orchestrator] as $role) {
+        $agent = Agent::query()
+            ->whereNull('project_id')
+            ->where('role', $role)
+            ->sole();
 
-    $agent->role = AgentRole::KnowledgeArchitect;
+        $agent->role = AgentRole::KnowledgeArchitect;
 
-    expect(fn () => $agent->save())->toThrow(LogicException::class);
-    expect($agent->fresh()?->role)->toBe(AgentRole::RecoveryEngineer);
+        expect(fn () => $agent->save())->toThrow(LogicException::class);
+        expect($agent->fresh()?->role)->toBe($role);
+    }
+});
+
+test('Orchestrator cannot be persisted as a project Agent', function (): void {
+    $project = futureGovernanceProject('Orchestrator Project Scope');
+
+    expect(fn () => Agent::query()->create([
+        'project_id' => $project->id,
+        'name' => 'Invalid Project Orchestrator',
+        'role' => AgentRole::Orchestrator,
+        'harness' => AgentHarness::Codex,
+        'enabled' => true,
+    ]))->toThrow(
+        LogicException::class,
+        'Agent role must be a supported AIOS workflow role.',
+    );
 });
 
 test('non task roles cannot claim or transition queued Task work through TaskWorkflow', function (): void {
@@ -171,6 +206,29 @@ test('current worker authority remains one durable role lane per project', funct
         'role' => AgentRole::Coder,
         'status' => 'idle',
     ]))->toThrow(QueryException::class);
+});
+
+test('the global Orchestrator cannot bind to a project AgentWorker', function (): void {
+    $project = futureGovernanceProject('Orchestrator Worker Boundary');
+
+    $worker = AgentWorker::create([
+        'project_id' => $project->id,
+        'role' => AgentRole::Coder,
+        'status' => 'idle',
+    ]);
+
+    $orchestrator = Agent::query()
+        ->whereNull('project_id')
+        ->where('role', AgentRole::Orchestrator)
+        ->sole();
+
+    expect(fn () => app(BindAgentWorker::class)->handle($worker, $orchestrator))
+        ->toThrow(
+            LogicException::class,
+            'Agent must belong to the same project as the worker.',
+        );
+
+    expect($worker->fresh()?->agent_id)->toBeNull();
 });
 
 test('future capability work cannot cross project AgentWorker ownership boundaries', function (): void {

@@ -49,10 +49,16 @@ type IncidentPage = {
     next_page_url: string | null;
 };
 
+/**
+ * Convert a persisted Agent role key into a human-readable label.
+ */
 function roleLabel(role: string): string {
     return role.replace('_', ' ');
 }
 
+/**
+ * Map RecoveryIncident status to the existing badge variants.
+ */
 function statusVariant(status: string): 'default' | 'secondary' | 'outline' {
     if (status === 'recovered') {
         return 'default';
@@ -65,6 +71,10 @@ function statusVariant(status: string): 'default' | 'secondary' | 'outline' {
     return 'outline';
 }
 
+/**
+ * Render the shared configuration screen while keeping recovery-only controls
+ * exclusive to the Workflow Recovery Engineer.
+ */
 export default function AgentShow({
     agent,
     incidents,
@@ -75,6 +85,8 @@ export default function AgentShow({
     harness_capabilities: HarnessCapabilities;
 }) {
     usePoll(3_000, { only: ['agent'], preserveErrors: true }, { mode: 'rest' });
+
+    const isRecoveryEngineer = agent.role === 'recovery_engineer';
 
     return (
         <>
@@ -108,12 +120,15 @@ export default function AgentShow({
                         <div>
                             <CardTitle>Configuration</CardTitle>
                             <CardDescription>
-                                Editing this takes effect on the next scheduled
-                                run.
+                                {isRecoveryEngineer
+                                    ? 'Editing this takes effect on the next scheduled run.'
+                                    : 'Editing this configures the advisory Orchestrator for a future approved execution path.'}
                             </CardDescription>
                         </div>
                         <div className="flex items-center gap-2">
-                            <InvokeNowForm agent={agent} />
+                            {isRecoveryEngineer && (
+                                <InvokeNowForm agent={agent} />
+                            )}
                             <ToggleEnabledForm agent={agent} />
                         </div>
                     </CardHeader>
@@ -149,106 +164,112 @@ export default function AgentShow({
                     </CardContent>
                 </Card>
 
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Recovery incidents</CardTitle>
-                        <CardDescription>
-                            What this agent has worked, across every project.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="grid gap-2">
-                        {incidents.data.length === 0 && (
-                            <p className="py-6 text-center text-sm text-muted-foreground">
-                                No recovery incidents recorded yet.
-                            </p>
-                        )}
-                        {incidents.data.map((incident) => (
-                            <div
-                                key={incident.id}
-                                className="grid gap-1 rounded-md border p-3 text-sm"
-                            >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <span className="font-medium">
-                                        {incident.project?.name ??
-                                            'Unknown project'}
-                                        {incident.task
-                                            ? ` · ${incident.task.key}: ${incident.task.title}`
-                                            : ''}
-                                    </span>
-                                    <div className="flex items-center gap-2">
-                                        {incident.root_cause_category && (
-                                            <Badge variant="outline">
-                                                {incident.root_cause_category.replace(
-                                                    /_/g,
-                                                    ' ',
-                                                )}
-                                            </Badge>
-                                        )}
-                                        <Badge
-                                            variant={statusVariant(
-                                                incident.status,
-                                            )}
-                                        >
-                                            {incident.status}
-                                        </Badge>
-                                    </div>
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                    Detected {incident.detected_at}
-                                    {incident.resolved_at
-                                        ? ` · Resolved ${incident.resolved_at}`
-                                        : ''}
+                {isRecoveryEngineer && (
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Recovery incidents</CardTitle>
+                            <CardDescription>
+                                What this agent has worked, across every
+                                project.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="grid gap-2">
+                            {incidents.data.length === 0 && (
+                                <p className="py-6 text-center text-sm text-muted-foreground">
+                                    No recovery incidents recorded yet.
                                 </p>
-                                {incident.escalation_reason && (
+                            )}
+                            {incidents.data.map((incident) => (
+                                <div
+                                    key={incident.id}
+                                    className="grid gap-1 rounded-md border p-3 text-sm"
+                                >
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <span className="font-medium">
+                                            {incident.project?.name ??
+                                                'Unknown project'}
+                                            {incident.task
+                                                ? ` · ${incident.task.key}: ${incident.task.title}`
+                                                : ''}
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            {incident.root_cause_category && (
+                                                <Badge variant="outline">
+                                                    {incident.root_cause_category.replace(
+                                                        /_/g,
+                                                        ' ',
+                                                    )}
+                                                </Badge>
+                                            )}
+                                            <Badge
+                                                variant={statusVariant(
+                                                    incident.status,
+                                                )}
+                                            >
+                                                {incident.status}
+                                            </Badge>
+                                        </div>
+                                    </div>
                                     <p className="text-xs text-muted-foreground">
-                                        {incident.escalation_reason}
+                                        Detected {incident.detected_at}
+                                        {incident.resolved_at
+                                            ? ` · Resolved ${incident.resolved_at}`
+                                            : ''}
                                     </p>
-                                )}
-                                {incident.latest_run_id && (
-                                    <Link
-                                        href={
-                                            showRun([
-                                                agent.id,
-                                                incident.latest_run_id,
-                                            ]).url
-                                        }
-                                        className="text-xs text-primary hover:underline"
-                                    >
-                                        View console
-                                    </Link>
-                                )}
-                            </div>
-                        ))}
-                        {(incidents.prev_page_url ||
-                            incidents.next_page_url) && (
-                            <div className="flex justify-between pt-2">
-                                {incidents.prev_page_url ? (
-                                    <Link
-                                        href={incidents.prev_page_url}
-                                        className="text-sm text-muted-foreground hover:text-foreground"
-                                    >
-                                        ← Newer
-                                    </Link>
-                                ) : (
-                                    <span />
-                                )}
-                                {incidents.next_page_url && (
-                                    <Link
-                                        href={incidents.next_page_url}
-                                        className="text-sm text-muted-foreground hover:text-foreground"
-                                    >
-                                        Older →
-                                    </Link>
-                                )}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
+                                    {incident.escalation_reason && (
+                                        <p className="text-xs text-muted-foreground">
+                                            {incident.escalation_reason}
+                                        </p>
+                                    )}
+                                    {incident.latest_run_id && (
+                                        <Link
+                                            href={
+                                                showRun([
+                                                    agent.id,
+                                                    incident.latest_run_id,
+                                                ]).url
+                                            }
+                                            className="text-xs text-primary hover:underline"
+                                        >
+                                            View console
+                                        </Link>
+                                    )}
+                                </div>
+                            ))}
+                            {(incidents.prev_page_url ||
+                                incidents.next_page_url) && (
+                                <div className="flex justify-between pt-2">
+                                    {incidents.prev_page_url ? (
+                                        <Link
+                                            href={incidents.prev_page_url}
+                                            className="text-sm text-muted-foreground hover:text-foreground"
+                                        >
+                                            ← Newer
+                                        </Link>
+                                    ) : (
+                                        <span />
+                                    )}
+                                    {incidents.next_page_url && (
+                                        <Link
+                                            href={incidents.next_page_url}
+                                            className="text-sm text-muted-foreground hover:text-foreground"
+                                        >
+                                            Older →
+                                        </Link>
+                                    )}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                )}
             </div>
         </>
     );
 }
 
+/**
+ * Submit the existing recovery-only manual invocation action.
+ */
 function InvokeNowForm({ agent }: { agent: Agent }) {
     return (
         <Form {...invokeAgent.form(agent)} className="inline">
@@ -281,6 +302,9 @@ function InvokeNowForm({ agent }: { agent: Agent }) {
     );
 }
 
+/**
+ * Enable or disable any approved global Agent through the shared update route.
+ */
 function ToggleEnabledForm({ agent }: { agent: Agent }) {
     return (
         <Form {...updateAgent.form(agent)} className="inline">

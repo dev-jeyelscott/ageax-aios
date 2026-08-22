@@ -45,6 +45,9 @@ class Agent extends Model
         'configuration_version' => 1,
     ];
 
+    /**
+     * Enforce Agent ownership, role, configuration, and versioning invariants.
+     */
     protected static function booted(): void
     {
         static::creating(function (Agent $agent): void {
@@ -71,6 +74,9 @@ class Agent extends Model
         });
     }
 
+    /**
+     * Cast persisted Agent configuration to its domain types.
+     */
     protected function casts(): array
     {
         return [
@@ -110,6 +116,8 @@ class Agent extends Model
     }
 
     /**
+     * Resolve the last durable configuration version before an update.
+     *
      * @return int<1, max>
      */
     private function latestPersistedConfigurationVersion(): int
@@ -121,11 +129,28 @@ class Agent extends Model
         return $version < 1 ? 1 : $version;
     }
 
-    /** Global Agents (project_id null) configure AIOS system/reliability roles; project Agents configure core workflow roles. Never both. */
-    private const array GlobalRoles = [AgentRole::RecoveryEngineer];
+    /**
+     * Global Agents configure only explicitly approved AIOS system roles.
+     *
+     * Enum membership alone must never grant global persistence authority.
+     */
+    private const array GlobalRoles = [
+        AgentRole::RecoveryEngineer,
+        AgentRole::Orchestrator,
+    ];
 
-    private const array ProjectRoles = [AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer];
+    /**
+     * Project Agents remain limited to the existing core workflow roles.
+     */
+    private const array ProjectRoles = [
+        AgentRole::ProjectManager,
+        AgentRole::Coder,
+        AgentRole::Reviewer,
+    ];
 
+    /**
+     * Validate role ownership, harness support, and secret-material restrictions.
+     */
     private function assertConfigurationIsValid(): void
     {
         $role = $this->getAttribute('role');
