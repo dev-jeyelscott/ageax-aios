@@ -2,12 +2,16 @@
 paths:
   - 'app/Actions/*KnowledgeImprovement*.php'
   - 'app/Services/*KnowledgeImprovement*.php'
+  - 'app/Services/*KnowledgeSource*.php'
   - 'app/KnowledgeImprovement*.php'
   - 'app/Models/KnowledgeImprovement*.php'
+  - 'app/Models/KnowledgeSource*.php'
   - 'app/Http/Controllers/**/*KnowledgeImprovement*.php'
   - 'app/Http/Requests/**/*KnowledgeImprovement*.php'
   - 'app/Console/Commands/*KnowledgeImprovement*.php'
   - 'database/migrations/*knowledge_improvement*.php'
+  - 'database/migrations/*knowledge_source*.php'
+  - 'database/factories/KnowledgeSource*.php'
   - 'resources/js/**/knowledge-improvements/**'
 ---
 

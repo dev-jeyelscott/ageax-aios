@@ -4,16 +4,22 @@ namespace App\Console\Commands;
 
 use App\Models\Project;
 use App\Services\KnowledgeImprovementScanner;
+use App\Services\KnowledgeSourceManifestSynchronizer;
 use Illuminate\Console\Command;
 
 class ScanKnowledgeImprovements extends Command
 {
     protected $signature = 'aios:knowledge-improvements:scan {--project= : Scan only one project ID}';
 
-    protected $description = 'Scan durable AIOS failure evidence for recurring operator-reviewable knowledge improvements';
+    protected $description = 'Scan durable AIOS knowledge source and recurring failure evidence';
 
-    public function handle(KnowledgeImprovementScanner $scanner): int
-    {
+    /**
+     * Synchronize temporal source evidence before running the existing candidate detector.
+     */
+    public function handle(
+        KnowledgeSourceManifestSynchronizer $sources,
+        KnowledgeImprovementScanner $scanner,
+    ): int {
         $projectId = $this->option('project');
         $query = Project::query()->orderBy('id');
 
@@ -35,8 +41,9 @@ class ScanKnowledgeImprovements extends Command
 
         $changed = 0;
 
-        $query->chunkById(50, function ($projects) use ($scanner, &$changed): void {
+        $query->chunkById(50, function ($projects) use ($sources, $scanner, &$changed): void {
             foreach ($projects as $project) {
+                $sources->sync($project);
                 $changed += $scanner->scan($project);
             }
         });

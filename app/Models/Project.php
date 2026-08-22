@@ -67,6 +67,16 @@ class Project extends Model
         return $this->hasMany(KnowledgeImprovementCandidate::class);
     }
 
+    /**
+     * Return all temporal knowledge source versions owned by this project.
+     *
+     * @return HasMany<KnowledgeSourceManifest, $this>
+     */
+    public function knowledgeSourceManifests(): HasMany
+    {
+        return $this->hasMany(KnowledgeSourceManifest::class);
+    }
+
     /** @return HasMany<AgentWorker, $this> */
     public function workers(): HasMany
     {

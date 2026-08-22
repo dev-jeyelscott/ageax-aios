@@ -11,12 +11,16 @@ For any Phase 4+ capability work involving orchestration recommendations, knowle
 | app/Actions/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
 | app/Services/** | .ai/rules/services.md |
 | app/Services/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
+| app/Services/*KnowledgeSource*.php | .ai/rules/knowledge-improvements.md |
 | app/KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
 | app/Models/KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
+| app/Models/KnowledgeSource*.php | .ai/rules/knowledge-improvements.md |
 | app/Http/Controllers/**/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
 | app/Http/Requests/**/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
 | app/Console/Commands/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
 | database/migrations/*knowledge_improvement*.php | .ai/rules/knowledge-improvements.md |
+| database/migrations/*knowledge_source*.php | .ai/rules/knowledge-improvements.md |
+| database/factories/KnowledgeSource*.php | .ai/rules/knowledge-improvements.md |
 | resources/js/**/knowledge-improvements/** | .ai/rules/knowledge-improvements.md |
 | app/Ticket*.php | .ai/rules/tickets.md |
 | app/Models/Ticket*.php | .ai/rules/tickets.md |
