@@ -44,6 +44,30 @@ use Throwable;
  *     source_evidence_hash: ?string,
  *     approved_by_user_id: ?int
  * }
+ * @phpstan-type SelectedRetrievalCandidate array{
+ *     source_id: string,
+ *     source_type: 'obsidian'|'global_pattern',
+ *     source_reference: string,
+ *     content: string,
+ *     rank: int,
+ *     ranking_reason: string,
+ *     relationship: string,
+ *     temporal_rank: int,
+ *     temporal_status: string,
+ *     knowledge_source_manifest_id: ?int,
+ *     content_hash: string,
+ *     superseded_by_id: ?int,
+ *     global_knowledge_pattern_id: ?int,
+ *     pattern_key: ?string,
+ *     name: ?string,
+ *     category: ?string,
+ *     version: ?int,
+ *     source_project_id: ?int,
+ *     source_candidate_id: ?int,
+ *     source_evidence_hash: ?string,
+ *     approved_by_user_id: ?int,
+ *     character_count: int
+ * }
  */
 class ObsidianProjectNotes
 {
@@ -721,7 +745,7 @@ class ObsidianProjectNotes
             ->limit(max($this->maximumSources() * 4, 4))
             ->get();
 
-        return $patterns
+        return array_values($patterns
             ->map(function (GlobalKnowledgePattern $pattern): array {
                 $reference = 'global-pattern:'
                     .$pattern->pattern_key
@@ -752,14 +776,14 @@ class ObsidianProjectNotes
                     'approved_by_user_id' => (int) $pattern->approved_by_user_id,
                 ];
             })
-            ->all();
+            ->all());
     }
 
     /**
      * Apply one shared deterministic source-count and character budget after ranking.
      *
      * @param  list<RetrievalCandidate>  $candidates
-     * @return list<RetrievalCandidate&array{character_count: int}>
+     * @return list<SelectedRetrievalCandidate>
      */
     private function selectCandidates(array $candidates): array
     {
@@ -901,7 +925,7 @@ class ObsidianProjectNotes
     /**
      * Build the bounded approved-pattern payload exposed through existing approved documentation context.
      *
-     * @param  RetrievalCandidate&array{character_count: int}  $candidate
+     * @param  SelectedRetrievalCandidate  $candidate
      * @return array<string, mixed>
      */
     private function approvedPatternPayload(array $candidate): array
@@ -923,7 +947,7 @@ class ObsidianProjectNotes
     /**
      * Build one explainable manifest entry without embedding source content.
      *
-     * @param  RetrievalCandidate&array{character_count: int}  $candidate
+     * @param  SelectedRetrievalCandidate  $candidate
      * @return array<string, mixed>
      */
     private function sourceManifestEntry(array $candidate): array
