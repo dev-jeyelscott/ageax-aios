@@ -22,6 +22,7 @@ function reviewerRiskMapFactory(): TaskContextCapsuleFactory
     $notes->shouldReceive('taskRetrieval')->andReturnUsing(
         fn (Task $task, AgentRole $role): array => [
             'notes' => [],
+            'approved_patterns' => [],
             'manifest' => [
                 'role' => $role->value,
                 'task_id' => $task->id,

@@ -119,7 +119,7 @@ test('a task context capsule includes the prior attempt evidence for a fresh ret
     ]);
 });
 
-test('a task context capsule prioritizes state and excludes unrelated Obsidian notes', function () {
+test('a task context capsule prioritizes current task knowledge and excludes unrelated Obsidian notes', function () {
     $vault = storage_path('framework/testing/obsidian-'.fake()->uuid());
     config()->set('aios.obsidian_vault_path', $vault);
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
@@ -139,10 +139,10 @@ test('a task context capsule prioritizes state and excludes unrelated Obsidian n
     $capsule = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Coder);
 
     expect(array_keys($capsule['obsidian_project_knowledge']))->toBe([
-        'STATE.md',
         'Task Briefs/TASK-001 - implement-the-task-detail-page.md',
-        'Specifications/Task Detail.md',
+        'STATE.md',
         'Decisions/No New Dependencies.md',
+        'Specifications/Task Detail.md',
     ])
         ->and($capsule['obsidian_project_knowledge']['STATE.md'])->toBe('The repository is paused until TASK-001 is reviewed.')
         ->and(implode("\n", $capsule['obsidian_project_knowledge']))->not->toContain('UNRELATED NOTE MUST NOT REACH CODEX')
@@ -164,8 +164,8 @@ test('a task context capsule enforces per-note and overall Obsidian budgets', fu
     $knowledge = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Coder)['obsidian_project_knowledge'];
 
     expect($knowledge)->toBe([
-        'STATE.md' => '0123456789',
-        'Task Briefs/TASK-001 - implement-the-task-detail-page.md' => 'abc',
+        'Task Briefs/TASK-001 - implement-the-task-detail-page.md' => 'abcdefghij',
+        'STATE.md' => '012',
     ]);
 });
 

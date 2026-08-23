@@ -395,8 +395,8 @@ test('manifest synchronization does not broaden bounded agent retrieval', functi
             ->count(),
     )->toBe(4)
         ->and(array_keys($retrieval['notes']))->toBe([
-            'STATE.md',
             'Task Briefs/TASK-001 - bounded-source-retrieval.md',
+            'STATE.md',
             'Specifications/Intent.md',
         ])
         ->and($retrieval['notes'])
