@@ -53,6 +53,7 @@ class TaskContextCapsuleFactory
             'project_runtime_capabilities' => $this->runtime->detect($task->project),
             'previous_attempt' => $this->previousAttemptContext($previousAttempt, $recipientRole),
             'obsidian_project_knowledge' => $retrieval['notes'],
+            'approved_documentation' => $retrieval['approved_patterns'],
             'retrieval_manifest' => $retrievalManifest,
             'operator_messages' => $task->operatorMessages()
                 ->where('recipient_role', $recipientRole)

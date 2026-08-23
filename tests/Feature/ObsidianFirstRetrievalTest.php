@@ -38,7 +38,7 @@ test('roadmap persistence creates a compact task brief with validated task data'
         ->toContain('[[Specifications/Retrieval.md]]');
 });
 
-test('coder retrieval is limited to state task brief and intentional notes within its budget', function () {
+test('coder retrieval is limited to task brief state and intentional notes within its budget', function () {
     $vault = storage_path('framework/testing/obsidian-'.fake()->uuid());
     config()->set('aios.obsidian_vault_path', $vault);
     config()->set('aios.obsidian_context_max_notes', 4);
@@ -57,13 +57,19 @@ test('coder retrieval is limited to state task brief and intentional notes withi
     $capsule = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Coder);
 
     expect($capsule['obsidian_project_knowledge'])->toBe([
-        'STATE.md' => 'CURRENT STATE',
         'Task Briefs/TASK-001 - retrieve-notes.md' => 'CURRENT BRIEF',
+        'STATE.md' => 'CURRENT STATE',
         'Specifications/Intent.md' => 'INTENTIONAL NOTE',
     ])
+        ->and($capsule['approved_documentation'])->toBe([])
         ->and($capsule['retrieval_manifest'])->toMatchArray([
             'role' => 'coder',
-            'selected_note_paths' => ['STATE.md', 'Task Briefs/TASK-001 - retrieve-notes.md', 'Specifications/Intent.md'],
+            'selected_note_paths' => ['Task Briefs/TASK-001 - retrieve-notes.md', 'STATE.md', 'Specifications/Intent.md'],
+        ])
+        ->and(array_column($capsule['retrieval_manifest']['selected_sources'], 'ranking_reason'))->toBe([
+            'current_task_brief',
+            'current_state',
+            'explicit_link',
         ]);
 });
 
