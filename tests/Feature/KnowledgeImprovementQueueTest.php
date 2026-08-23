@@ -22,6 +22,9 @@ use App\Services\KnowledgeImprovementScanner;
 use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia as Assert;
 
+/**
+ * Create one isolated project fixture for knowledge-improvement queue coverage.
+ */
 function knowledgeQueueProject(string $name): Project
 {
     return Project::factory()->create([
@@ -30,6 +33,9 @@ function knowledgeQueueProject(string $name): Project
     ]);
 }
 
+/**
+ * Create one deterministic Task fixture used to generate recurring knowledge evidence.
+ */
 function knowledgeQueueTask(Project $project, int $position, string $key): Task
 {
     return Task::query()->create([
@@ -49,6 +55,9 @@ function knowledgeQueueTask(Project $project, int $position, string $key): Task
     ]);
 }
 
+/**
+ * Create one TaskAttempt fixture with bounded deterministic validation evidence.
+ */
 function knowledgeQueueAttempt(Task $task, int $number, array $validation = ['passed' => true]): TaskAttempt
 {
     return TaskAttempt::query()->create([
@@ -62,6 +71,9 @@ function knowledgeQueueAttempt(Task $task, int $number, array $validation = ['pa
     ]);
 }
 
+/**
+ * Record one structured review finding used by deterministic knowledge detection tests.
+ */
 function recordKnowledgeReviewFinding(Project $project, int $position, string $whyIncorrect): ReviewFinding
 {
     $task = knowledgeQueueTask($project, $position, 'TASK-'.str_pad((string) $position, 3, '0', STR_PAD_LEFT));
@@ -383,7 +395,9 @@ test('the operator queue is authenticated and nested candidates stay project sco
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/knowledge-improvements/index')
             ->where('project.id', $project->id)
-            ->where('candidates.0.id', $candidate->id));
+            ->where('candidates.data.0.id', $candidate->id)
+            ->where('candidates.total', 1)
+            ->where('pendingCount', 1));
 
     $this->patch(
         route('projects.knowledge-improvements.decide', [$otherProject, $candidate]),
@@ -391,4 +405,107 @@ test('the operator queue is authenticated and nested candidates stay project sco
     )->assertNotFound();
 
     expect($candidate->refresh()->status)->toBe(KnowledgeImprovementCandidateStatus::Pending);
+});
+
+test('the operator queue paginates with deterministic ordering and project-wide summary counts', function () {
+    $user = User::factory()->create();
+    $project = knowledgeQueueProject('Paginated Knowledge UI project');
+    $otherProject = knowledgeQueueProject('Other paginated Knowledge UI project');
+    $timestamp = now()->startOfSecond();
+    $pendingIds = [];
+    $approvedIds = [];
+
+    foreach (range(1, 12) as $index) {
+        $pendingIds[] = KnowledgeImprovementCandidate::factory()
+            ->for($project)
+            ->create([
+                'status' => KnowledgeImprovementCandidateStatus::Pending,
+                'first_seen_at' => $timestamp,
+                'last_seen_at' => $timestamp,
+            ])
+            ->id;
+    }
+
+    foreach (range(1, 13) as $index) {
+        $approvedIds[] = KnowledgeImprovementCandidate::factory()
+            ->for($project)
+            ->create([
+                'status' => KnowledgeImprovementCandidateStatus::Approved,
+                'first_seen_at' => $timestamp,
+                'last_seen_at' => $timestamp,
+            ])
+            ->id;
+    }
+
+    KnowledgeImprovementCandidate::factory()
+        ->for($otherProject)
+        ->create([
+            'status' => KnowledgeImprovementCandidateStatus::Pending,
+            'first_seen_at' => $timestamp,
+            'last_seen_at' => $timestamp,
+        ]);
+
+    $this->actingAs($user)
+        ->get(route('projects.knowledge-improvements.index', $project))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('candidates.current_page', 1)
+            ->where('candidates.per_page', 20)
+            ->where('candidates.total', 25)
+            ->where('candidates.last_page', 2)
+            ->has('candidates.data', 20)
+            ->where('candidates.data.0.id', $pendingIds[11])
+            ->where('candidates.data.11.id', $pendingIds[0])
+            ->where('candidates.data.12.id', $approvedIds[12])
+            ->where('candidates.data.19.id', $approvedIds[5])
+            ->where('pendingCount', 12));
+
+    $this->actingAs($user)
+        ->get(route('projects.knowledge-improvements.index', $project).'?page=2')
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('candidates.current_page', 2)
+            ->where('candidates.per_page', 20)
+            ->where('candidates.total', 25)
+            ->has('candidates.data', 5)
+            ->where('candidates.data.0.id', $approvedIds[4])
+            ->where('candidates.data.4.id', $approvedIds[0])
+            ->where('pendingCount', 12));
+});
+
+test('the operator queue supports bounded custom page sizes and preserves them in pagination links', function () {
+    $user = User::factory()->create();
+    $project = knowledgeQueueProject('Custom Page Size project');
+
+    KnowledgeImprovementCandidate::factory()
+        ->for($project)
+        ->count(25)
+        ->create();
+
+    $this->actingAs($user)
+        ->get(route('projects.knowledge-improvements.index', $project).'?per_page=17')
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('candidates.current_page', 1)
+            ->where('candidates.per_page', 17)
+            ->where('candidates.total', 25)
+            ->has('candidates.data', 17)
+            ->where('candidates.next_page_url', fn ($url): bool => is_string($url)
+                && str_contains($url, 'per_page=17')
+                && str_contains($url, 'page=2')));
+
+    $this->actingAs($user)
+        ->get(route('projects.knowledge-improvements.index', $project).'?per_page=500')
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('candidates.per_page', 100)
+            ->where('candidates.total', 25)
+            ->has('candidates.data', 25));
+
+    $this->actingAs($user)
+        ->get(route('projects.knowledge-improvements.index', $project).'?per_page=invalid')
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('candidates.per_page', 20)
+            ->has('candidates.data', 20));
 });

@@ -113,9 +113,7 @@ class RuntimeExceptionCapture
             return null;
         }
 
-        $request = $this->app->make('request');
-
-        return $request instanceof Request ? $request : null;
+        return $this->app->make('request');
     }
 
     /**
@@ -245,7 +243,7 @@ class RuntimeExceptionCapture
         $stack = [];
 
         foreach ($frames as $frame) {
-            $file = isset($frame['file']) && is_string($frame['file'])
+            $file = isset($frame['file'])
                 ? $this->relativeApplicationPath($frame['file'])
                 : null;
 
@@ -255,15 +253,15 @@ class RuntimeExceptionCapture
 
             $sanitizedFrame = ['file' => $file];
 
-            if (isset($frame['line']) && is_int($frame['line']) && $frame['line'] > 0) {
+            if (isset($frame['line']) && $frame['line'] > 0) {
                 $sanitizedFrame['line'] = $frame['line'];
             }
 
-            if (isset($frame['class']) && is_string($frame['class'])) {
+            if (isset($frame['class'])) {
                 $sanitizedFrame['class'] = $this->safeSymbol($frame['class']);
             }
 
-            if (isset($frame['function']) && is_string($frame['function'])) {
+            if (isset($frame['function'])) {
                 $sanitizedFrame['function'] = $this->safeSymbol($frame['function']);
             }
 

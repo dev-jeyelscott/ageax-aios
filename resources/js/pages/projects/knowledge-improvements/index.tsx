@@ -3,6 +3,8 @@ import {
     ArrowLeft,
     BookOpenCheck,
     Check,
+    ChevronLeft,
+    ChevronRight,
     FlaskConical,
     Globe2,
     Lightbulb,
@@ -20,6 +22,9 @@ import { useAppHeaderSlot } from '@/components/app-header-slot';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+
+const perPagePresets = [10, 20, 50] as const;
 
 const statusClasses: Record<string, string> = {
     pending: 'border-primary/25 bg-primary/10 text-primary',
@@ -86,12 +91,34 @@ type Candidate = {
     global_pattern: GlobalPattern | null;
 };
 
+type PaginationLink = {
+    url: string | null;
+    label: string;
+    active: boolean;
+};
+
+type CandidatePaginator = {
+    current_page: number;
+    data: Candidate[];
+    first_page_url: string;
+    from: number | null;
+    last_page: number;
+    last_page_url: string;
+    links: PaginationLink[];
+    next_page_url: string | null;
+    path: string;
+    per_page: number;
+    prev_page_url: string | null;
+    to: number | null;
+    total: number;
+};
+
 /**
  * Convert persisted snake-case identifiers into operator-friendly labels.
  */
 function humanize(value: string | null): string {
     if (!value) {
-        return '—';
+        return '\u2014';
     }
 
     return value
@@ -104,7 +131,7 @@ function humanize(value: string | null): string {
  */
 function formatDate(value: string | null): string {
     if (!value) {
-        return '—';
+        return '\u2014';
     }
 
     const date = new Date(value);
@@ -124,25 +151,43 @@ function evidenceLabel(reference: EvidenceReference): string {
 }
 
 /**
+ * Build a bounded page-size URL while preserving unrelated query parameters and resetting to page one.
+ */
+function buildPerPageUrl(currentUrl: string, perPage: number): string {
+    const [path, queryString = ''] = currentUrl.split('?');
+    const query = new URLSearchParams(queryString);
+
+    query.delete('page');
+    query.set('per_page', String(perPage));
+
+    const serializedQuery = query.toString();
+
+    return serializedQuery.length > 0 ? `${path}?${serializedQuery}` : path;
+}
+
+/**
  * Render project knowledge candidates and explicit operator-controlled promotion.
  */
 export default function KnowledgeImprovementsIndex({
     project,
     candidates,
+    pendingCount,
     patternCategories,
     patternRoles,
 }: {
     project: Project;
-    candidates: Candidate[];
+    candidates: CandidatePaginator;
+    pendingCount: number;
     patternCategories: string[];
     patternRoles: string[];
 }) {
     const page = usePage();
     const errors = page.props.errors as Record<string, string> | undefined;
-
-    const pendingCount = candidates.filter(
-        (candidate) => candidate.status === 'pending',
-    ).length;
+    const candidateRows = candidates.data;
+    const paginationLinks = candidates.links.slice(1, -1);
+    const persistentQueryEntries = Array.from(
+        new URLSearchParams(page.url.split('?')[1] ?? '').entries(),
+    ).filter(([key]) => key !== 'page' && key !== 'per_page');
 
     useAppHeaderSlot(
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
@@ -217,7 +262,7 @@ export default function KnowledgeImprovementsIndex({
                                         Candidates
                                     </div>
                                     <div className="mt-1 text-lg font-semibold text-foreground">
-                                        {candidates.length}
+                                        {candidates.total}
                                     </div>
                                 </div>
 
@@ -242,7 +287,95 @@ export default function KnowledgeImprovementsIndex({
                         </div>
                     </section>
 
-                    {candidates.length === 0 ? (
+                    {candidates.total > 0 && (
+                        <section className="panel-elevated flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+                            <div className="text-sm text-muted-foreground">
+                                Showing{' '}
+                                <span className="font-medium text-foreground">
+                                    {candidates.from ?? 0}
+                                </span>{' '}
+                                to{' '}
+                                <span className="font-medium text-foreground">
+                                    {candidates.to ?? 0}
+                                </span>{' '}
+                                of{' '}
+                                <span className="font-medium text-foreground">
+                                    {candidates.total}
+                                </span>{' '}
+                                candidates
+                                <span className="ml-2 font-mono text-2xs">
+                                    Page {candidates.current_page} of{' '}
+                                    {candidates.last_page}
+                                </span>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-mono text-2xs text-muted-foreground uppercase">
+                                    Per page
+                                </span>
+
+                                {perPagePresets.map((preset) => (
+                                    <Button
+                                        key={preset}
+                                        asChild
+                                        variant={
+                                            candidates.per_page === preset
+                                                ? 'secondary'
+                                                : 'outline'
+                                        }
+                                        size="sm"
+                                    >
+                                        <Link
+                                            href={buildPerPageUrl(
+                                                page.url,
+                                                preset,
+                                            )}
+                                        >
+                                            {preset}
+                                        </Link>
+                                    </Button>
+                                ))}
+
+                                <Form
+                                    action={page.url.split('?')[0]}
+                                    method="get"
+                                    className="flex items-center gap-2"
+                                >
+                                    {persistentQueryEntries.map(
+                                        ([key, value], index) => (
+                                            <input
+                                                key={`${key}-${index}`}
+                                                type="hidden"
+                                                name={key}
+                                                value={value}
+                                            />
+                                        ),
+                                    )}
+
+                                    <Input
+                                        key={candidates.per_page}
+                                        aria-label="Custom candidates per page"
+                                        name="per_page"
+                                        type="number"
+                                        min={1}
+                                        max={100}
+                                        defaultValue={candidates.per_page}
+                                        className="h-8 w-20"
+                                    />
+
+                                    <Button
+                                        type="submit"
+                                        variant="outline"
+                                        size="sm"
+                                    >
+                                        Apply
+                                    </Button>
+                                </Form>
+                            </div>
+                        </section>
+                    )}
+
+                    {candidates.total === 0 ? (
                         <section className="panel-elevated p-8 text-center">
                             <Lightbulb className="mx-auto size-8 text-muted-foreground" />
 
@@ -256,9 +389,22 @@ export default function KnowledgeImprovementsIndex({
                                 threshold.
                             </p>
                         </section>
+                    ) : candidateRows.length === 0 ? (
+                        <section className="panel-elevated p-8 text-center">
+                            <Lightbulb className="mx-auto size-8 text-muted-foreground" />
+
+                            <h3 className="mt-3 font-semibold text-foreground">
+                                No candidates on this page
+                            </h3>
+
+                            <p className="mx-auto mt-1 max-w-xl text-sm text-muted-foreground">
+                                Choose another page or adjust the page size to
+                                continue reviewing the queue.
+                            </p>
+                        </section>
                     ) : (
                         <div className="grid gap-4">
-                            {candidates.map((candidate) => (
+                            {candidateRows.map((candidate) => (
                                 <article
                                     key={candidate.id}
                                     className="panel-elevated relative overflow-hidden p-5"
@@ -328,7 +474,7 @@ export default function KnowledgeImprovementsIndex({
                                                         )}{' '}
                                                         ·{' '}
                                                         {candidate.affected_area ??
-                                                            '—'}
+                                                            '\u2014'}
                                                     </div>
                                                 </div>
 
@@ -829,6 +975,96 @@ export default function KnowledgeImprovementsIndex({
                                 </article>
                             ))}
                         </div>
+                    )}
+
+                    {candidates.total > 0 && candidates.last_page > 1 && (
+                        <nav
+                            aria-label="Knowledge improvement pagination"
+                            className="panel-elevated flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                            <div className="font-mono text-2xs text-muted-foreground">
+                                Page {candidates.current_page} of{' '}
+                                {candidates.last_page}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                                {candidates.prev_page_url ? (
+                                    <Button asChild variant="outline" size="sm">
+                                        <Link href={candidates.prev_page_url}>
+                                            <ChevronLeft className="size-4" />
+                                            Previous
+                                        </Link>
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled
+                                    >
+                                        <ChevronLeft className="size-4" />
+                                        Previous
+                                    </Button>
+                                )}
+
+                                <div className="flex flex-wrap items-center gap-1">
+                                    {paginationLinks.map((link, index) =>
+                                        link.url ? (
+                                            <Button
+                                                key={`${link.label}-${index}`}
+                                                asChild
+                                                variant={
+                                                    link.active
+                                                        ? 'secondary'
+                                                        : 'outline'
+                                                }
+                                                size="sm"
+                                            >
+                                                <Link
+                                                    href={link.url}
+                                                    aria-current={
+                                                        link.active
+                                                            ? 'page'
+                                                            : undefined
+                                                    }
+                                                >
+                                                    {link.label}
+                                                </Link>
+                                            </Button>
+                                        ) : (
+                                            <Button
+                                                key={`${link.label}-${index}`}
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                disabled
+                                            >
+                                                {link.label}
+                                            </Button>
+                                        ),
+                                    )}
+                                </div>
+
+                                {candidates.next_page_url ? (
+                                    <Button asChild variant="outline" size="sm">
+                                        <Link href={candidates.next_page_url}>
+                                            Next
+                                            <ChevronRight className="size-4" />
+                                        </Link>
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled
+                                    >
+                                        Next
+                                        <ChevronRight className="size-4" />
+                                    </Button>
+                                )}
+                            </div>
+                        </nav>
                     )}
                 </div>
             </div>

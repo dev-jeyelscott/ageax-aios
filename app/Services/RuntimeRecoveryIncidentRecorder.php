@@ -112,17 +112,23 @@ class RuntimeRecoveryIncidentRecorder
                 ]);
             } else {
                 $lastSeenAt = $incident->last_seen_at;
+
                 if ($lastSeenAt === null || $seenAt->greaterThan($lastSeenAt)) {
                     $lastSeenAt = $seenAt;
                 }
 
                 $incident->update([
-                    'agent_worker_id' => $scope['agent_worker']?->id ?? $incident->agent_worker_id,
-                    'source_agent_run_id' => $scope['source_agent_run']?->id ?? $incident->source_agent_run_id,
+                    'agent_worker_id' => $scope['agent_worker'] === null
+                        ? $incident->agent_worker_id
+                        : $scope['agent_worker']->id,
+                    'source_agent_run_id' => $scope['source_agent_run'] === null
+                        ? $incident->source_agent_run_id
+                        : $scope['source_agent_run']->id,
                     'occurrence_count' => $incident->occurrence_count + 1,
                     'first_seen_at' => $incident->first_seen_at ?? $incident->detected_at,
                     'last_seen_at' => $lastSeenAt,
                 ]);
+
                 $incident = $incident->fresh();
             }
 
