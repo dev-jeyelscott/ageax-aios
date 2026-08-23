@@ -4,12 +4,16 @@ import {
     BookOpenCheck,
     Check,
     FlaskConical,
+    Globe2,
     Lightbulb,
     ShieldAlert,
     Sparkles,
     X,
 } from 'lucide-react';
-import { decide as decideCandidate } from '@/actions/App/Http/Controllers/KnowledgeImprovementController';
+import {
+    decide as decideCandidate,
+    promote as promoteCandidate,
+} from '@/actions/App/Http/Controllers/KnowledgeImprovementController';
 import { show as showProject } from '@/actions/App/Http/Controllers/ProjectController';
 import { AppBackground } from '@/components/app-background';
 import { useAppHeaderSlot } from '@/components/app-header-slot';
@@ -43,6 +47,15 @@ type EvidenceReference = {
     agent_run_id?: number | null;
 };
 
+type GlobalPattern = {
+    id: number;
+    name: string;
+    category: string;
+    version: number;
+    enabled: boolean;
+    superseded_at: string | null;
+};
+
 type Candidate = {
     id: number;
     fingerprint: string;
@@ -70,8 +83,12 @@ type Candidate = {
         version: number;
         enabled: boolean;
     } | null;
+    global_pattern: GlobalPattern | null;
 };
 
+/**
+ * Convert persisted snake-case identifiers into operator-friendly labels.
+ */
 function humanize(value: string | null): string {
     if (!value) {
         return '—';
@@ -82,6 +99,9 @@ function humanize(value: string | null): string {
         .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+/**
+ * Format an ISO date while preserving unexpected server values for diagnostics.
+ */
 function formatDate(value: string | null): string {
     if (!value) {
         return '—';
@@ -92,6 +112,9 @@ function formatDate(value: string | null): string {
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+/**
+ * Render one bounded durable evidence reference without exposing raw evidence.
+ */
 function evidenceLabel(reference: EvidenceReference): string {
     if (reference.task_key) {
         return `${humanize(reference.source_type)} · ${reference.task_key}`;
@@ -100,15 +123,23 @@ function evidenceLabel(reference: EvidenceReference): string {
     return `${humanize(reference.source_type)} #${reference.source_id}`;
 }
 
+/**
+ * Render project knowledge candidates and explicit operator-controlled promotion.
+ */
 export default function KnowledgeImprovementsIndex({
     project,
     candidates,
+    patternCategories,
+    patternRoles,
 }: {
     project: Project;
     candidates: Candidate[];
+    patternCategories: string[];
+    patternRoles: string[];
 }) {
     const page = usePage();
     const errors = page.props.errors as Record<string, string> | undefined;
+
     const pendingCount = candidates.filter(
         (candidate) => candidate.status === 'pending',
     ).length;
@@ -129,10 +160,12 @@ export default function KnowledgeImprovementsIndex({
                         <h1 className="truncate text-base font-semibold text-foreground">
                             {project.name}
                         </h1>
+
                         <span className="hidden font-mono text-2xs tracking-[0.14em] text-primary uppercase sm:inline">
                             Knowledge Improvement Queue
                         </span>
                     </div>
+
                     <p className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">
                         {project.path}
                     </p>
@@ -158,20 +191,23 @@ export default function KnowledgeImprovementsIndex({
                 <div className="relative z-10 w-full space-y-4 p-4 sm:p-6 lg:p-8">
                     <section className="panel-elevated relative overflow-hidden p-5">
                         <div className="glow-line-accent" />
+
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                             <div>
                                 <div className="flex items-center gap-2 font-mono text-2xs tracking-[0.14em] text-primary uppercase">
                                     <Sparkles className="size-3.5" />
                                     Durable learning review
                                 </div>
+
                                 <h2 className="mt-2 text-xl font-semibold tracking-tight text-foreground">
-                                    Failure-to-Skill Promotion Queue
+                                    Knowledge Improvement Queue
                                 </h2>
+
                                 <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                                    AIOS groups recurring durable failure
-                                    evidence into proposals. Nothing changes a
-                                    Skill, rule, test, or workflow until an
-                                    operator explicitly approves it.
+                                    Project knowledge remains project scoped.
+                                    Approved lessons become cross-project
+                                    reusable only through a second explicit
+                                    global-promotion decision.
                                 </p>
                             </div>
 
@@ -184,6 +220,7 @@ export default function KnowledgeImprovementsIndex({
                                         {candidates.length}
                                     </div>
                                 </div>
+
                                 <div className="rounded-lg border border-warning/20 bg-warning/5 px-3 py-2">
                                     <div className="font-mono text-2xs text-primary uppercase">
                                         Pending
@@ -192,12 +229,13 @@ export default function KnowledgeImprovementsIndex({
                                         {pendingCount}
                                     </div>
                                 </div>
+
                                 <div className="col-span-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 sm:col-span-1">
                                     <div className="font-mono text-2xs text-primary uppercase">
-                                        Control
+                                        Global reuse
                                     </div>
                                     <div className="mt-1 text-xs font-medium text-foreground">
-                                        Operator approval only
+                                        Explicit promotion only
                                     </div>
                                 </div>
                             </div>
@@ -207,12 +245,15 @@ export default function KnowledgeImprovementsIndex({
                     {candidates.length === 0 ? (
                         <section className="panel-elevated p-8 text-center">
                             <Lightbulb className="mx-auto size-8 text-muted-foreground" />
+
                             <h3 className="mt-3 font-semibold text-foreground">
-                                No recurring pattern has crossed the threshold
+                                No knowledge candidates are awaiting review
                             </h3>
+
                             <p className="mx-auto mt-1 max-w-xl text-sm text-muted-foreground">
-                                One-off failures remain evidence, but they are
-                                not promoted into durable guidance.
+                                Deterministic evidence remains project scoped
+                                until it crosses the configured candidate
+                                threshold.
                             </p>
                         </section>
                     ) : (
@@ -238,21 +279,25 @@ export default function KnowledgeImprovementsIndex({
                                                 >
                                                     {humanize(candidate.status)}
                                                 </Badge>
+
                                                 <Badge variant="secondary">
                                                     {humanize(
                                                         candidate.source_kind,
                                                     )}
                                                 </Badge>
+
                                                 <Badge variant="outline">
                                                     {candidate.occurrence_count}{' '}
                                                     occurrences
                                                 </Badge>
+
                                                 <Badge variant="outline">
                                                     {humanize(
                                                         candidate.confidence,
                                                     )}{' '}
                                                     confidence
                                                 </Badge>
+
                                                 <span className="font-mono text-2xs text-muted-foreground">
                                                     {candidate.fingerprint.slice(
                                                         0,
@@ -266,14 +311,17 @@ export default function KnowledgeImprovementsIndex({
                                                     <div className="font-mono text-2xs tracking-wide text-muted-foreground uppercase">
                                                         Failure code
                                                     </div>
+
                                                     <div className="mt-1 font-mono text-xs break-words text-foreground">
                                                         {candidate.failure_code}
                                                     </div>
                                                 </div>
+
                                                 <div className="rounded-lg border border-border-subtle bg-surface-recessed p-3">
                                                     <div className="font-mono text-2xs tracking-wide text-muted-foreground uppercase">
                                                         Role / area
                                                     </div>
+
                                                     <div className="mt-1 text-sm text-foreground">
                                                         {humanize(
                                                             candidate.affected_role,
@@ -283,15 +331,18 @@ export default function KnowledgeImprovementsIndex({
                                                             '—'}
                                                     </div>
                                                 </div>
+
                                                 <div className="rounded-lg border border-border-subtle bg-surface-recessed p-3">
                                                     <div className="font-mono text-2xs tracking-wide text-muted-foreground uppercase">
                                                         Proposed target
                                                     </div>
+
                                                     <div className="mt-1 text-sm text-foreground">
                                                         {humanize(
                                                             candidate.target_type,
                                                         )}
                                                     </div>
+
                                                     {candidate.target_skill && (
                                                         <div className="mt-1 font-mono text-2xs text-primary">
                                                             {
@@ -317,11 +368,13 @@ export default function KnowledgeImprovementsIndex({
                                                         Proposed durable
                                                         guidance
                                                     </div>
+
                                                     <p className="mt-2 rounded-lg border border-primary/10 bg-primary/5 p-3 text-sm leading-relaxed text-foreground">
                                                         {
                                                             candidate.proposed_change
                                                         }
                                                     </p>
+
                                                     <p className="mt-2 text-xs text-muted-foreground">
                                                         {
                                                             candidate.evidence_summary
@@ -334,6 +387,7 @@ export default function KnowledgeImprovementsIndex({
                                                         <FlaskConical className="size-4 text-primary" />
                                                         Evidence
                                                     </div>
+
                                                     <div className="mt-2 space-y-1.5">
                                                         {candidate.evidence
                                                             .slice(-5)
@@ -360,12 +414,14 @@ export default function KnowledgeImprovementsIndex({
                                                         candidate.first_seen_at,
                                                     )}
                                                 </span>
+
                                                 <span>
                                                     Latest:{' '}
                                                     {formatDate(
                                                         candidate.last_seen_at,
                                                     )}
                                                 </span>
+
                                                 {candidate.applied_skill_version !==
                                                     null && (
                                                     <span className="text-success-foreground">
@@ -375,6 +431,7 @@ export default function KnowledgeImprovementsIndex({
                                                         }
                                                     </span>
                                                 )}
+
                                                 {candidate.status !==
                                                     'pending' &&
                                                     candidate.reopen_after_occurrence !==
@@ -391,10 +448,10 @@ export default function KnowledgeImprovementsIndex({
                                         </div>
 
                                         {candidate.status === 'pending' && (
-                                            <div className="w-full shrink-0 rounded-xl border border-border bg-card/50 p-3 xl:w-64">
+                                            <div className="w-full shrink-0 rounded-xl border border-border bg-card/50 p-3 xl:w-72">
                                                 <div className="flex items-center gap-2 font-mono text-2xs tracking-wide text-muted-foreground uppercase">
                                                     <ShieldAlert className="size-3.5" />
-                                                    Operator decision
+                                                    Project decision
                                                 </div>
 
                                                 <div className="mt-3 grid gap-2">
@@ -414,6 +471,7 @@ export default function KnowledgeImprovementsIndex({
                                                             name="decision"
                                                             value="approved"
                                                         />
+
                                                         <Button
                                                             type="submit"
                                                             className="w-full"
@@ -439,6 +497,7 @@ export default function KnowledgeImprovementsIndex({
                                                             name="decision"
                                                             value="rejected"
                                                         />
+
                                                         <Button
                                                             type="submit"
                                                             variant="outline"
@@ -465,6 +524,7 @@ export default function KnowledgeImprovementsIndex({
                                                             name="decision"
                                                             value="dismissed"
                                                         />
+
                                                         <Button
                                                             type="submit"
                                                             variant="ghost"
@@ -479,12 +539,12 @@ export default function KnowledgeImprovementsIndex({
                                                     'skill' && (
                                                     <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
                                                         Approval records the
-                                                        decision only.
+                                                        project decision only.
                                                         Repository rules, tests,
-                                                        and docs still require
-                                                        the normal Task → Coder
-                                                        → Git → validation →
-                                                        Reviewer workflow.
+                                                        and documentation still
+                                                        require the normal Task,
+                                                        Coder, Git, validation,
+                                                        and Reviewer workflow.
                                                     </p>
                                                 )}
 
@@ -494,6 +554,277 @@ export default function KnowledgeImprovementsIndex({
                                                 />
                                             </div>
                                         )}
+
+                                        {candidate.status === 'approved' &&
+                                            candidate.global_pattern && (
+                                                <div className="w-full shrink-0 rounded-xl border border-success/20 bg-success/5 p-4 xl:w-72">
+                                                    <div className="flex items-center gap-2 font-mono text-2xs tracking-wide text-success-foreground uppercase">
+                                                        <Globe2 className="size-3.5" />
+                                                        Globally promoted
+                                                    </div>
+
+                                                    <div className="mt-3 text-sm font-semibold text-foreground">
+                                                        {
+                                                            candidate
+                                                                .global_pattern
+                                                                .name
+                                                        }
+                                                    </div>
+
+                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                        <Badge variant="outline">
+                                                            {humanize(
+                                                                candidate
+                                                                    .global_pattern
+                                                                    .category,
+                                                            )}
+                                                        </Badge>
+
+                                                        <Badge variant="outline">
+                                                            v
+                                                            {
+                                                                candidate
+                                                                    .global_pattern
+                                                                    .version
+                                                            }
+                                                        </Badge>
+                                                    </div>
+
+                                                    {candidate.global_pattern
+                                                        .superseded_at !==
+                                                        null && (
+                                                        <p className="mt-3 text-xs text-muted-foreground">
+                                                            Historical version,
+                                                            superseded{' '}
+                                                            {formatDate(
+                                                                candidate
+                                                                    .global_pattern
+                                                                    .superseded_at,
+                                                            )}
+                                                            .
+                                                        </p>
+                                                    )}
+
+                                                    <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                                                        This exact candidate
+                                                        evidence snapshot has
+                                                        already crossed the
+                                                        explicit global
+                                                        promotion boundary.
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                        {candidate.status === 'approved' &&
+                                            !candidate.global_pattern && (
+                                                <div className="w-full shrink-0 rounded-xl border border-primary/20 bg-primary/5 p-4 xl:w-80">
+                                                    <div className="flex items-center gap-2 font-mono text-2xs tracking-wide text-primary uppercase">
+                                                        <Globe2 className="size-3.5" />
+                                                        Global promotion
+                                                    </div>
+
+                                                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                                                        Create an immutable,
+                                                        reusable pattern from
+                                                        this approved project
+                                                        lesson. Review and
+                                                        generalize the text
+                                                        before promotion.
+                                                    </p>
+
+                                                    <Form
+                                                        action={
+                                                            promoteCandidate({
+                                                                project:
+                                                                    project.id,
+                                                                candidate:
+                                                                    candidate.id,
+                                                            }).url
+                                                        }
+                                                        method="post"
+                                                        className="mt-4 space-y-3"
+                                                    >
+                                                        <div>
+                                                            <label
+                                                                htmlFor={`pattern-name-${candidate.id}`}
+                                                                className="text-xs font-medium text-foreground"
+                                                            >
+                                                                Pattern name
+                                                            </label>
+
+                                                            <input
+                                                                id={`pattern-name-${candidate.id}`}
+                                                                name="name"
+                                                                type="text"
+                                                                required
+                                                                maxLength={160}
+                                                                defaultValue={humanize(
+                                                                    candidate.failure_code,
+                                                                )}
+                                                                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground transition outline-none focus:border-primary"
+                                                            />
+
+                                                            <InputError
+                                                                message={
+                                                                    errors?.name
+                                                                }
+                                                                className="mt-1"
+                                                            />
+                                                        </div>
+
+                                                        <div>
+                                                            <label
+                                                                htmlFor={`pattern-category-${candidate.id}`}
+                                                                className="text-xs font-medium text-foreground"
+                                                            >
+                                                                Category
+                                                            </label>
+
+                                                            <select
+                                                                id={`pattern-category-${candidate.id}`}
+                                                                name="category"
+                                                                required
+                                                                defaultValue=""
+                                                                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground transition outline-none focus:border-primary"
+                                                            >
+                                                                <option
+                                                                    value=""
+                                                                    disabled
+                                                                >
+                                                                    Select
+                                                                    category
+                                                                </option>
+
+                                                                {patternCategories.map(
+                                                                    (
+                                                                        category,
+                                                                    ) => (
+                                                                        <option
+                                                                            key={
+                                                                                category
+                                                                            }
+                                                                            value={
+                                                                                category
+                                                                            }
+                                                                        >
+                                                                            {humanize(
+                                                                                category,
+                                                                            )}
+                                                                        </option>
+                                                                    ),
+                                                                )}
+                                                            </select>
+
+                                                            <InputError
+                                                                message={
+                                                                    errors?.category
+                                                                }
+                                                                className="mt-1"
+                                                            />
+                                                        </div>
+
+                                                        <fieldset>
+                                                            <legend className="text-xs font-medium text-foreground">
+                                                                Applicable roles
+                                                            </legend>
+
+                                                            <div className="mt-2 grid gap-1.5">
+                                                                {patternRoles.map(
+                                                                    (role) => (
+                                                                        <label
+                                                                            key={
+                                                                                role
+                                                                            }
+                                                                            className="flex items-center gap-2 text-xs text-foreground"
+                                                                        >
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                name="applicable_roles[]"
+                                                                                value={
+                                                                                    role
+                                                                                }
+                                                                                defaultChecked={
+                                                                                    candidate.affected_role ===
+                                                                                    role
+                                                                                }
+                                                                                className="size-4 rounded border-input"
+                                                                            />
+
+                                                                            {humanize(
+                                                                                role,
+                                                                            )}
+                                                                        </label>
+                                                                    ),
+                                                                )}
+                                                            </div>
+
+                                                            <InputError
+                                                                message={
+                                                                    errors?.applicable_roles ??
+                                                                    errors?.[
+                                                                        'applicable_roles.0'
+                                                                    ]
+                                                                }
+                                                                className="mt-1"
+                                                            />
+                                                        </fieldset>
+
+                                                        <div>
+                                                            <label
+                                                                htmlFor={`pattern-guidance-${candidate.id}`}
+                                                                className="text-xs font-medium text-foreground"
+                                                            >
+                                                                Validated
+                                                                reusable
+                                                                guidance
+                                                            </label>
+
+                                                            <textarea
+                                                                id={`pattern-guidance-${candidate.id}`}
+                                                                name="validated_guidance"
+                                                                required
+                                                                maxLength={4000}
+                                                                rows={6}
+                                                                defaultValue={
+                                                                    candidate.proposed_change
+                                                                }
+                                                                className="mt-1 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed text-foreground transition outline-none focus:border-primary"
+                                                            />
+
+                                                            <InputError
+                                                                message={
+                                                                    errors?.validated_guidance
+                                                                }
+                                                                className="mt-1"
+                                                            />
+                                                        </div>
+
+                                                        <Button
+                                                            type="submit"
+                                                            className="w-full"
+                                                        >
+                                                            <Globe2 className="size-4" />
+                                                            Promote globally
+                                                        </Button>
+
+                                                        <InputError
+                                                            message={
+                                                                errors?.promotion
+                                                            }
+                                                        />
+                                                    </Form>
+
+                                                    <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                                                        Promotion does not
+                                                        modify project Skills
+                                                        and does not inject this
+                                                        pattern into another
+                                                        project. Retrieval is a
+                                                        separate governed
+                                                        capability.
+                                                    </p>
+                                                </div>
+                                            )}
                                     </div>
                                 </article>
                             ))}
