@@ -140,11 +140,21 @@ class WorkflowRecoveryScanner
                     }
 
                     $lastBlockReason = $lockedTask->auditEvents()
-                        ->whereIn('event_type', array_keys(self::AutoUnblockableBlockReasons))
+                        ->where(function ($query): void {
+                            $query->whereIn('event_type', [
+                                ...array_keys(self::AutoUnblockableBlockReasons),
+                                'task.planning_defect_escalated',
+                                'review.retry_exhausted',
+                                'task.coder_retry_exhausted',
+                                'task.no_progress_detected',
+                                'task.contract_drift_detected',
+                                'task.review_no_progress_blocked',
+                            ])->orWhere('event_type', 'like', 'task.blocked_%');
+                        })
                         ->orderByDesc('occurred_at')
                         ->orderByDesc('id')
                         ->first();
-                    if ($lastBlockReason === null) {
+                    if ($lastBlockReason === null || ! array_key_exists($lastBlockReason->event_type, self::AutoUnblockableBlockReasons)) {
                         return;
                     }
 

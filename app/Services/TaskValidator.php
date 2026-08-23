@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Task;
+use Closure;
 use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
@@ -32,19 +33,22 @@ class TaskValidator
         private SanitizedExecutionEnvironment $environment,
     ) {}
 
-    /** @return array{passed: bool, checks: array<string, bool>, evidence: array<string, array<string, mixed>>} */
-    public function validate(Task $task): array
+    /**
+     * @param  (Closure(): mixed)|null  $onHeartbeat
+     * @return array{passed: bool, checks: array<string, bool>, evidence: array<string, array<string, mixed>>}
+     */
+    public function validate(Task $task, ?Closure $onHeartbeat = null): array
     {
-        $diff = $this->runManagedProjectProcess($task, ['git', 'diff', '--check']);
-        $secrets = $this->runManagedProjectProcess($task, ['rg', '--hidden', '--glob', '!.git/**', '--glob', '!node_modules/**', '(AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36})']);
-        $status = $this->runManagedProjectProcess($task, ['git', 'status', '--porcelain']);
+        $diff = $this->runManagedProjectProcess($task, ['git', 'diff', '--check'], onHeartbeat: $onHeartbeat);
+        $secrets = $this->runManagedProjectProcess($task, ['rg', '--hidden', '--glob', '!.git/**', '--glob', '!node_modules/**', '(AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36})'], onHeartbeat: $onHeartbeat);
+        $status = $this->runManagedProjectProcess($task, ['git', 'status', '--porcelain'], onHeartbeat: $onHeartbeat);
         $changedFiles = collect(preg_split('/\R/', $status->output()) ?: [])
             ->filter(fn (string $line): bool => $line !== '')
             ->map(fn (string $line): string => trim(substr($line, 3)))
             ->filter()
             ->values();
         $forbiddenFiles = $changedFiles->contains(fn (string $file): bool => $this->isForbiddenFile($file));
-        $verification = $this->runVerificationCommands($task);
+        $verification = $this->runVerificationCommands($task, $onHeartbeat);
         $checks = [
             'git_diff_check' => $diff->successful(),
             'secret_scan' => $secrets->exitCode() === 1,
@@ -80,8 +84,11 @@ class TaskValidator
             || preg_match('/^(?:id_rsa|.*\.(?:pem|key))$/', $filename) === 1;
     }
 
-    /** @return array{passed: bool, evidence: array<string, mixed>} */
-    private function runVerificationCommands(Task $task): array
+    /**
+     * @param  (Closure(): mixed)|null  $onHeartbeat
+     * @return array{passed: bool, evidence: array<string, mixed>}
+     */
+    private function runVerificationCommands(Task $task, ?Closure $onHeartbeat = null): array
     {
         $commands = $this->verificationCommands($task);
         if ($commands === null) {
@@ -98,6 +105,7 @@ class TaskValidator
                 $task,
                 preg_split('/\s+/', trim($command)) ?: [],
                 (int) config('aios.execution_timeout'),
+                $onHeartbeat,
             );
 
             $commandEvidence = $this->processEvidence('task_verification_command', $result->successful(), $command, $result);
@@ -117,7 +125,7 @@ class TaskValidator
      *
      * @param  list<string>  $command
      */
-    private function runManagedProjectProcess(Task $task, array $command, ?int $timeout = null): ProcessResult
+    private function runManagedProjectProcess(Task $task, array $command, ?int $timeout = null, ?Closure $onHeartbeat = null): ProcessResult
     {
         $pending = Process::path($this->paths->assertProjectPath($task->project->path));
 
@@ -125,7 +133,24 @@ class TaskValidator
             $pending = $pending->timeout($timeout);
         }
 
-        return $pending->run($this->environment->wrap($command));
+        if ($onHeartbeat === null) {
+            return $pending->run($this->environment->wrap($command));
+        }
+
+        $process = $pending->start($this->environment->wrap($command));
+        $interval = max(1, (int) config('aios.worker_heartbeat_interval_seconds'));
+        $nextHeartbeatAt = now();
+
+        while ($process->running()) {
+            if (now()->gte($nextHeartbeatAt)) {
+                $onHeartbeat();
+                $nextHeartbeatAt = now()->addSeconds($interval);
+            }
+
+            usleep(250000);
+        }
+
+        return $process->wait();
     }
 
     /** @return array{name: string, passed: bool, verification_identifier: string, exit_code: ?int, summary: ?string} */

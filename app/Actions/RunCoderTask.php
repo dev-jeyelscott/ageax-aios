@@ -125,6 +125,11 @@ class RunCoderTask
                 : $this->runner->run($task->project, $prompt, $onOutput, $onHeartbeat);
             $this->runs->complete($run, $execution);
 
+            $renewLease = $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease);
+            if ($renewLease !== null) {
+                $renewLease();
+            }
+
             if ($execution['exit_code'] === 0) {
                 $task->operatorMessages()->where('recipient_role', AgentRole::Coder)->whereNull('delivered_at')->update(['delivered_at' => now()]);
             }
@@ -137,8 +142,11 @@ class RunCoderTask
             }
 
             $validation = $execution['exit_code'] === 0
-                ? $this->validator->validate($task)
+                ? $this->validator->validate($task, $renewLease)
                 : ['passed' => false, 'checks' => ['codex_execution' => false]];
+            if ($renewLease !== null) {
+                $renewLease();
+            }
             $changedFiles = $this->git->changedFilesFromBase($projectPath, $baseSha);
             $headUnchanged = $this->git->baseMatchesCurrentHead($projectPath, $baseSha);
             $validation['checks']['git_change_set'] = $changedFiles !== null;
@@ -169,6 +177,9 @@ class RunCoderTask
             $validationPassed = $validation['passed'] && $changedFiles !== null && $headUnchanged;
             $alreadyImplemented = $validationPassed && $changedFiles === [];
             $commitSha = $validationPassed && ! $alreadyImplemented ? $this->committer->commit($task, $changedFiles, $baseSha) : null;
+            if ($renewLease !== null) {
+                $renewLease();
+            }
             $passed = $alreadyImplemented || ($validationPassed && $commitSha !== null);
 
             if ($validationPassed) {
@@ -198,6 +209,9 @@ class RunCoderTask
                 'changed_files' => $candidateFiles,
                 'finished_at' => now(),
             ]);
+            if ($renewLease !== null) {
+                $renewLease();
+            }
             $this->audit->record('task.validated', [
                 'attempt_number' => $attempt->number,
                 'passed' => $passed,

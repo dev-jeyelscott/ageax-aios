@@ -73,6 +73,18 @@ test('a task blocked for a non-repository reason never auto-unblocks even if the
         ->and($project->auditEvents()->where('event_type', 'task.auto_unblocked')->exists())->toBeFalse();
 });
 
+test('a retry-exhausted task with an older dirty-repository block stays blocked', function () {
+    $project = autoUnblockProject();
+    $task = autoUnblockTask($project);
+    app(AuditLogger::class)->record('task.blocked_dirty_repository', ['reason' => 'repository_not_clean'], $project, $task);
+    app(AuditLogger::class)->record('task.coder_retry_exhausted', ['retry_limit' => 3], $project, $task);
+
+    app(WorkflowRecoveryScanner::class)->scan($project);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($project->auditEvents()->where('event_type', 'task.auto_unblocked')->exists())->toBeFalse();
+});
+
 test('a task with a pending planning revision stays blocked when its repository becomes clean', function () {
     $project = autoUnblockProject();
     $task = autoUnblockTask($project);

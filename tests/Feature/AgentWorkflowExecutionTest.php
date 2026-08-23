@@ -92,6 +92,22 @@ test('the task validator runs safe task-specific verification commands', functio
         ->and($validation['checks']['task_verification'])->toBeTrue();
 });
 
+test('the task validator renews an active lease while verification is running', function () {
+    config()->set('aios.worker_heartbeat_interval_seconds', 1);
+    $project = Project::create(['name' => 'Validator heartbeat', 'path' => '/tmp/validator-heartbeat-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = reviewTask($project);
+    $task->update(['verification_commands' => ['php artisan test --compact']]);
+    Process::fake(['*' => Process::describe()->iterations(2)]);
+    $heartbeats = 0;
+
+    $validation = app(TaskValidator::class)->validate($task, function () use (&$heartbeats): void {
+        $heartbeats++;
+    });
+
+    expect($validation)->toHaveKey('passed')
+        ->and($heartbeats)->toBeGreaterThanOrEqual(4);
+});
+
 test('the task validator rejects unsafe verification commands without executing them', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = reviewTask($project);
