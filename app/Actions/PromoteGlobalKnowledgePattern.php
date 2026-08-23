@@ -131,7 +131,7 @@ class PromoteGlobalKnowledgePattern
      * @return array{
      *     name: string,
      *     category: string,
-     *     applicable_roles: list<string>,
+     *     applicable_roles: non-empty-list<string>,
      *     validated_guidance: string
      * }
      */
@@ -190,7 +190,7 @@ class PromoteGlobalKnowledgePattern
     /**
      * Normalize and deterministically order the selected project workflow roles.
      *
-     * @return list<string>
+     * @return non-empty-list<string>
      */
     private function normalizeRoles(mixed $roles): array
     {
@@ -226,12 +226,6 @@ class PromoteGlobalKnowledgePattern
 
         $normalized = array_values(array_unique($normalized));
         sort($normalized, SORT_STRING);
-
-        if ($normalized === []) {
-            throw new LogicException(
-                'At least one applicable project workflow role is required.',
-            );
-        }
 
         return $normalized;
     }
