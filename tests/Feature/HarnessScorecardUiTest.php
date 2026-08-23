@@ -19,6 +19,8 @@ use App\Services\ReviewerHarnessDiagnostics;
 use App\TaskComplexity;
 use App\TaskStatus;
 use App\TaskWorkType;
+use Illuminate\Routing\Route as LaravelRoute;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -404,7 +406,12 @@ test('scorecard UI remains explicitly advisory token based and navigation only',
         ),
     );
 
-    $routes = file_get_contents(base_path('routes/web.php'));
+    $scorecardRoutes = collect(Route::getRoutes()->getRoutes())
+        ->filter(
+            fn (LaravelRoute $route): bool => $route->uri()
+                === 'harness-scorecards',
+        )
+        ->values();
 
     expect($page)
         ->toContain('Advisory only')
@@ -421,10 +428,15 @@ test('scorecard UI remains explicitly advisory token based and navigation only',
         ->toContain('score.component_points.speed')
         ->not->toContain('score.points.')
         ->not->toContain('price_usd')
-        ->not->toContain('provider_pricing')
-        ->and($routes)
-        ->toContain("Route::get('harness-scorecards'")
-        ->not->toContain("Route::post('harness-scorecards'")
-        ->not->toContain("Route::patch('harness-scorecards'")
-        ->not->toContain("Route::put('harness-scorecards'");
+        ->not->toContain('provider_pricing');
+
+    expect($scorecardRoutes)->toHaveCount(1);
+
+    /** @var LaravelRoute $scorecardRoute */
+    $scorecardRoute = $scorecardRoutes->sole();
+
+    expect($scorecardRoute->getName())
+        ->toBe('harness-scorecards.index')
+        ->and($scorecardRoute->methods())
+        ->toBe(['GET', 'HEAD']);
 });
