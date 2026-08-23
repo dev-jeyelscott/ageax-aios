@@ -82,11 +82,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
     )->scopeBindings()->name('projects.tasks.operator-messages.store');
 
     Route::post(
-        'projects/{project}/tasks/{task}/operator-validations',
-        [ProjectController::class, 'storeOperatorValidation'],
-    )->scopeBindings()->name('projects.tasks.operator-validations.store');
-
-    Route::post(
         'projects/{project}/tasks/{task}/requeue',
         [ProjectController::class, 'requeueTask'],
     )->scopeBindings()->name('projects.tasks.requeue');

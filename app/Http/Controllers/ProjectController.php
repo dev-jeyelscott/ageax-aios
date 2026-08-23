@@ -12,7 +12,6 @@ use App\Actions\RequeueBlockedTask;
 use App\Actions\SetProjectStatus;
 use App\Actions\SkipBlockedTask;
 use App\Actions\StoreRoadmap;
-use App\Actions\SubmitTaskOperatorValidation;
 use App\AgentHarness;
 use App\AgentRole;
 use App\Http\Requests\SkipBlockedTaskRequest;
@@ -20,7 +19,6 @@ use App\Http\Requests\StoreProjectManagerMessageRequest;
 use App\Http\Requests\StoreProjectRequest;
 use App\Http\Requests\StoreRoadmapRequest;
 use App\Http\Requests\StoreTaskOperatorMessageRequest;
-use App\Http\Requests\StoreTaskOperatorValidationRequest;
 use App\Http\Requests\UpdateProjectStatusRequest;
 use App\Models\AgentRun;
 use App\Models\AgentWorker;
@@ -28,7 +26,6 @@ use App\Models\Project;
 use App\Models\Roadmap;
 use App\Models\Task;
 use App\Models\TaskAttempt;
-use App\Models\TaskOperatorValidation;
 use App\Models\User;
 use App\ProjectStatus;
 use App\Services\AgentHarnessResolver;
@@ -864,9 +861,6 @@ class ProjectController extends Controller
             'operatorMessages' => fn ($query) => $query
                 ->oldest()
                 ->with('user:id,name'),
-            'operatorValidations' => fn ($query) => $query
-                ->latest('id')
-                ->with('user:id,name'),
             'auditEvents' => fn ($query) => $query
                 ->latest('occurred_at')
                 ->limit(30),
@@ -916,7 +910,6 @@ class ProjectController extends Controller
                     'path',
                 ]),
                 'task' => $task,
-                'operator_validation_available' => TaskOperatorValidation::isApplicableTo($task),
                 'recovery_escalation_reason' => $recoveryEscalationReason,
             ],
         );
@@ -1000,38 +993,6 @@ class ProjectController extends Controller
                 $validated['recipient_role'],
             ),
             $validated['body'],
-        );
-
-        return to_route(
-            'projects.tasks.show',
-            [$project, $task],
-        );
-    }
-
-    public function storeOperatorValidation(
-        StoreTaskOperatorValidationRequest $request,
-        Project $project,
-        Task $task,
-        SubmitTaskOperatorValidation $submitTaskOperatorValidation,
-    ): RedirectResponse {
-        abort_unless(
-            $task->project_id === $project->id,
-            404,
-        );
-
-        /** @var User $user */
-        $user = $request->user();
-        $validated = $request->validated();
-
-        $submitTaskOperatorValidation->handle(
-            $task,
-            $user,
-            [
-                'build_sha' => $validated['build_sha'],
-                'build_completed_at' => $validated['build_completed_at'],
-                'results' => $validated['results'],
-                'notes' => $validated['notes'] ?? null,
-            ],
         );
 
         return to_route(

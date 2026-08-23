@@ -6,7 +6,6 @@ import {
     Bot,
     Braces,
     CheckCircle2,
-    ClipboardCheck,
     Clock3,
     FileCode2,
     GitBranch,
@@ -28,7 +27,6 @@ import {
     requeueTask,
     skipTask,
     storeOperatorMessage,
-    storeOperatorValidation,
 } from '@/actions/App/Http/Controllers/ProjectController';
 import { useAppHeaderSlot } from '@/components/app-header-slot';
 import InputError from '@/components/input-error';
@@ -64,7 +62,6 @@ type Task = {
     reviews: Review[];
     runs: Run[];
     operator_messages: OperatorMessage[];
-    operator_validations: OperatorValidation[];
     audit_events: AuditEvent[];
 };
 type Attempt = {
@@ -118,28 +115,6 @@ type OperatorMessage = {
     created_at: string;
     user: { id: number; name: string };
 };
-type OperatorValidation = {
-    id: number;
-    build_sha: string;
-    build_completed_at: string;
-    results: OperatorValidationResult[];
-    notes: string | null;
-    created_at: string;
-    user: { id: number; name: string };
-};
-type OperatorValidationResult = {
-    target: string;
-    browser_version: string;
-    operating_system_version: string;
-    camera_label: string | null;
-    permission: 'pass' | 'fail';
-    enumeration: 'pass' | 'fail';
-    switching: 'pass' | 'fail';
-    capture: 'pass' | 'fail';
-    upload: 'pass' | 'fail';
-    fullscreen: 'pass' | 'fail';
-    follow_up_reference: string | null;
-};
 type AuditEvent = { id: number; event_type: string; occurred_at: string };
 type AgentOutputEntry = {
     isAgentMessage: boolean;
@@ -148,24 +123,6 @@ type AgentOutputEntry = {
     message: string;
     className: string;
 };
-
-const operatorValidationTargets = [
-    ['safari_ipados', 'Safari on iPadOS'],
-    ['chrome_android_tablet', 'Chrome on Android tablet'],
-    ['chrome_desktop', 'Chrome desktop'],
-    ['edge_desktop', 'Edge desktop'],
-    ['laptop_webcam', 'Laptop webcam'],
-    ['external_usb_webcam', 'Supported external USB webcam'],
-] as const;
-
-const operatorValidationChecks = [
-    ['permission', 'Permission'],
-    ['enumeration', 'Enumeration'],
-    ['switching', 'Switching'],
-    ['capture', 'Capture'],
-    ['upload', 'Upload'],
-    ['fullscreen', 'Full-screen'],
-] as const;
 type ValidationCheck = {
     key: string;
     label: string;
@@ -825,12 +782,10 @@ function AgentConsoleOutput({
 export default function TaskShow({
     project,
     task,
-    operator_validation_available: operatorValidationAvailable,
     recovery_escalation_reason: recoveryEscalationReason,
 }: {
     project: Project;
     task: Task;
-    operator_validation_available: boolean;
     recovery_escalation_reason: string | null;
 }) {
     usePoll(2_000, { only: ['task'] }, { mode: 'rest' });
@@ -1441,193 +1396,6 @@ export default function TaskShow({
                         </main>
 
                         <aside className="min-w-0 space-y-3 xl:sticky xl:top-3 xl:self-start">
-                            {operatorValidationAvailable &&
-                                ['changes_required', 'blocked'].includes(
-                                    task.status,
-                                ) && (
-                                    <Card className="border-primary/25">
-                                        <CardHeader>
-                                            <CardTitle className="flex items-center gap-2">
-                                                <ClipboardCheck className="size-4 text-primary" />
-                                                Record hardware validation
-                                            </CardTitle>
-                                            <CardDescription>
-                                                Submit observed results from the
-                                                production build. This is
-                                                operator evidence; it does not
-                                                grant an agent access to your
-                                                camera or browser session.
-                                            </CardDescription>
-                                        </CardHeader>
-                                        <CardContent>
-                                            <Form
-                                                {...storeOperatorValidation.form(
-                                                    {
-                                                        project: project.id,
-                                                        task: task.id,
-                                                    },
-                                                )}
-                                                className="grid gap-4"
-                                            >
-                                                {({ errors, processing }) => (
-                                                    <>
-                                                        <div className="grid gap-3 sm:grid-cols-2">
-                                                            <div className="grid gap-2">
-                                                                <Label htmlFor="build_sha">
-                                                                    Production build SHA
-                                                                </Label>
-                                                                <input
-                                                                    id="build_sha"
-                                                                    name="build_sha"
-                                                                    required
-                                                                    pattern="[a-fA-F0-9]{7,64}"
-                                                                    placeholder="e.g. 7ebff13"
-                                                                    className="h-9 rounded-md border border-input bg-surface-sunken px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                                />
-                                                                <InputError message={errors.build_sha} />
-                                                            </div>
-                                                            <div className="grid gap-2">
-                                                                <Label htmlFor="build_completed_at">
-                                                                    Build completed at
-                                                                </Label>
-                                                                <input
-                                                                    id="build_completed_at"
-                                                                    name="build_completed_at"
-                                                                    type="datetime-local"
-                                                                    required
-                                                                    className="h-9 rounded-md border border-input bg-surface-sunken px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                                />
-                                                                <InputError message={errors.build_completed_at} />
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="grid gap-3">
-                                                            {operatorValidationTargets.map(
-                                                                ([target, label], index) => (
-                                                                    <fieldset
-                                                                        key={target}
-                                                                        className="grid gap-3 rounded-lg border border-border-subtle bg-foreground/[0.025] p-3"
-                                                                    >
-                                                                        <input
-                                                                            type="hidden"
-                                                                            name={`results[${index}][target]`}
-                                                                            value={target}
-                                                                        />
-                                                                        <legend className="px-1 text-xs font-semibold text-foreground">
-                                                                            {label}
-                                                                        </legend>
-                                                                        <div className="grid gap-2 sm:grid-cols-3">
-                                                                            <input
-                                                                                name={`results[${index}][browser_version]`}
-                                                                                required
-                                                                                placeholder="Browser version"
-                                                                                aria-label={`${label} browser version`}
-                                                                                className="h-8 rounded-md border border-input bg-card px-2 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                                            />
-                                                                            <input
-                                                                                name={`results[${index}][operating_system_version]`}
-                                                                                required
-                                                                                placeholder="OS version"
-                                                                                aria-label={`${label} operating system version`}
-                                                                                className="h-8 rounded-md border border-input bg-card px-2 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                                            />
-                                                                            <input
-                                                                                name={`results[${index}][camera_label]`}
-                                                                                placeholder="Camera label (optional)"
-                                                                                aria-label={`${label} camera label`}
-                                                                                className="h-8 rounded-md border border-input bg-card px-2 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                                            />
-                                                                        </div>
-                                                                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                                                                            {operatorValidationChecks.map(
-                                                                                ([check, checkLabel]) => (
-                                                                                    <label
-                                                                                        key={check}
-                                                                                        className="grid gap-1 text-2xs text-muted-foreground"
-                                                                                    >
-                                                                                        {checkLabel}
-                                                                                        <select
-                                                                                            name={`results[${index}][${check}]`}
-                                                                                            required
-                                                                                            defaultValue=""
-                                                                                            className="h-8 rounded-md border border-input bg-card px-2 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                                                        >
-                                                                                            <option value="" disabled>
-                                                                                                Result
-                                                                                            </option>
-                                                                                            <option value="pass">
-                                                                                                Pass
-                                                                                            </option>
-                                                                                            <option value="fail">
-                                                                                                Fail
-                                                                                            </option>
-                                                                                        </select>
-                                                                                    </label>
-                                                                                ),
-                                                                            )}
-                                                                        </div>
-                                                                        <input
-                                                                            name={`results[${index}][follow_up_reference]`}
-                                                                            placeholder="Follow-up Task/Ticket required if any result failed"
-                                                                            aria-label={`${label} follow-up reference`}
-                                                                            className="h-8 rounded-md border border-input bg-card px-2 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                                        />
-                                                                        <InputError
-                                                                            message={
-                                                                                errors[
-                                                                                    `results.${index}.follow_up_reference`
-                                                                                ]
-                                                                            }
-                                                                        />
-                                                                    </fieldset>
-                                                                ),
-                                                            )}
-                                                        </div>
-
-                                                        <div className="grid gap-2">
-                                                            <Label htmlFor="operator_validation_notes">
-                                                                Notes
-                                                            </Label>
-                                                            <textarea
-                                                                id="operator_validation_notes"
-                                                                name="notes"
-                                                                rows={3}
-                                                                maxLength={4000}
-                                                                placeholder="Observed limitations, test conditions, or follow-up context. Do not include credentials."
-                                                                className="rounded-md border border-input bg-surface-sunken px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                            />
-                                                            <InputError message={errors.notes} />
-                                                        </div>
-                                                        <label className="flex items-start gap-2 text-xs text-muted-foreground">
-                                                            <input
-                                                                name="attested"
-                                                                type="checkbox"
-                                                                required
-                                                                className="mt-0.5 size-4 rounded border-input"
-                                                            />
-                                                            <span>
-                                                                I personally observed these
-                                                                results against the stated
-                                                                production build.
-                                                            </span>
-                                                        </label>
-                                                        <InputError message={errors.attested} />
-                                                        <InputError message={errors.results} />
-                                                        <Button
-                                                            type="submit"
-                                                            disabled={processing}
-                                                            className="shadow-glow-sm"
-                                                        >
-                                                            <ClipboardCheck className="size-4" />
-                                                            Submit for review
-                                                        </Button>
-                                                    </>
-                                                )}
-                                            </Form>
-                                        </CardContent>
-                                    </Card>
-                                )}
-
                             <Card>
                                 <CardHeader>
                                     <CardTitle className="flex items-center gap-2">

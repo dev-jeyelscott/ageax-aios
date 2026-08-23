@@ -62,7 +62,11 @@ test('an authenticated user can view a task and send an instruction to its coder
             ->where('project.id', $project->id)
             ->where('task.key', 'TASK-001')
             ->has('task.runs', 0)
-            ->has('task.operator_messages', 0));
+            ->has('task.operator_messages', 0)
+            ->missing('operator_validation_available'));
+
+    $this->post("/projects/{$project->id}/tasks/{$task->id}/operator-validations")
+        ->assertNotFound();
 
     $this->post(route('projects.tasks.operator-messages.store', [$project, $task]), [
         'recipient_role' => AgentRole::Coder->value,
