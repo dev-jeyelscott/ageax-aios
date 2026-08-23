@@ -231,6 +231,38 @@ test('reviewer execution is blocked on drift before paid Agent execution', funct
         ->and($task->auditEvents()->where('event_type', 'task.contract_drift_detected')->exists())->toBeTrue();
 });
 
+test('reviewer preserves the completed attempt Obsidian contract when live roadmap knowledge changes', function () {
+    $project = taskContractProject('Reviewer pinned roadmap contract project');
+    $task = taskContractTask($project, TaskStatus::Reviewing);
+    $guard = app(TaskContractGuard::class);
+    $validatedContext = taskContractContext(
+        ['Roadmaps/Latest Upload.md' => 'Approved roadmap version one.'],
+        ['Roadmaps/Latest Upload.md'],
+    );
+    $baseline = $guard->evidence($task, $validatedContext);
+    $attempt = TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'base_sha' => 'base',
+        'head_sha' => 'head',
+        'commit_sha' => 'head',
+        'status' => 'completed',
+        'validation_results' => ['task_contract' => $baseline],
+        'changed_files' => ['app/Example.php'],
+        'started_at' => now()->subMinute(),
+        'finished_at' => now()->subSecond(),
+    ]);
+
+    $result = $guard->evaluate($task->refresh(), taskContractContext(
+        ['Roadmaps/Latest Upload.md' => 'Updated roadmap version two.'],
+        ['Roadmaps/Latest Upload.md'],
+    ), $attempt);
+
+    expect($result['drifted'])->toBeFalse()
+        ->and($result['changed_inputs'])->toBe([])
+        ->and($result['current']['fingerprint'])->toBe($baseline['fingerprint']);
+});
+
 test('explicit operator requeue after contract drift establishes a new contract baseline boundary', function () {
     $project = taskContractProject('Contract rebase project');
     $task = taskContractTask($project, TaskStatus::Blocked);

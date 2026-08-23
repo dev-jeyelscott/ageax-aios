@@ -49,14 +49,18 @@ final readonly class TaskContractGuard
             ];
         }
 
+        $currentForComparison = $requiredBaselineAttempt === null
+            ? $current
+            : $this->withPinnedObsidianInputs($current, $baseline);
+
         $changedInputs = $baseline === null
             ? []
-            : $this->changedInputs($baseline['input_hashes'], $current['input_hashes']);
+            : $this->changedInputs($baseline['input_hashes'], $currentForComparison['input_hashes']);
 
         return [
-            'drifted' => $baseline !== null && ! hash_equals($baseline['fingerprint'], $current['fingerprint']),
+            'drifted' => $baseline !== null && ! hash_equals($baseline['fingerprint'], $currentForComparison['fingerprint']),
             'baseline' => $baseline,
-            'current' => $current,
+            'current' => $currentForComparison,
             'baseline_attempt_number' => $baselineAttempt === null ? null : (int) $baselineAttempt->number,
             'changed_inputs' => $changedInputs,
             'recovery_pinned' => $requiredBaselineAttempt !== null,
@@ -240,6 +244,37 @@ final readonly class TaskContractGuard
             'schema_version' => $evidence['schema_version'],
             'fingerprint' => $this->hashValue([
                 'schema_version' => $evidence['schema_version'],
+                'input_hashes' => $inputHashes,
+            ]),
+            'input_hashes' => $inputHashes,
+        ];
+    }
+
+    /**
+     * A Reviewer evaluates one completed implementation attempt. Its contract retains the
+     * Obsidian inputs snapshotted when that attempt was validated, because external project
+     * knowledge may change between validation and review. Task fields and repository
+     * governance documents remain live contract inputs and continue to fail closed on drift.
+     *
+     * @param  array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>}  $current
+     * @param  array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>}  $baseline
+     * @return array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>}
+     */
+    private function withPinnedObsidianInputs(array $current, array $baseline): array
+    {
+        $inputHashes = $current['input_hashes'];
+        $baselineHashes = $baseline['input_hashes'];
+
+        foreach (['obsidian_notes', 'obsidian_selection'] as $input) {
+            if (array_key_exists($input, $baselineHashes)) {
+                $inputHashes[$input] = $baselineHashes[$input];
+            }
+        }
+
+        return [
+            'schema_version' => self::SchemaVersion,
+            'fingerprint' => $this->hashValue([
+                'schema_version' => self::SchemaVersion,
                 'input_hashes' => $inputHashes,
             ]),
             'input_hashes' => $inputHashes,
