@@ -10,6 +10,7 @@ use App\Models\Project;
 use App\Models\RecoveryIncident;
 use App\Models\Task;
 use App\RecoveryIncidentStatus;
+use App\RuntimeRecoveryIncidentFamily;
 use App\TaskStatus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -86,6 +87,10 @@ class WorkflowRecoveryEngine
 
     public function process(RecoveryIncident $incident): RecoveryIncident
     {
+        if (RuntimeRecoveryIncidentFamily::tryFrom((string) $incident->failure_type) !== null) {
+            return $incident->fresh();
+        }
+
         if (! $this->claim($incident)) {
             return $incident->fresh();
         }

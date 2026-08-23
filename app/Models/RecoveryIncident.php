@@ -12,23 +12,30 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
-    'project_id', 'task_id', 'agent_worker_id', 'source_agent_run_id', 'failure_type', 'status',
+    'project_id', 'task_id', 'agent_worker_id', 'source_agent_run_id', 'failure_type', 'fingerprint',
+    'source', 'exception_class', 'occurrence_count', 'first_seen_at', 'last_seen_at', 'status',
     'detected_at', 'evidence', 'root_cause', 'root_cause_category', 'recoverable', 'attempt_count',
     'fix_summary', 'validation_evidence', 'resulting_task_transition', 'escalation_reason',
     'base_sha', 'head_sha', 'commit_sha', 'changed_files', 'claim_token', 'claimed_at', 'resolved_at',
 ])]
 /**
- * Durable, append-only-evidence tracker for a single AIOS workflow abnormality detected by the
- * Workflow Recovery Engineer scan. Each diagnosis/repair attempt is recorded as its own AgentRun
- * (role: recovery_engineer) linked via recovery_incident_id, and every meaningful state change is
- * recorded as an AuditEvent; this model holds only the current, mutable summary state.
+ * Durable incident summary for one AIOS workflow or runtime abnormality. Diagnosis and repair
+ * attempts are recorded as AgentRuns linked via recovery_incident_id, and every meaningful
+ * occurrence or lifecycle transition is recorded as an AuditEvent; this model holds only the
+ * current mutable incident summary.
  *
  * @property RecoveryIncidentStatus $status
+ * @property ?string $fingerprint
+ * @property ?string $source
+ * @property ?string $exception_class
+ * @property int $occurrence_count
  * @property ?array<string, mixed> $evidence
  * @property ?bool $recoverable
  * @property ?array<string, mixed> $validation_evidence
  * @property ?array<int, string> $changed_files
  * @property CarbonImmutable $detected_at
+ * @property ?CarbonImmutable $first_seen_at
+ * @property ?CarbonImmutable $last_seen_at
  * @property ?CarbonImmutable $claimed_at
  * @property ?CarbonImmutable $resolved_at
  */
@@ -41,11 +48,14 @@ class RecoveryIncident extends Model
     {
         return [
             'status' => RecoveryIncidentStatus::class,
+            'occurrence_count' => 'integer',
             'evidence' => 'array',
             'recoverable' => 'boolean',
             'validation_evidence' => 'array',
             'changed_files' => 'array',
             'detected_at' => 'immutable_datetime',
+            'first_seen_at' => 'immutable_datetime',
+            'last_seen_at' => 'immutable_datetime',
             'claimed_at' => 'immutable_datetime',
             'resolved_at' => 'immutable_datetime',
         ];
