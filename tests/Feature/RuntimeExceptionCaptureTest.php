@@ -19,6 +19,7 @@ use Illuminate\Contracts\Debug\ShouldntReport;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\TokenMismatchException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Validation\ValidationException;
@@ -262,6 +263,36 @@ test('console exception capture uses only the Laravel command name and never com
 
     expect($incident->source)->toBe('command:aios:recover-workflows')
         ->and($persisted)->not->toContain('console-secret-token');
+});
+
+test('capture service resolution failure cannot replace the original http exception', function () {
+    app()->bind(RuntimeExceptionCapture::class, function (): never {
+        throw new RuntimeException('Runtime exception capture resolution failed.');
+    });
+
+    Route::get('/_test/runtime-resolution-failure', function (): never {
+        throw new HttpException(503, 'Original service unavailable.');
+    })->name('testing.runtime-resolution-failure');
+
+    $this->get('/_test/runtime-resolution-failure')
+        ->assertStatus(503);
+
+    expect(RecoveryIncident::query()->count())->toBe(0);
+});
+
+test('cache lock failure cannot replace the original http exception', function () {
+    Cache::shouldReceive('lock')
+        ->once()
+        ->andThrow(new RuntimeException('Runtime deduplication cache unavailable.'));
+
+    Route::get('/_test/runtime-cache-lock-failure', function (): never {
+        throw new HttpException(503, 'Original service remains unavailable.');
+    })->name('testing.runtime-cache-lock-failure');
+
+    $this->get('/_test/runtime-cache-lock-failure')
+        ->assertStatus(503);
+
+    expect(RecoveryIncident::query()->count())->toBe(0);
 });
 
 test('capture persistence failure cannot replace the original http exception or recursively capture itself', function () {

@@ -12,6 +12,8 @@ use App\Services\RuntimeRecoveryIncidentRecorder;
 use App\Services\WorkflowRecoveryEngine;
 use App\TaskStatus;
 use Carbon\CarbonImmutable;
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Support\Facades\Cache;
 
 function runtimeRecoveryProject(string $name = 'Runtime recovery'): Project
 {
@@ -172,6 +174,69 @@ test('materially different stable failure identity produces different fingerprin
             $differentClass->fingerprint,
             $differentFailure->fingerprint,
         ]))->toHaveCount(4);
+});
+
+test('runtime incident deduplication locks are stable within a scope and isolated across scopes', function () {
+    $project = runtimeRecoveryProject('Atomic lock scope');
+    $task = runtimeRecoveryTask($project, 'LOCK-001');
+    $recorder = app(RuntimeRecoveryIncidentRecorder::class);
+    $lockKeys = [];
+
+    $lock = Mockery::mock(Lock::class);
+    $lock->shouldReceive('block')
+        ->times(4)
+        ->with(1, Mockery::type(Closure::class))
+        ->andReturnUsing(
+            static fn (int $seconds, callable $callback): mixed => $callback(),
+        );
+
+    Cache::shouldReceive('lock')
+        ->times(4)
+        ->withArgs(function (string $key, int $seconds) use (&$lockKeys): bool {
+            $lockKeys[] = $key;
+
+            return str_starts_with($key, 'runtime-recovery:')
+                && $seconds === 10;
+        })
+        ->andReturn($lock);
+
+    $firstUnscoped = $recorder->record(
+        RuntimeRecoveryIncidentFamily::ApplicationException,
+        'route:health',
+        RuntimeException::class,
+        'Health check failed code 503.',
+    );
+    $secondUnscoped = $recorder->record(
+        RuntimeRecoveryIncidentFamily::ApplicationException,
+        'route:health',
+        RuntimeException::class,
+        'Health check failed code 503.',
+    );
+    $projectScoped = $recorder->record(
+        RuntimeRecoveryIncidentFamily::ApplicationException,
+        'route:health',
+        RuntimeException::class,
+        'Health check failed code 503.',
+        project: $project,
+    );
+    $taskScoped = $recorder->record(
+        RuntimeRecoveryIncidentFamily::ApplicationException,
+        'route:health',
+        RuntimeException::class,
+        'Health check failed code 503.',
+        task: $task,
+    );
+
+    expect($lockKeys)->toHaveCount(4)
+        ->and($lockKeys[0])->toBe($lockKeys[1])
+        ->and($lockKeys[2])->not->toBe($lockKeys[0])
+        ->and($lockKeys[3])->not->toBe($lockKeys[0])
+        ->and($lockKeys[3])->not->toBe($lockKeys[2])
+        ->and($secondUnscoped->id)->toBe($firstUnscoped->id)
+        ->and($secondUnscoped->occurrence_count)->toBe(2)
+        ->and($projectScoped->id)->not->toBe($firstUnscoped->id)
+        ->and($taskScoped->id)->not->toBe($projectScoped->id)
+        ->and(RecoveryIncident::query()->count())->toBe(3);
 });
 
 test('repeated active failures update one incident and audit every occurrence', function () {

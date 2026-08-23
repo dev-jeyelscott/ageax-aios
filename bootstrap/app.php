@@ -56,7 +56,11 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->report(function (Throwable $exception): void {
-            app(RuntimeExceptionCapture::class)->capture($exception);
+            try {
+                app(RuntimeExceptionCapture::class)->capture($exception);
+            } catch (Throwable) {
+                // Runtime capture is observational and must never replace the original failure.
+            }
         });
 
         $exceptions->shouldRenderJsonWhen(

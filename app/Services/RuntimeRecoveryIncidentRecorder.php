@@ -11,6 +11,7 @@ use App\RecoveryIncidentStatus;
 use App\RuntimeRecoveryIncidentFamily;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -22,6 +23,10 @@ class RuntimeRecoveryIncidentRecorder
     private const int MaximumExceptionClassLength = 255;
 
     private const int MaximumFingerprintSummaryLength = 4096;
+
+    private const int DeduplicationLockSeconds = 10;
+
+    private const int DeduplicationLockWaitSeconds = 1;
 
     public function __construct(
         private AuditLogger $audit,
@@ -61,93 +66,118 @@ class RuntimeRecoveryIncidentRecorder
             ? CarbonImmutable::now()
             : CarbonImmutable::instance($occurredAt);
 
-        return DB::transaction(function () use (
-            $family,
-            $scope,
-            $normalizedSource,
-            $normalizedExceptionClass,
-            $sanitizedEvidence,
+        $lockKey = $this->deduplicationLockKey(
             $fingerprint,
-            $seenAt,
-        ): RecoveryIncident {
-            $this->lockDurableScope($scope['project'], $scope['task'], $scope['agent_worker'], $scope['source_agent_run']);
+            $scope['project'],
+            $scope['task'],
+        );
 
-            $query = RecoveryIncident::query()
-                ->where('failure_type', $family->value)
-                ->where('fingerprint', $fingerprint)
-                ->whereIn(
-                    'status',
-                    array_map(
-                        static fn (RecoveryIncidentStatus $status): string => $status->value,
-                        RecoveryIncidentStatus::open(),
-                    ),
-                );
+        /** @var RecoveryIncident $incident */
+        $incident = Cache::lock($lockKey, self::DeduplicationLockSeconds)
+            ->block(self::DeduplicationLockWaitSeconds, function () use (
+                $family,
+                $scope,
+                $normalizedSource,
+                $normalizedExceptionClass,
+                $sanitizedEvidence,
+                $fingerprint,
+                $seenAt,
+            ): RecoveryIncident {
+                return DB::transaction(function () use (
+                    $family,
+                    $scope,
+                    $normalizedSource,
+                    $normalizedExceptionClass,
+                    $sanitizedEvidence,
+                    $fingerprint,
+                    $seenAt,
+                ): RecoveryIncident {
+                    $this->lockDurableScope(
+                        $scope['project'],
+                        $scope['task'],
+                        $scope['agent_worker'],
+                        $scope['source_agent_run'],
+                    );
 
-            $scope['project'] === null
-                ? $query->whereNull('project_id')
-                : $query->where('project_id', $scope['project']->id);
-            $scope['task'] === null
-                ? $query->whereNull('task_id')
-                : $query->where('task_id', $scope['task']->id);
+                    $query = RecoveryIncident::query()
+                        ->where('failure_type', $family->value)
+                        ->where('fingerprint', $fingerprint)
+                        ->whereIn(
+                            'status',
+                            array_map(
+                                static fn (RecoveryIncidentStatus $status): string => $status->value,
+                                RecoveryIncidentStatus::open(),
+                            ),
+                        );
 
-            $incident = $query->orderBy('id')->lockForUpdate()->first();
-            $newlyCreated = $incident === null;
+                    $scope['project'] === null
+                        ? $query->whereNull('project_id')
+                        : $query->where('project_id', $scope['project']->id);
+                    $scope['task'] === null
+                        ? $query->whereNull('task_id')
+                        : $query->where('task_id', $scope['task']->id);
 
-            if ($incident === null) {
-                $incident = RecoveryIncident::create([
-                    'project_id' => $scope['project']?->id,
-                    'task_id' => $scope['task']?->id,
-                    'agent_worker_id' => $scope['agent_worker']?->id,
-                    'source_agent_run_id' => $scope['source_agent_run']?->id,
-                    'failure_type' => $family->value,
-                    'fingerprint' => $fingerprint,
-                    'source' => $normalizedSource,
-                    'exception_class' => $normalizedExceptionClass,
-                    'occurrence_count' => 1,
-                    'status' => RecoveryIncidentStatus::Detected,
-                    'detected_at' => $seenAt,
-                    'first_seen_at' => $seenAt,
-                    'last_seen_at' => $seenAt,
-                    'evidence' => $sanitizedEvidence,
-                ]);
-            } else {
-                $lastSeenAt = $incident->last_seen_at;
+                    $incident = $query->orderBy('id')->lockForUpdate()->first();
+                    $newlyCreated = $incident === null;
 
-                if ($lastSeenAt === null || $seenAt->greaterThan($lastSeenAt)) {
-                    $lastSeenAt = $seenAt;
-                }
+                    if ($incident === null) {
+                        $incident = RecoveryIncident::create([
+                            'project_id' => $scope['project']?->id,
+                            'task_id' => $scope['task']?->id,
+                            'agent_worker_id' => $scope['agent_worker']?->id,
+                            'source_agent_run_id' => $scope['source_agent_run']?->id,
+                            'failure_type' => $family->value,
+                            'fingerprint' => $fingerprint,
+                            'source' => $normalizedSource,
+                            'exception_class' => $normalizedExceptionClass,
+                            'occurrence_count' => 1,
+                            'status' => RecoveryIncidentStatus::Detected,
+                            'detected_at' => $seenAt,
+                            'first_seen_at' => $seenAt,
+                            'last_seen_at' => $seenAt,
+                            'evidence' => $sanitizedEvidence,
+                        ]);
+                    } else {
+                        $lastSeenAt = $incident->last_seen_at;
 
-                $incident->update([
-                    'agent_worker_id' => $scope['agent_worker'] === null
-                        ? $incident->agent_worker_id
-                        : $scope['agent_worker']->id,
-                    'source_agent_run_id' => $scope['source_agent_run'] === null
-                        ? $incident->source_agent_run_id
-                        : $scope['source_agent_run']->id,
-                    'occurrence_count' => $incident->occurrence_count + 1,
-                    'first_seen_at' => $incident->first_seen_at ?? $incident->detected_at,
-                    'last_seen_at' => $lastSeenAt,
-                ]);
+                        if ($lastSeenAt === null || $seenAt->greaterThan($lastSeenAt)) {
+                            $lastSeenAt = $seenAt;
+                        }
 
-                $incident = $incident->fresh();
-            }
+                        $incident->update([
+                            'agent_worker_id' => $scope['agent_worker'] === null
+                                ? $incident->agent_worker_id
+                                : $scope['agent_worker']->id,
+                            'source_agent_run_id' => $scope['source_agent_run'] === null
+                                ? $incident->source_agent_run_id
+                                : $scope['source_agent_run']->id,
+                            'occurrence_count' => $incident->occurrence_count + 1,
+                            'first_seen_at' => $incident->first_seen_at ?? $incident->detected_at,
+                            'last_seen_at' => $lastSeenAt,
+                        ]);
 
-            $this->audit->record('recovery.runtime_occurrence_recorded', [
-                'recovery_incident_id' => $incident->id,
-                'failure_type' => $family->value,
-                'fingerprint' => $fingerprint,
-                'source' => $normalizedSource,
-                'exception_class' => $normalizedExceptionClass,
-                'occurrence_count' => $incident->occurrence_count,
-                'project_id' => $scope['project']?->id,
-                'task_id' => $scope['task']?->id,
-                'agent_worker_id' => $scope['agent_worker']?->id,
-                'source_agent_run_id' => $scope['source_agent_run']?->id,
-                'newly_created' => $newlyCreated,
-            ], $scope['project'], $scope['task']);
+                        $incident = $incident->fresh();
+                    }
 
-            return $incident->fresh();
-        }, attempts: 3);
+                    $this->audit->record('recovery.runtime_occurrence_recorded', [
+                        'recovery_incident_id' => $incident->id,
+                        'failure_type' => $family->value,
+                        'fingerprint' => $fingerprint,
+                        'source' => $normalizedSource,
+                        'exception_class' => $normalizedExceptionClass,
+                        'occurrence_count' => $incident->occurrence_count,
+                        'project_id' => $scope['project']?->id,
+                        'task_id' => $scope['task']?->id,
+                        'agent_worker_id' => $scope['agent_worker']?->id,
+                        'source_agent_run_id' => $scope['source_agent_run']?->id,
+                        'newly_created' => $newlyCreated,
+                    ], $scope['project'], $scope['task']);
+
+                    return $incident->fresh();
+                }, attempts: 3);
+            });
+
+        return $incident;
     }
 
     /**
@@ -235,6 +265,23 @@ class RuntimeRecoveryIncidentRecorder
         if ($sourceAgentRun !== null) {
             AgentRun::query()->whereKey($sourceAgentRun->id)->lockForUpdate()->firstOrFail();
         }
+    }
+
+    /**
+     * Build the bounded non-secret atomic lock identity for one fingerprint and durable dedupe scope.
+     */
+    private function deduplicationLockKey(
+        string $fingerprint,
+        ?Project $project,
+        ?Task $task,
+    ): string {
+        $identity = json_encode([
+            'fingerprint' => $fingerprint,
+            'project_id' => $project?->id,
+            'task_id' => $task?->id,
+        ], JSON_THROW_ON_ERROR);
+
+        return 'runtime-recovery:'.hash('sha256', $identity);
     }
 
     /**
