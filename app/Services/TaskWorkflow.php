@@ -11,6 +11,8 @@ use App\Models\Review;
 use App\Models\ReviewFinding;
 use App\Models\Task;
 use App\Models\TaskAttempt;
+use App\Models\TaskOperatorValidation;
+use App\Models\User;
 use App\ProjectStatus;
 use App\ReviewStatus;
 use App\TaskStatus;
@@ -143,6 +145,55 @@ class TaskWorkflow
 
             return true;
         }, attempts: 3);
+    }
+
+    /**
+     * @param  array{build_sha: string, build_completed_at: string, results: array<int, array<string, mixed>>, notes?: string|null}  $attributes
+     */
+    public function submitOperatorValidation(Task $task, User $user, array $attributes): TaskOperatorValidation
+    {
+        $validation = DB::transaction(function () use ($task, $user, $attributes): TaskOperatorValidation {
+            $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+            $status = TaskStatus::from($lockedTask->getRawOriginal('status'));
+
+            abort_unless(in_array($status, [TaskStatus::ChangesRequired, TaskStatus::Blocked], true), 409, 'Operator validation may only resolve a task awaiting correction or an external prerequisite.');
+            abort_unless(TaskOperatorValidation::isApplicableTo($lockedTask), 409, 'This task does not declare a manual browser, device, or hardware validation requirement.');
+
+            $validation = $lockedTask->operatorValidations()->create([
+                'user_id' => $user->id,
+                'build_sha' => $attributes['build_sha'],
+                'build_completed_at' => $attributes['build_completed_at'],
+                'results' => $attributes['results'],
+                'notes' => $attributes['notes'] ?? null,
+            ]);
+
+            $failedTargets = collect($attributes['results'])
+                ->filter(fn (array $result): bool => collect(TaskOperatorValidation::Checks)
+                    ->keys()
+                    ->contains(fn (string $check): bool => ($result[$check] ?? null) === 'fail'))
+                ->pluck('target')
+                ->values()
+                ->all();
+
+            $this->audit->record('task.operator_validation_recorded', [
+                'validation_id' => $validation->id,
+                'submitted_by_user_id' => $user->id,
+                'build_sha' => $validation->build_sha,
+                'target_count' => count($attributes['results']),
+                'failed_targets' => $failedTargets,
+            ], $lockedTask->project, $lockedTask);
+            $this->transitionLocked($lockedTask, TaskStatus::ReadyForReview);
+            $this->audit->record('task.operator_validation_ready_for_review', [
+                'validation_id' => $validation->id,
+                'source_status' => $status->value,
+            ], $lockedTask->project, $lockedTask);
+
+            return $validation;
+        }, attempts: 3);
+
+        $this->notes->writeState($task->project);
+
+        return $validation;
     }
 
     private function taskContractFingerprint(TaskAttempt $attempt): ?string
@@ -426,7 +477,7 @@ class TaskWorkflow
             TaskStatus::Validating => [TaskStatus::ReadyForReview, TaskStatus::Failed, TaskStatus::Interrupted, TaskStatus::Blocked],
             TaskStatus::ReadyForReview => [TaskStatus::Reviewing, TaskStatus::Done, TaskStatus::Interrupted],
             TaskStatus::Reviewing => [TaskStatus::Done, TaskStatus::ChangesRequired, TaskStatus::ReadyForReview, TaskStatus::Interrupted, TaskStatus::Blocked],
-            TaskStatus::ChangesRequired => [TaskStatus::Coding, TaskStatus::Cancelled, TaskStatus::Blocked],
+            TaskStatus::ChangesRequired => [TaskStatus::Coding, TaskStatus::ReadyForReview, TaskStatus::Cancelled, TaskStatus::Blocked],
             TaskStatus::Interrupted => [TaskStatus::Coding, TaskStatus::Reviewing, TaskStatus::Failed],
             TaskStatus::Blocked => [TaskStatus::Queued, TaskStatus::ChangesRequired, TaskStatus::ReadyForReview, TaskStatus::Cancelled],
             TaskStatus::Failed => [TaskStatus::Coding, TaskStatus::Blocked, TaskStatus::Cancelled],

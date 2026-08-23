@@ -5,6 +5,7 @@ namespace App\Services;
 use App\AgentRole;
 use App\Models\Task;
 use App\Models\TaskAttempt;
+use App\Models\TaskOperatorValidation;
 
 class TaskContextCapsuleFactory
 {
@@ -61,6 +62,21 @@ class TaskContextCapsuleFactory
                 ->oldest()
                 ->get(['id', 'body', 'created_at'])
                 ->map(fn ($message): array => ['id' => $message->id, 'body' => $message->body, 'created_at' => $message->created_at?->toIso8601String()])
+                ->all(),
+            'operator_validations' => $task->operatorValidations()
+                ->with('user:id,name')
+                ->latest('id')
+                ->limit(3)
+                ->get()
+                ->map(fn (TaskOperatorValidation $validation): array => [
+                    'id' => $validation->id,
+                    'submitted_by' => $validation->user?->name,
+                    'build_sha' => $validation->build_sha,
+                    'build_completed_at' => $validation->build_completed_at?->toIso8601String(),
+                    'results' => $validation->results,
+                    'notes' => $validation->notes,
+                    'submitted_at' => $validation->created_at?->toIso8601String(),
+                ])
                 ->all(),
             'review_findings' => $task->reviews()->latest()->with('findings')->first()?->findings->map(fn ($finding): array => $finding->only(['severity', 'location', 'current_implementation', 'expected_implementation', 'why_incorrect', 'required_fix', 'verification_requirement', 'implementation_fix_context']))->all() ?? [],
         ];

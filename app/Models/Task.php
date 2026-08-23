@@ -79,6 +79,12 @@ class Task extends Model
         return $this->hasMany(TaskOperatorMessage::class);
     }
 
+    /** @return HasMany<TaskOperatorValidation, $this> */
+    public function operatorValidations(): HasMany
+    {
+        return $this->hasMany(TaskOperatorValidation::class);
+    }
+
     /** @return HasMany<RecoveryIncident, $this> */
     public function recoveryIncidents(): HasMany
     {
