@@ -192,11 +192,21 @@ class RuntimeRecoverabilityPolicy
      */
     private function evidenceMessage(RecoveryIncident $incident): string
     {
-        $evidence = $incident->evidence ?? [];
+        $rawEvidence = $incident->getRawOriginal('evidence');
 
-        return is_string($evidence['message'] ?? null)
-            ? $evidence['message']
-            : '';
+        if (! is_string($rawEvidence) || $rawEvidence === '') {
+            return '';
+        }
+
+        $evidence = json_decode($rawEvidence, true);
+
+        if (! is_array($evidence)) {
+            return '';
+        }
+
+        $message = $evidence['message'] ?? null;
+
+        return is_string($message) ? $message : '';
     }
 
     /**
