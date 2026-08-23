@@ -62,12 +62,10 @@ class KnowledgeImprovementController extends Controller
                     ),
                 );
 
-        $candidates->setCollection(
-            $candidateModels->map(
-                fn (KnowledgeImprovementCandidate $candidate): array => $this->serializeCandidate(
-                    $candidate,
-                    $promotedPatterns,
-                ),
+        $candidates->through(
+            fn (KnowledgeImprovementCandidate $candidate): array => $this->serializeCandidate(
+                $candidate,
+                $promotedPatterns,
             ),
         );
 
