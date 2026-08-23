@@ -155,7 +155,7 @@ test('trusted route bound project and task models are persisted as runtime incid
         },
     )->middleware(SubstituteBindings::class)->scopeBindings()->name('testing.runtime-scoped');
 
-    $this->get(route('testing.runtime-scoped', [$project, $task]))
+    $this->get("/_test/projects/{$project->id}/tasks/{$task->id}/runtime-exception")
         ->assertStatus(500);
 
     $incident = RecoveryIncident::query()->sole();
@@ -177,7 +177,7 @@ test('raw route identifiers and request values never become project or task scop
     )->name('testing.runtime-untrusted');
 
     $this->postJson(
-        route('testing.runtime-untrusted', [$project->id, $task->id]),
+        "/_test/untrusted/{$project->id}/{$task->id}",
         ['project_id' => $project->id, 'task_id' => $task->id],
     )->assertStatus(500);
 
@@ -266,7 +266,11 @@ test('console exception capture uses only the Laravel command name and never com
 });
 
 test('capture service resolution failure cannot replace the original http exception', function () {
-    app()->bind(RuntimeExceptionCapture::class, function (): never {
+    $resolutionAttempts = 0;
+
+    app()->bind(RuntimeExceptionCapture::class, function () use (&$resolutionAttempts): never {
+        $resolutionAttempts++;
+
         throw new RuntimeException('Runtime exception capture resolution failed.');
     });
 
@@ -277,7 +281,8 @@ test('capture service resolution failure cannot replace the original http except
     $this->get('/_test/runtime-resolution-failure')
         ->assertStatus(503);
 
-    expect(RecoveryIncident::query()->count())->toBe(0);
+    expect($resolutionAttempts)->toBe(1)
+        ->and(RecoveryIncident::query()->count())->toBe(0);
 });
 
 test('cache lock failure cannot replace the original http exception', function () {

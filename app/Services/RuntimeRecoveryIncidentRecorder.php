@@ -62,9 +62,9 @@ class RuntimeRecoveryIncidentRecorder
             $normalizedExceptionClass,
             $failureSummary,
         );
-        $seenAt = $occurredAt === null
+        $seenAt = ($occurredAt === null
             ? CarbonImmutable::now()
-            : CarbonImmutable::instance($occurredAt);
+            : CarbonImmutable::instance($occurredAt))->utc();
 
         $lockKey = $this->deduplicationLockKey(
             $fingerprint,

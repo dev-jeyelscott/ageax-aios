@@ -14,6 +14,7 @@ use App\ProjectStatus;
 use App\ReviewStatus;
 use App\Services\AuditLogger;
 use App\Services\CodexCliRunner;
+use App\Services\SensitiveDataSanitizer;
 use App\Services\StaleWorkerRecovery;
 use App\Services\TaskWorkflow;
 use App\TaskStatus;
@@ -84,7 +85,9 @@ test('Reviewer decision persistence rolls back when workflow finalization fails'
     $task = reviewerAtomicityTask($project);
     $attempt = reviewerAtomicityAttempt($task);
 
-    $faultingAudit = new class extends AuditLogger
+    $originalAudit = app(AuditLogger::class);
+
+    $faultingAudit = new class(app(SensitiveDataSanitizer::class)) extends AuditLogger
     {
         /** @param array<string, mixed> $payload */
         public function record(
@@ -115,7 +118,7 @@ test('Reviewer decision persistence rolls back when workflow finalization fails'
             reviewerAtomicityFindings(),
         ))->toThrow(RuntimeException::class, 'Injected failure');
     } finally {
-        app()->instance(AuditLogger::class, new AuditLogger);
+        app()->instance(AuditLogger::class, $originalAudit);
         app()->forgetInstance(TaskWorkflow::class);
     }
 

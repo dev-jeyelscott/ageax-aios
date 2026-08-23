@@ -8,6 +8,8 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpKernel\Exception\HttpException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -55,6 +57,16 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // Laravel ignores HttpException by default. P7-002 needs actionable 5xx HTTP failures
+        // to reach sanitized runtime ingestion while ordinary client-side 4xx noise stays ignored.
+        $exceptions->stopIgnoring(HttpException::class);
+
+        $exceptions->dontReportWhen(
+            static fn (Throwable $exception): bool => $exception instanceof HttpExceptionInterface
+                && $exception->getStatusCode() >= 400
+                && $exception->getStatusCode() < 500,
+        );
+
         $exceptions->report(function (Throwable $exception): void {
             try {
                 app(RuntimeExceptionCapture::class)->capture($exception);
