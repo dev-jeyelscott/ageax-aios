@@ -5,6 +5,7 @@ namespace App\Services;
 use App\AgentRole;
 use App\Models\AgentRun;
 use App\Models\AuditEvent;
+use App\Models\RecoveryIncident;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use Illuminate\Support\Str;
@@ -125,6 +126,52 @@ class NoProgressRetryGuard
         return $this->result($fingerprint, $repeatCount, $repositoryFingerprint);
     }
 
+    /**
+     * Fingerprint one failed runtime recovery attempt from stable incident and recovery evidence.
+     *
+     * @param  array<string, mixed>  $failure
+     * @return array{
+     *     eligible: bool,
+     *     failure_fingerprint: ?string,
+     *     consecutive_identical_failures: int,
+     *     consecutive_repeat_count: int,
+     *     threshold: int,
+     *     detected: bool,
+     *     repository_fingerprint: ?string
+     * }
+     */
+    public function runtimeRecoveryFailure(RecoveryIncident $incident, array $failure): array
+    {
+        if (blank($incident->fingerprint)) {
+            return $this->unavailable(null);
+        }
+
+        $repositoryFingerprint = $this->runtimeRepositoryEvidenceFingerprint($incident);
+        $sourceEvidenceHash = $this->fingerprint([
+            'evidence' => is_array($incident->evidence) ? $incident->evidence : [],
+        ]);
+        $failureFingerprint = $this->fingerprint([
+            'operation' => 'runtime_recovery',
+            'runtime_fingerprint' => $incident->fingerprint,
+            'source_evidence_hash' => $sourceEvidenceHash,
+            'repository_fingerprint' => $repositoryFingerprint,
+            'classification' => is_string($failure['classification'] ?? null) ? $failure['classification'] : null,
+            'reason' => $this->normalizedSummary(is_string($failure['reason'] ?? null) ? $failure['reason'] : null),
+            'execution' => $this->runtimeRunEvidence($incident),
+        ]);
+        $previousFailure = $this->previousRuntimeRecoveryFailure($incident);
+        $previousPayload = $previousFailure === null
+            ? []
+            : $this->decodedObject($previousFailure->getRawOriginal('payload'));
+        $previousNoProgress = $previousPayload['no_progress'] ?? null;
+        $repeatCount = is_array($previousNoProgress)
+            && ($previousNoProgress['failure_fingerprint'] ?? null) === $failureFingerprint
+            ? max(0, (int) ($previousNoProgress['consecutive_repeat_count'] ?? 0)) + 1
+            : 0;
+
+        return $this->result($failureFingerprint, $repeatCount, $repositoryFingerprint);
+    }
+
     private function previousCoderAttempt(Task $task, TaskAttempt $attempt): ?TaskAttempt
     {
         $previous = $task->attempts()
@@ -166,6 +213,30 @@ class NoProgressRetryGuard
         });
     }
 
+    /**
+     * Return the latest prior failed-attempt audit event for this exact runtime incident.
+     */
+    private function previousRuntimeRecoveryFailure(RecoveryIncident $incident): ?AuditEvent
+    {
+        $query = AuditEvent::query()
+            ->where('event_type', 'recovery.runtime_attempt_failed');
+
+        $incident->project_id === null
+            ? $query->whereNull('project_id')
+            : $query->where('project_id', $incident->project_id);
+
+        return $query
+            ->orderByDesc('id')
+            ->limit(50)
+            ->get()
+            ->first(function (AuditEvent $event) use ($incident): bool {
+                $payload = $event->payload;
+
+                return is_array($payload)
+                    && ($payload['recovery_incident_id'] ?? null) === $incident->id;
+            });
+    }
+
     /** @return array{exit_code: ?int, failure_summary: ?string} */
     private function runEvidence(Task $task, AgentRole $role, int $attemptNumber, bool $includeSuccessfulTranscript): array
     {
@@ -191,6 +262,53 @@ class NoProgressRetryGuard
             'exit_code' => $run->exit_code,
             'failure_summary' => $this->normalizedSummary($summary),
         ];
+    }
+
+    /**
+     * Return only outcome evidence from the newest Recovery Engineer run, excluding run identity and mutable configuration.
+     *
+     * @return array{exit_code: ?int, failure_summary: ?string, file_modifications: list<array{path: string, kind: string}>}
+     */
+    private function runtimeRunEvidence(RecoveryIncident $incident): array
+    {
+        $run = $incident->recoveryRuns()
+            ->orderByDesc('started_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($run === null) {
+            return [
+                'exit_code' => null,
+                'failure_summary' => null,
+                'file_modifications' => [],
+            ];
+        }
+
+        $summary = $this->runs->failureReason($run);
+
+        if ($summary === null && $run->exit_code !== 0) {
+            $summary = $this->runs->transcript($run);
+        }
+
+        return [
+            'exit_code' => $run->exit_code,
+            'failure_summary' => $this->normalizedSummary($summary),
+            'file_modifications' => $this->normalizeFileModifications($run->file_modifications),
+        ];
+    }
+
+    /**
+     * Hash only durable repository and validation evidence so material progress resets the runtime repeat window.
+     */
+    private function runtimeRepositoryEvidenceFingerprint(RecoveryIncident $incident): string
+    {
+        return $this->fingerprint([
+            'base_sha' => $incident->base_sha,
+            'head_sha' => $incident->head_sha,
+            'commit_sha' => $incident->commit_sha,
+            'changed_files' => $this->normalizeFiles($incident->changed_files),
+            'validation_evidence' => is_array($incident->validation_evidence) ? $incident->validation_evidence : [],
+        ]);
     }
 
     /**
@@ -251,6 +369,40 @@ class NoProgressRetryGuard
 
             $this->collectFailedEvidence($nested, $path.'.'.(string) $key, $items);
         }
+    }
+
+    /**
+     * Normalize bounded AgentRun file-change metadata without treating run identity as progress evidence.
+     *
+     * @return list<array{path: string, kind: string}>
+     */
+    private function normalizeFileModifications(mixed $modifications): array
+    {
+        if (! is_array($modifications)) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($modifications as $modification) {
+            if (! is_array($modification)
+                || ! is_string($modification['path'] ?? null)
+                || ! is_string($modification['kind'] ?? null)) {
+                continue;
+            }
+
+            $normalized[] = [
+                'path' => $modification['path'],
+                'kind' => $modification['kind'],
+            ];
+        }
+
+        usort($normalized, static fn (array $left, array $right): int => strcmp(
+            $left['path'].'|'.$left['kind'],
+            $right['path'].'|'.$right['kind'],
+        ));
+
+        return $normalized;
     }
 
     /** @return list<string> */

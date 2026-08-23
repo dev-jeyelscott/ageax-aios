@@ -16,10 +16,22 @@ class RunWorkflowRecoveryScan
 {
     public function __construct(private WorkflowRecoveryScanner $scanner, private WorkflowRecoveryEngine $engine) {}
 
+    /**
+     * Reconcile one running or stopping project's workflow and runtime recovery incidents.
+     */
     public function handle(Project $project): void
     {
         $this->engine->reclaimStaleClaims($project);
         $this->scanner->scan($project);
         $this->engine->processOpenIncidents($project);
+    }
+
+    /**
+     * Reconcile runtime incidents that cannot be safely attributed to a managed project.
+     */
+    public function handleUnscopedRuntimeIncidents(): void
+    {
+        $this->engine->reclaimStaleUnscopedRuntimeClaims();
+        $this->engine->processUnscopedRuntimeIncidents();
     }
 }

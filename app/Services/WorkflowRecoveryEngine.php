@@ -10,6 +10,7 @@ use App\Models\Project;
 use App\Models\RecoveryIncident;
 use App\Models\Task;
 use App\RecoveryIncidentStatus;
+use App\RuntimeRecoverabilityClassification;
 use App\RuntimeRecoveryIncidentFamily;
 use App\TaskStatus;
 use Illuminate\Support\Facades\DB;
@@ -47,6 +48,9 @@ class WorkflowRecoveryEngine
         private GlobalAgentResolver $globalAgents,
         private AgentHarnessResolver $harnesses,
         private DatabaseProtectionGuard $databaseProtection,
+        private RuntimeRecoverabilityPolicy $runtimePolicy,
+        private NoProgressRetryGuard $noProgress,
+        private StaleWorkerRecovery $staleWorkerRecovery,
     ) {}
 
     /**
@@ -64,14 +68,23 @@ class WorkflowRecoveryEngine
             ->whereIn('status', [RecoveryIncidentStatus::Diagnosing, RecoveryIncidentStatus::Repairing, RecoveryIncidentStatus::Validating])
             ->where('claimed_at', '<=', now()->subSeconds($staleAfterSeconds))
             ->get()
-            ->each(function (RecoveryIncident $incident) use ($project): void {
-                AgentRun::query()
-                    ->where('recovery_incident_id', $incident->id)
-                    ->where('status', AgentRunStatus::Running)
-                    ->update(['status' => AgentRunStatus::Interrupted, 'finished_at' => now()]);
-                $incident->update(['status' => RecoveryIncidentStatus::Detected, 'claim_token' => null, 'claimed_at' => null]);
-                $this->audit->record('recovery.claim_reclaimed', ['recovery_incident_id' => $incident->id], $project, $incident->task_id === null ? null : Task::query()->find($incident->task_id));
-            });
+            ->each(fn (RecoveryIncident $incident): RecoveryIncident => $this->reclaimIncidentClaim($incident));
+    }
+
+    /**
+     * Reclaim stale claims for global runtime incidents that have no provable managed-project scope.
+     */
+    public function reclaimStaleUnscopedRuntimeClaims(): void
+    {
+        $staleAfterSeconds = max(1, (int) config('aios.recovery_claim_stale_after_seconds'));
+
+        RecoveryIncident::query()
+            ->whereNull('project_id')
+            ->whereIn('failure_type', $this->runtimeFailureTypes())
+            ->whereIn('status', [RecoveryIncidentStatus::Diagnosing, RecoveryIncidentStatus::Repairing, RecoveryIncidentStatus::Validating])
+            ->where('claimed_at', '<=', now()->subSeconds($staleAfterSeconds))
+            ->get()
+            ->each(fn (RecoveryIncident $incident): RecoveryIncident => $this->reclaimIncidentClaim($incident));
     }
 
     /** Process every open, unclaimed incident for a project, one at a time (strict serial recovery). */
@@ -85,10 +98,29 @@ class WorkflowRecoveryEngine
             ->each(fn (RecoveryIncident $incident): RecoveryIncident => $this->process($incident));
     }
 
+    /**
+     * Process unscoped runtime incidents once per scheduled recovery pass so they cannot remain invisible forever.
+     */
+    public function processUnscopedRuntimeIncidents(): void
+    {
+        RecoveryIncident::query()
+            ->whereNull('project_id')
+            ->whereIn('failure_type', $this->runtimeFailureTypes())
+            ->where('status', RecoveryIncidentStatus::Detected)
+            ->orderBy('detected_at')
+            ->get()
+            ->each(fn (RecoveryIncident $incident): RecoveryIncident => $this->process($incident));
+    }
+
+    /**
+     * Process one workflow or runtime incident through the single AIOS-owned recovery lifecycle.
+     */
     public function process(RecoveryIncident $incident): RecoveryIncident
     {
-        if (RuntimeRecoveryIncidentFamily::tryFrom((string) $incident->failure_type) !== null) {
-            return $incident->fresh();
+        $runtimeFamily = RuntimeRecoveryIncidentFamily::tryFrom((string) $incident->failure_type);
+
+        if ($runtimeFamily !== null) {
+            return $this->processRuntimeIncident($incident);
         }
 
         if (! $this->claim($incident)) {
@@ -138,6 +170,309 @@ class WorkflowRecoveryEngine
         }
 
         return $this->recover($incident, $task, $classification['summary']);
+    }
+
+    /**
+     * Classify and gate one runtime incident without starting the P7-004 AI repair flow.
+     */
+    private function processRuntimeIncident(RecoveryIncident $incident): RecoveryIncident
+    {
+        $incident = $incident->fresh();
+
+        if ($incident->status !== RecoveryIncidentStatus::Detected) {
+            return $incident;
+        }
+
+        if ($incident->root_cause_category === RuntimeRecoverabilityClassification::CandidateAiRepair->value) {
+            return $incident;
+        }
+
+        if (! $this->claim($incident)) {
+            return $incident->fresh();
+        }
+
+        $incident = $incident->fresh();
+        $task = $incident->task_id === null ? null : Task::query()->find($incident->task_id);
+        $classification = $this->runtimePolicy->classify($incident);
+
+        $incident->update([
+            'root_cause' => $classification['summary'],
+            'root_cause_category' => $classification['category'],
+            'recoverable' => $classification['recoverable'],
+        ]);
+        $incident = $incident->fresh();
+
+        $this->audit->record('recovery.runtime_classified', [
+            'recovery_incident_id' => $incident->id,
+            'failure_type' => $incident->failure_type,
+            'fingerprint' => $incident->fingerprint,
+            'classification' => $classification['category'],
+            'deterministic_repair' => $classification['deterministic_repair'],
+        ], $incident->project, $task);
+
+        return match (RuntimeRecoverabilityClassification::from($classification['category'])) {
+            RuntimeRecoverabilityClassification::KnownDeterministicRepair => $this->applyKnownRuntimeRepair($incident, $classification, $task),
+            RuntimeRecoverabilityClassification::CandidateAiRepair => $this->deferRuntimeAiRepair($incident, $task),
+            RuntimeRecoverabilityClassification::OperatorOnly => $this->escalateRuntime($incident, $classification, $task),
+            RuntimeRecoverabilityClassification::NonActionable => $this->closeNonActionableRuntimeIncident($incident, $task),
+        };
+    }
+
+    /**
+     * Apply only an explicitly allowlisted AIOS deterministic runtime repair and bound failed retries.
+     *
+     * @param  array<string, mixed>  $classification
+     */
+    private function applyKnownRuntimeRepair(RecoveryIncident $incident, array $classification, ?Task $task): RecoveryIncident
+    {
+        $maxAttempts = max(1, (int) config('aios.recovery_max_attempts'));
+
+        if ($incident->attempt_count >= $maxAttempts) {
+            return $this->escalateRuntime($incident, $classification, $task, 'Bounded recovery attempt limit reached.');
+        }
+
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Repairing,
+            'attempt_count' => $incident->attempt_count + 1,
+        ]);
+        $incident = $incident->fresh();
+
+        if ($classification['deterministic_repair'] !== 'stale_worker_recovery' || $incident->project === null) {
+            return $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+                'The classified deterministic repair has no allowlisted executable AIOS handler.',
+            );
+        }
+
+        try {
+            $recovered = $this->staleWorkerRecovery->recover(
+                $incident->project,
+                (int) config('aios.stale_worker_after_seconds'),
+            );
+        } catch (Throwable $exception) {
+            return $this->recordRuntimeAttemptFailure(
+                $incident,
+                $classification,
+                $task,
+                'The deterministic stale-worker recovery handler threw ['.$exception::class.'].',
+            );
+        }
+
+        if ($recovered === 0 && ! $this->staleWorkerIncidentStillActionable($incident)) {
+            $incident->update([
+                'status' => RecoveryIncidentStatus::Recovered,
+                'fix_summary' => 'The expired worker lease was already reconciled before this deterministic recovery attempt completed.',
+                'resolved_at' => now(),
+                'claim_token' => null,
+                'claimed_at' => null,
+            ]);
+            $this->audit->record('recovery.runtime_deterministic_repair_superseded', [
+                'recovery_incident_id' => $incident->id,
+                'deterministic_repair' => $classification['deterministic_repair'],
+                'attempt_count' => $incident->fresh()->attempt_count,
+            ], $incident->project, $task);
+
+            return $incident->fresh();
+        }
+
+        if ($recovered === 0) {
+            return $this->recordRuntimeAttemptFailure(
+                $incident,
+                $classification,
+                $task,
+                'The deterministic stale-worker recovery handler left the expired worker state unchanged.',
+            );
+        }
+
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Recovered,
+            'fix_summary' => "Deterministic stale-worker recovery reconciled {$recovered} stale execution(s).",
+            'resolved_at' => now(),
+            'claim_token' => null,
+            'claimed_at' => null,
+        ]);
+        $this->audit->record('recovery.runtime_deterministic_repair_completed', [
+            'recovery_incident_id' => $incident->id,
+            'deterministic_repair' => $classification['deterministic_repair'],
+            'recovered_count' => $recovered,
+            'attempt_count' => $incident->fresh()->attempt_count,
+        ], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    /**
+     * Confirm that the exact expired worker referenced by the runtime incident still requires deterministic recovery.
+     */
+    private function staleWorkerIncidentStillActionable(RecoveryIncident $incident): bool
+    {
+        $worker = $incident->agentWorker()->first();
+
+        return $worker !== null
+            && $worker->status === 'working'
+            && $worker->lease_expires_at !== null
+            && $worker->lease_expires_at->isPast();
+    }
+
+    /**
+     * Persist one failed runtime repair attempt, open the no-progress breaker when required, or schedule a bounded retry.
+     *
+     * @param  array<string, mixed>  $classification
+     */
+    private function recordRuntimeAttemptFailure(RecoveryIncident $incident, array $classification, ?Task $task, string $reason): RecoveryIncident
+    {
+        $incident = $incident->fresh();
+        $noProgress = $this->noProgress->runtimeRecoveryFailure($incident, [
+            'classification' => $classification['category'],
+            'reason' => $reason,
+        ]);
+        $maxAttempts = max(1, (int) config('aios.recovery_max_attempts'));
+
+        $this->audit->record('recovery.runtime_attempt_failed', [
+            'recovery_incident_id' => $incident->id,
+            'classification' => $classification['category'],
+            'attempt_count' => $incident->attempt_count,
+            'retry_limit' => $maxAttempts,
+            'reason' => $reason,
+            'no_progress' => $noProgress,
+        ], $incident->project, $task);
+
+        if ($noProgress['detected']) {
+            $this->audit->record('recovery.runtime_circuit_breaker_opened', [
+                'recovery_incident_id' => $incident->id,
+                'failure_fingerprint' => $noProgress['failure_fingerprint'],
+                'consecutive_repeat_count' => $noProgress['consecutive_repeat_count'],
+                'threshold' => $noProgress['threshold'],
+                'attempt_count' => $incident->attempt_count,
+            ], $incident->project, $task);
+
+            return $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+                'Runtime recovery circuit breaker opened after repeated failed repairs with the same fingerprint and no material evidence change.',
+            );
+        }
+
+        if ($incident->attempt_count >= $maxAttempts) {
+            return $this->escalateRuntime($incident, $classification, $task, 'Bounded recovery attempt limit reached.');
+        }
+
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Detected,
+            'claim_token' => null,
+            'claimed_at' => null,
+        ]);
+        $this->audit->record('recovery.runtime_retry_scheduled', [
+            'recovery_incident_id' => $incident->id,
+            'attempt_count' => $incident->attempt_count,
+            'retry_limit' => $maxAttempts,
+            'failure_fingerprint' => $noProgress['failure_fingerprint'],
+        ], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    /**
+     * Park an eligible candidate for P7-004 without launching, resuming, or reusing an LLM execution in P7-003.
+     */
+    private function deferRuntimeAiRepair(RecoveryIncident $incident, ?Task $task): RecoveryIncident
+    {
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Detected,
+            'claim_token' => null,
+            'claimed_at' => null,
+        ]);
+        $this->audit->record('recovery.runtime_ai_repair_deferred', [
+            'recovery_incident_id' => $incident->id,
+            'fingerprint' => $incident->fingerprint,
+            'classification' => RuntimeRecoverabilityClassification::CandidateAiRepair->value,
+            'next_capability' => 'P7-004',
+        ], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    /**
+     * Close a runtime incident that lacks the stable evidence required for any safe automated action.
+     */
+    private function closeNonActionableRuntimeIncident(RecoveryIncident $incident, ?Task $task): RecoveryIncident
+    {
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Recovered,
+            'recoverable' => false,
+            'fix_summary' => 'No automatic recovery action was taken because deterministic runtime identity was unavailable.',
+            'resolved_at' => now(),
+            'claim_token' => null,
+            'claimed_at' => null,
+        ]);
+        $this->audit->record('recovery.runtime_non_actionable', [
+            'recovery_incident_id' => $incident->id,
+            'classification' => RuntimeRecoverabilityClassification::NonActionable->value,
+        ], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    /**
+     * Escalate a runtime incident without discarding previously persisted validation or Git evidence.
+     *
+     * @param  array<string, mixed>  $classification
+     */
+    private function escalateRuntime(RecoveryIncident $incident, array $classification, ?Task $task, ?string $reasonOverride = null): RecoveryIncident
+    {
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Escalated,
+            'recoverable' => false,
+            'escalation_reason' => $reasonOverride ?? $classification['escalation_reason'] ?? 'Automatic runtime recovery could not safely resolve this incident.',
+            'resolved_at' => now(),
+            'claim_token' => null,
+            'claimed_at' => null,
+        ]);
+        $this->audit->record('recovery.escalated', [
+            'recovery_incident_id' => $incident->id,
+            'root_cause_category' => $classification['category'],
+            'escalation_reason' => $incident->fresh()->escalation_reason,
+        ], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    /**
+     * Reclaim one stale recovery claim while preserving the incident and interrupting any linked running recovery run.
+     */
+    private function reclaimIncidentClaim(RecoveryIncident $incident): RecoveryIncident
+    {
+        AgentRun::query()
+            ->where('recovery_incident_id', $incident->id)
+            ->where('status', AgentRunStatus::Running)
+            ->update(['status' => AgentRunStatus::Interrupted, 'finished_at' => now()]);
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Detected,
+            'claim_token' => null,
+            'claimed_at' => null,
+        ]);
+        $task = $incident->task_id === null ? null : Task::query()->find($incident->task_id);
+        $this->audit->record('recovery.claim_reclaimed', [
+            'recovery_incident_id' => $incident->id,
+        ], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    /**
+     * Return every runtime failure family value for bounded runtime recovery queries.
+     *
+     * @return list<string>
+     */
+    private function runtimeFailureTypes(): array
+    {
+        return array_map(
+            static fn (RuntimeRecoveryIncidentFamily $family): string => $family->value,
+            RuntimeRecoveryIncidentFamily::cases(),
+        );
     }
 
     private function claim(RecoveryIncident $incident): bool

@@ -10,14 +10,16 @@ use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 
 #[Signature('aios:recover-workflows')]
-#[Description('Scan every running/stopping project for actionable AIOS workflow failures and drive the Workflow Recovery Engineer (scheduled every five minutes)')]
+#[Description('Scan runtime and workflow failures and drive the AIOS-owned recovery lifecycle (scheduled every five minutes)')]
 class RecoverWorkflows extends Command
 {
     /**
-     * Execute the console command.
+     * Execute one global runtime pass followed by one recovery pass for every active project.
      */
     public function handle(RunWorkflowRecoveryScan $scan): int
     {
+        $scan->handleUnscopedRuntimeIncidents();
+
         foreach (Project::query()->whereIn('status', [ProjectStatus::Running, ProjectStatus::Stopping])->get() as $project) {
             $scan->handle($project);
         }
