@@ -192,9 +192,9 @@ class RuntimeRecoverabilityPolicy
      */
     private function evidenceMessage(RecoveryIncident $incident): string
     {
-        $evidence = $incident->evidence;
+        $evidence = $incident->evidence ?? [];
 
-        return is_array($evidence) && is_string($evidence['message'] ?? null)
+        return is_string($evidence['message'] ?? null)
             ? $evidence['message']
             : '';
     }

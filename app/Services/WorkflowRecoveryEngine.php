@@ -179,7 +179,7 @@ class WorkflowRecoveryEngine
     {
         $incident = $incident->fresh();
 
-        if ($incident->status !== RecoveryIncidentStatus::Detected) {
+        if (RecoveryIncidentStatus::from((string) $incident->getRawOriginal('status')) !== RecoveryIncidentStatus::Detected) {
             return $incident;
         }
 
@@ -308,12 +308,11 @@ class WorkflowRecoveryEngine
      */
     private function staleWorkerIncidentStillActionable(RecoveryIncident $incident): bool
     {
-        $worker = $incident->agentWorker()->first();
-
-        return $worker !== null
-            && $worker->status === 'working'
-            && $worker->lease_expires_at !== null
-            && $worker->lease_expires_at->isPast();
+        return $incident->agentWorker()
+            ->where('status', 'working')
+            ->whereNotNull('lease_expires_at')
+            ->where('lease_expires_at', '<', now())
+            ->exists();
     }
 
     /**

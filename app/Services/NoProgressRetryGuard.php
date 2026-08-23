@@ -148,7 +148,7 @@ class NoProgressRetryGuard
 
         $repositoryFingerprint = $this->runtimeRepositoryEvidenceFingerprint($incident);
         $sourceEvidenceHash = $this->fingerprint([
-            'evidence' => is_array($incident->evidence) ? $incident->evidence : [],
+            'evidence' => $incident->evidence ?? [],
         ]);
         $failureFingerprint = $this->fingerprint([
             'operation' => 'runtime_recovery',
@@ -230,10 +230,9 @@ class NoProgressRetryGuard
             ->limit(50)
             ->get()
             ->first(function (AuditEvent $event) use ($incident): bool {
-                $payload = $event->payload;
+                $payload = $this->decodedObject($event->getRawOriginal('payload'));
 
-                return is_array($payload)
-                    && ($payload['recovery_incident_id'] ?? null) === $incident->id;
+                return ($payload['recovery_incident_id'] ?? null) === $incident->id;
             });
     }
 
@@ -307,7 +306,7 @@ class NoProgressRetryGuard
             'head_sha' => $incident->head_sha,
             'commit_sha' => $incident->commit_sha,
             'changed_files' => $this->normalizeFiles($incident->changed_files),
-            'validation_evidence' => is_array($incident->validation_evidence) ? $incident->validation_evidence : [],
+            'validation_evidence' => $incident->validation_evidence ?? [],
         ]);
     }
 
