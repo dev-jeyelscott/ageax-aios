@@ -23,10 +23,15 @@ class RuntimeRecoveryIncidentRecorder
 
     private const int MaximumFingerprintSummaryLength = 4096;
 
-    public function __construct(private AuditLogger $audit) {}
+    public function __construct(
+        private AuditLogger $audit,
+        private SensitiveDataSanitizer $sanitizer,
+    ) {}
 
     /**
      * Persist one runtime failure occurrence into the existing durable RecoveryIncident lifecycle.
+     *
+     * @param  array<string, mixed>|null  $evidence
      */
     public function record(
         RuntimeRecoveryIncidentFamily $family,
@@ -38,10 +43,14 @@ class RuntimeRecoveryIncidentRecorder
         ?AgentWorker $agentWorker = null,
         ?AgentRun $sourceAgentRun = null,
         ?DateTimeInterface $occurredAt = null,
+        ?array $evidence = null,
     ): RecoveryIncident {
         $scope = $this->resolveScope($project, $task, $agentWorker, $sourceAgentRun);
         $normalizedSource = $this->normalizeSource($source);
         $normalizedExceptionClass = $this->normalizeExceptionClass($exceptionClass);
+        $sanitizedEvidence = $evidence === null
+            ? null
+            : $this->sanitizer->sanitizePayload($evidence);
         $fingerprint = $this->fingerprint(
             $family,
             $normalizedSource,
@@ -57,6 +66,7 @@ class RuntimeRecoveryIncidentRecorder
             $scope,
             $normalizedSource,
             $normalizedExceptionClass,
+            $sanitizedEvidence,
             $fingerprint,
             $seenAt,
         ): RecoveryIncident {
@@ -98,6 +108,7 @@ class RuntimeRecoveryIncidentRecorder
                     'detected_at' => $seenAt,
                     'first_seen_at' => $seenAt,
                     'last_seen_at' => $seenAt,
+                    'evidence' => $sanitizedEvidence,
                 ]);
             } else {
                 $lastSeenAt = $incident->last_seen_at;
@@ -244,7 +255,7 @@ class RuntimeRecoveryIncidentRecorder
      */
     private function normalizeSource(string $source): string
     {
-        $normalized = $this->normalizeOccurrenceNoise($this->redactSensitiveText($source));
+        $normalized = $this->normalizeOccurrenceNoise($this->sanitizer->sanitizeText($source));
         $normalized = Str::substr(Str::squish($normalized), 0, self::MaximumSourceLength);
 
         if ($normalized === '') {
@@ -273,7 +284,7 @@ class RuntimeRecoveryIncidentRecorder
      */
     private function normalizeFingerprintText(string $failureSummary): string
     {
-        $normalized = $this->redactSensitiveText($failureSummary);
+        $normalized = $this->sanitizer->sanitizeText($failureSummary);
         $normalized = $this->normalizeOccurrenceNoise($normalized);
         $normalized = Str::substr(Str::squish($normalized), 0, self::MaximumFingerprintSummaryLength);
 
@@ -282,42 +293,6 @@ class RuntimeRecoveryIncidentRecorder
         }
 
         return $normalized;
-    }
-
-    /**
-     * Remove secret-bearing values before hashing so changing a secret cannot change the identity.
-     */
-    private function redactSensitiveText(string $text): string
-    {
-        $redacted = preg_replace(
-            '/-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----/s',
-            '[REDACTED PRIVATE KEY]',
-            $text,
-        ) ?? $text;
-
-        $redacted = preg_replace(
-            '/(?i)\b(authorization)\s*:\s*[^\r\n]+/',
-            '$1: [REDACTED]',
-            $redacted,
-        ) ?? $redacted;
-
-        $redacted = preg_replace(
-            '/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/',
-            '[REDACTED]',
-            $redacted,
-        ) ?? $redacted;
-
-        $redacted = preg_replace(
-            '/(?i)\b((?=[a-z0-9_.-]*(?:token|secret|password|api[_-]?key|app[_-]?key|private[_-]?key|credential|authorization))[a-z][a-z0-9_.-]*)\s*[:=]\s*(?:"[^"]*"|\'[^\']*\'|[^\s,;]+)/',
-            '$1=[REDACTED]',
-            $redacted,
-        ) ?? $redacted;
-
-        return preg_replace(
-            '/\b([a-z][a-z0-9+.-]*:\/\/)[^\s\/@:]+:[^\s\/@]+@/i',
-            '$1[REDACTED]@',
-            $redacted,
-        ) ?? $redacted;
     }
 
     /**
