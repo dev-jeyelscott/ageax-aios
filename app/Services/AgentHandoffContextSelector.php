@@ -15,6 +15,7 @@ use App\Models\TaskAttempt;
 use App\RecoveryIncidentStatus;
 use App\ReviewStatus;
 use App\TaskStatus;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use LogicException;
 
@@ -197,7 +198,13 @@ final class AgentHandoffContextSelector
     /**
      * Select only currently pending handoffs whose durable workflow evidence targets this fresh execution.
      *
-     * @return array<string, mixed>
+     * @return array{
+     *     entries: list<array<string, mixed>>,
+     *     handoff_ids: list<int>,
+     *     pending_handoff_ids: list<int>,
+     *     content_hashes: array<int, string>,
+     *     replay_source_agent_run_id: int|null
+     * }
      */
     private function freshSelection(AgentRun $targetRun): array
     {
@@ -241,7 +248,7 @@ final class AgentHandoffContextSelector
                 continue;
             }
 
-            $type = $candidate->handoff_type->value;
+            $type = $this->handoffType($candidate)->value;
 
             if (! array_key_exists($type, $selectedByType)) {
                 $selectedByType[$type] = $candidate;
@@ -252,7 +259,7 @@ final class AgentHandoffContextSelector
         $selected = collect(array_values($selectedByType))
             ->sortBy(fn (AgentHandoff $handoff): string => sprintf(
                 '%03d:%020d',
-                $this->typePriority($handoff->handoff_type),
+                $this->typePriority($this->handoffType($handoff)),
                 $handoff->id,
             ))
             ->values();
@@ -263,7 +270,13 @@ final class AgentHandoffContextSelector
     /**
      * Reconstruct exactly the evidence approved for the same interrupted execution.
      *
-     * @return array<string, mixed>
+     * @return array{
+     *     entries: list<array<string, mixed>>,
+     *     handoff_ids: list<int>,
+     *     pending_handoff_ids: list<int>,
+     *     content_hashes: array<int, string>,
+     *     replay_source_agent_run_id: int|null
+     * }
      */
     private function replaySelection(
         AgentRun $targetRun,
@@ -365,12 +378,12 @@ final class AgentHandoffContextSelector
             }
 
             $this->schemas->validate(
-                $handoff->handoff_type,
+                $this->handoffType($handoff),
                 $handoff->schema_version,
-                $handoff->payload,
+                $this->handoffPayload($handoff),
             );
 
-            if ($handoff->status === AgentHandoffStatus::Consumed) {
+            if ($this->handoffStatus($handoff) === AgentHandoffStatus::Consumed) {
                 if (
                     ! $this->consumptionAuditExists(
                         $handoff,
@@ -386,10 +399,7 @@ final class AgentHandoffContextSelector
                 continue;
             }
 
-            if (
-                $handoff->status !== AgentHandoffStatus::Pending
-                || $handoff->consumed_at !== null
-            ) {
+            if ($handoff->consumed_at !== null) {
                 throw new LogicException(
                     "Interrupted Agent handoff [{$handoff->id}] has an invalid replay status.",
                 );
@@ -416,12 +426,12 @@ final class AgentHandoffContextSelector
         }
 
         $this->schemas->validate(
-            $handoff->handoff_type,
+            $this->handoffType($handoff),
             $handoff->schema_version,
-            $handoff->payload,
+            $this->handoffPayload($handoff),
         );
 
-        return match ($handoff->handoff_type) {
+        return match ($this->handoffType($handoff)) {
             AgentHandoffType::ImplementationHandoff => $this->implementationHandoffIsRelevant($handoff, $targetRun),
 
             AgentHandoffType::ReviewFinding => $this->reviewFindingIsRelevant($handoff, $targetRun),
@@ -439,7 +449,7 @@ final class AgentHandoffContextSelector
         AgentHandoff $handoff,
         AgentRun $targetRun,
     ): bool {
-        return $handoff->status === AgentHandoffStatus::Pending
+        return $this->handoffStatus($handoff) === AgentHandoffStatus::Pending
             && $handoff->consumed_at === null
             && $this->replayEnvelopeIsValid($handoff, $targetRun);
     }
@@ -455,11 +465,11 @@ final class AgentHandoffContextSelector
         $targetRole = $this->role($targetRun);
 
         $supportedType = match ($targetRole) {
-            AgentRole::Reviewer => $handoff->handoff_type
+            AgentRole::Reviewer => $this->handoffType($handoff)
                     === AgentHandoffType::ImplementationHandoff,
 
             AgentRole::Coder => in_array(
-                $handoff->handoff_type,
+                $this->handoffType($handoff),
                 [
                     AgentHandoffType::ReviewFinding,
                     AgentHandoffType::RecoveryAdvice,
@@ -473,12 +483,12 @@ final class AgentHandoffContextSelector
         return $supportedType
             && (int) $handoff->project_id === (int) $targetRun->project_id
             && (int) $handoff->task_id === (int) $targetRun->task_id
-            && $handoff->to_role === $targetRole
+            && $this->handoffRole($handoff, 'to_role') === $targetRole
             && $sourceRun !== null
             && (int) $sourceRun->project_id === (int) $targetRun->project_id
             && (int) $sourceRun->task_id === (int) $targetRun->task_id
             && $sourceRun->getRawOriginal('role')
-                === $handoff->from_role->value
+                === $this->handoffRole($handoff, 'from_role')->value
             && $sourceRun->getRawOriginal('status')
                 === AgentRunStatus::Completed->value
             && $sourceRun->finished_at !== null
@@ -499,7 +509,7 @@ final class AgentHandoffContextSelector
             $sourceRun === null
             || $task === null
             || $this->role($targetRun) !== AgentRole::Reviewer
-            || $handoff->from_role !== AgentRole::Coder
+            || $this->handoffRole($handoff, 'from_role') !== AgentRole::Coder
             || $sourceRun->attempt_number === null
             || $targetRun->attempt_number === null
             || (int) $sourceRun->attempt_number
@@ -516,7 +526,9 @@ final class AgentHandoffContextSelector
             ->where('number', $targetRun->attempt_number)
             ->first();
 
-        $validationResults = $attempt?->validation_results;
+        $validationResults = $attempt === null
+            ? null
+            : $this->jsonArrayAttribute($attempt, 'validation_results');
 
         if (
             $attempt === null
@@ -550,7 +562,7 @@ final class AgentHandoffContextSelector
             $sourceRun === null
             || $task === null
             || $this->role($targetRun) !== AgentRole::Coder
-            || $handoff->from_role !== AgentRole::Reviewer
+            || $this->handoffRole($handoff, 'from_role') !== AgentRole::Reviewer
             || $sourceRun->attempt_number === null
             || $targetRun->attempt_number === null
             || (int) $targetRun->attempt_number < 2
@@ -613,7 +625,7 @@ final class AgentHandoffContextSelector
             $sourceRun === null
             || $task === null
             || $this->role($targetRun) !== AgentRole::Coder
-            || $handoff->from_role !== AgentRole::RecoveryEngineer
+            || $this->handoffRole($handoff, 'from_role') !== AgentRole::RecoveryEngineer
             || $sourceRun->recovery_incident_id === null
             || $targetRun->attempt_number === null
             || (int) $targetRun->attempt_number < 2
@@ -633,7 +645,7 @@ final class AgentHandoffContextSelector
                 !== (int) $targetRun->project_id
             || (int) $incident->task_id
                 !== (int) $targetRun->task_id
-            || $incident->status !== RecoveryIncidentStatus::Recovered
+            || $this->recoveryIncidentStatus($incident) !== RecoveryIncidentStatus::Recovered
             || $incident->recoverable !== true
             || $incident->resolved_at === null
             || ! in_array(
@@ -645,15 +657,11 @@ final class AgentHandoffContextSelector
             return false;
         }
 
-        $evidence = $incident->evidence;
+        $evidence = $this->jsonArrayAttribute($incident, 'evidence');
 
-        $latestAttempt = is_array($evidence)
-            ? ($evidence['latest_attempt'] ?? null)
-            : null;
+        $latestAttempt = $evidence['latest_attempt'] ?? null;
 
-        $latestRun = is_array($evidence)
-            ? ($evidence['latest_run'] ?? null)
-            : null;
+        $latestRun = $evidence['latest_run'] ?? null;
 
         $previousAttemptNumber = is_array($latestAttempt)
             ? ($latestAttempt['number'] ?? null)
@@ -744,7 +752,7 @@ final class AgentHandoffContextSelector
         }
 
         if (
-            $handoff->status !== AgentHandoffStatus::Pending
+            $this->handoffStatus($handoff) !== AgentHandoffStatus::Pending
             || $handoff->consumed_at !== null
             || ! $this->replayEnvelopeIsValid(
                 $handoff,
@@ -780,9 +788,9 @@ final class AgentHandoffContextSelector
         }
 
         $this->schemas->validate(
-            $handoff->handoff_type,
+            $this->handoffType($handoff),
             $handoff->schema_version,
-            $handoff->payload,
+            $this->handoffPayload($handoff),
         );
 
         return true;
@@ -847,7 +855,9 @@ final class AgentHandoffContextSelector
             ->where('number', $targetRun->attempt_number)
             ->first();
 
-        $validationResults = $attempt?->validation_results;
+        $validationResults = $attempt === null
+            ? null
+            : $this->jsonArrayAttribute($attempt, 'validation_results');
 
         $preflight = is_array($validationResults)
             ? ($validationResults['repository_preflight'] ?? null)
@@ -921,7 +931,13 @@ final class AgentHandoffContextSelector
      * Convert selected durable handoffs to bounded provider evidence and persistence metadata.
      *
      * @param  Collection<int, AgentHandoff>  $handoffs
-     * @return array<string, mixed>
+     * @return array{
+     *     entries: list<array<string, mixed>>,
+     *     handoff_ids: list<int>,
+     *     pending_handoff_ids: list<int>,
+     *     content_hashes: array<int, string>,
+     *     replay_source_agent_run_id: int|null
+     * }
      */
     private function selection(
         Collection $handoffs,
@@ -937,7 +953,7 @@ final class AgentHandoffContextSelector
             $ids[] = $handoff->id;
             $hashes[$handoff->id] = $handoff->content_hash;
 
-            if ($handoff->status === AgentHandoffStatus::Pending) {
+            if ($this->handoffStatus($handoff) === AgentHandoffStatus::Pending) {
                 $pendingIds[] = $handoff->id;
             }
         }
@@ -960,16 +976,16 @@ final class AgentHandoffContextSelector
         AgentHandoff $handoff,
     ): array {
         $validatedPayload = $this->schemas->validate(
-            $handoff->handoff_type,
+            $this->handoffType($handoff),
             $handoff->schema_version,
-            $handoff->payload,
+            $this->handoffPayload($handoff),
         );
 
         return [
             'id' => $handoff->id,
-            'handoff_type' => $handoff->handoff_type->value,
+            'handoff_type' => $this->handoffType($handoff)->value,
             'schema_version' => $handoff->schema_version,
-            'from_role' => $handoff->from_role->value,
+            'from_role' => $this->handoffRole($handoff, 'from_role')->value,
             'from_agent_run_id' => $handoff->from_agent_run_id,
             'source_attempt_number' => $handoff->sourceRun?->attempt_number,
             'content_hash' => $handoff->content_hash,
@@ -999,6 +1015,92 @@ final class AgentHandoffContextSelector
         return AgentRole::from(
             (string) $run->getRawOriginal('role'),
         );
+    }
+
+    /**
+     * Decode a persisted handoff type before comparing durable evidence.
+     */
+    private function handoffType(AgentHandoff $handoff): AgentHandoffType
+    {
+        return AgentHandoffType::from(
+            (string) $handoff->getRawOriginal('handoff_type'),
+        );
+    }
+
+    /**
+     * Decode one persisted handoff status before validating delivery state.
+     */
+    private function handoffStatus(AgentHandoff $handoff): AgentHandoffStatus
+    {
+        return AgentHandoffStatus::from(
+            (string) $handoff->getRawOriginal('status'),
+        );
+    }
+
+    /**
+     * Decode a persisted handoff role from its immutable evidence envelope.
+     */
+    private function handoffRole(
+        AgentHandoff $handoff,
+        string $attribute,
+    ): AgentRole {
+        return AgentRole::from(
+            (string) $handoff->getRawOriginal($attribute),
+        );
+    }
+
+    /**
+     * Decode the immutable persisted payload before schema validation.
+     *
+     * @return array<string, mixed>
+     */
+    private function handoffPayload(AgentHandoff $handoff): array
+    {
+        return $this->jsonArrayAttribute($handoff, 'payload');
+    }
+
+    /**
+     * Decode one persisted recovery-incident status before evaluating recovery eligibility.
+     */
+    private function recoveryIncidentStatus(
+        RecoveryIncident $incident,
+    ): RecoveryIncidentStatus {
+        return RecoveryIncidentStatus::from(
+            (string) $incident->getRawOriginal('status'),
+        );
+    }
+
+    /**
+     * Decode one JSON evidence attribute directly from its persisted representation.
+     *
+     * @return array<string, mixed>
+     */
+    private function jsonArrayAttribute(
+        Model $model,
+        string $attribute,
+    ): array {
+        $raw = $model->getRawOriginal($attribute);
+
+        if ($raw === null) {
+            throw new LogicException(
+                get_class($model)." {$attribute} must contain JSON evidence.",
+            );
+        }
+
+        $decoded = json_decode(
+            (string) $raw,
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        if (! is_array($decoded)) {
+            throw new LogicException(
+                get_class($model)." {$attribute} must contain JSON evidence.",
+            );
+        }
+
+        return $decoded;
     }
 
     /**
@@ -1061,7 +1163,7 @@ final class AgentHandoffContextSelector
             );
         }
 
-        return array_values($ids);
+        return $ids;
     }
 
     /**
@@ -1082,8 +1184,7 @@ final class AgentHandoffContextSelector
             $key = is_int($id) ? (string) $id : $id;
 
             if (
-                ! is_string($key)
-                || preg_match('/\A[1-9][0-9]*\z/', $key) !== 1
+                preg_match('/\A[1-9][0-9]*\z/', $key) !== 1
                 || ! is_string($hash)
                 || preg_match('/\A[a-f0-9]{64}\z/', $hash) !== 1
             ) {
@@ -1092,7 +1193,7 @@ final class AgentHandoffContextSelector
                 );
             }
 
-            $hashes[$id] = $hash;
+            $hashes[(int) $key] = $hash;
         }
 
         return $hashes;
@@ -1101,7 +1202,13 @@ final class AgentHandoffContextSelector
     /**
      * Return the canonical empty selection.
      *
-     * @return array<string, mixed>
+     * @return array{
+     *     entries: list<array<string, mixed>>,
+     *     handoff_ids: list<int>,
+     *     pending_handoff_ids: list<int>,
+     *     content_hashes: array<int, string>,
+     *     replay_source_agent_run_id: null
+     * }
      */
     private function emptySelection(): array
     {
