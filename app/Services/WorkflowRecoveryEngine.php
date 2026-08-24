@@ -5,6 +5,7 @@ namespace App\Services;
 use App\AgentRole;
 use App\AgentRunStatus;
 use App\Exceptions\DatabaseProtectionFailed;
+use App\Models\Agent;
 use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\RecoveryIncident;
@@ -21,12 +22,11 @@ use LogicException;
 use Throwable;
 
 /**
- * Repair half of the Workflow Recovery Engineer. Claims one open RecoveryIncident at a time
- * (an atomic conditional update guards against a second scan or process claiming the same
- * incident), classifies its root cause, and either applies a bounded, AIOS-committed fix or
- * escalates. AIOS alone performs every durable state transition; the Recovery Engineer's LLM
- * execution only diagnoses and, when invoked, edits files inside a disposable working tree that
- * AIOS independently validates before ever committing or touching task state.
+ * AIOS-owned workflow and runtime recovery engine.
+ *
+ * Recovery Engineer executions are disposable. Laravel/AIOS retains exclusive
+ * authority over claiming, retry limits, durable state, validation, Git,
+ * commits, recovery transitions, auditing, and escalation.
  */
 class WorkflowRecoveryEngine
 {
@@ -35,6 +35,18 @@ class WorkflowRecoveryEngine
         'task.blocked_agent_misconfigured' => 'configuration_environment',
         'task.blocked_unsafe_path' => 'configuration_environment',
     ];
+
+    private const int RecoveryHistoryLimit = 5;
+
+    private const int RecoveryContextArrayLimit = 25;
+
+    private const int RecoveryContextDepthLimit = 4;
+
+    private const int RecoveryContextStringLimit = 2048;
+
+    private const int RecoverySummaryLimit = 4000;
+
+    private const int RecoveryPathLimit = 512;
 
     public function __construct(
         private AuditLogger $audit,
@@ -51,13 +63,12 @@ class WorkflowRecoveryEngine
         private RuntimeRecoverabilityPolicy $runtimePolicy,
         private NoProgressRetryGuard $noProgress,
         private StaleWorkerRecovery $staleWorkerRecovery,
+        private AgentContextAssembler $contextAssembler,
+        private SensitiveDataSanitizer $sanitizer,
     ) {}
 
     /**
-     * Reclaim incidents whose Diagnosing/Repairing/Validating claim was abandoned by a Recovery
-     * Engineer execution that itself died mid-run (e.g. the harness process was killed or ran out
-     * of resources), so they are not silently orphaned forever: processOpenIncidents() only ever
-     * re-scans incidents still in Detected.
+     * Reclaim workflow/runtime recovery claims abandoned by a dead Recovery Engineer execution.
      */
     public function reclaimStaleClaims(Project $project): void
     {
@@ -65,14 +76,18 @@ class WorkflowRecoveryEngine
 
         RecoveryIncident::query()
             ->whereBelongsTo($project)
-            ->whereIn('status', [RecoveryIncidentStatus::Diagnosing, RecoveryIncidentStatus::Repairing, RecoveryIncidentStatus::Validating])
+            ->whereIn('status', [
+                RecoveryIncidentStatus::Diagnosing,
+                RecoveryIncidentStatus::Repairing,
+                RecoveryIncidentStatus::Validating,
+            ])
             ->where('claimed_at', '<=', now()->subSeconds($staleAfterSeconds))
             ->get()
             ->each(fn (RecoveryIncident $incident): RecoveryIncident => $this->reclaimIncidentClaim($incident));
     }
 
     /**
-     * Reclaim stale claims for global runtime incidents that have no provable managed-project scope.
+     * Reclaim stale claims for runtime incidents that have no managed-project scope.
      */
     public function reclaimStaleUnscopedRuntimeClaims(): void
     {
@@ -81,13 +96,19 @@ class WorkflowRecoveryEngine
         RecoveryIncident::query()
             ->whereNull('project_id')
             ->whereIn('failure_type', $this->runtimeFailureTypes())
-            ->whereIn('status', [RecoveryIncidentStatus::Diagnosing, RecoveryIncidentStatus::Repairing, RecoveryIncidentStatus::Validating])
+            ->whereIn('status', [
+                RecoveryIncidentStatus::Diagnosing,
+                RecoveryIncidentStatus::Repairing,
+                RecoveryIncidentStatus::Validating,
+            ])
             ->where('claimed_at', '<=', now()->subSeconds($staleAfterSeconds))
             ->get()
             ->each(fn (RecoveryIncident $incident): RecoveryIncident => $this->reclaimIncidentClaim($incident));
     }
 
-    /** Process every open, unclaimed incident for a project, one at a time (strict serial recovery). */
+    /**
+     * Process every currently detected project recovery incident serially.
+     */
     public function processOpenIncidents(Project $project): void
     {
         RecoveryIncident::query()
@@ -99,7 +120,7 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Process unscoped runtime incidents once per scheduled recovery pass so they cannot remain invisible forever.
+     * Process global runtime incidents that cannot be scoped to a managed project.
      */
     public function processUnscopedRuntimeIncidents(): void
     {
@@ -113,7 +134,7 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Process one workflow or runtime incident through the single AIOS-owned recovery lifecycle.
+     * Route one incident into the workflow or runtime recovery lifecycle.
      */
     public function process(RecoveryIncident $incident): RecoveryIncident
     {
@@ -128,40 +149,77 @@ class WorkflowRecoveryEngine
         }
 
         $incident = $incident->fresh();
-        $task = $incident->task_id === null ? null : Task::query()->find($incident->task_id);
+        $task = $incident->task_id === null
+            ? null
+            : Task::query()->find($incident->task_id);
 
         if ($task !== null && ! $this->stillEligible($task)) {
             return $this->resolveAlreadyHandled($incident, $task);
         }
 
-        $classification = $this->classifyDeterministically($task) ?? $this->diagnoseSafely($incident, $task);
+        $classification = $this->classifyDeterministically($task)
+            ?? $this->diagnoseSafely($incident, $task);
+
         $maxAttempts = max(1, (int) config('aios.recovery_max_attempts'));
 
         DB::transaction(function () use ($incident, $classification): void {
-            RecoveryIncident::query()->whereKey($incident->id)->update([
-                'root_cause' => $classification['summary'],
-                'root_cause_category' => $classification['category'],
-                'recoverable' => $classification['recoverable'],
-                'attempt_count' => $incident->attempt_count + 1,
-            ]);
+            RecoveryIncident::query()
+                ->whereKey($incident->id)
+                ->update([
+                    'root_cause' => $classification['summary'],
+                    'root_cause_category' => $classification['category'],
+                    'recoverable' => $classification['recoverable'],
+                    'attempt_count' => $incident->attempt_count + 1,
+                ]);
         }, attempts: 3);
+
         $incident = $incident->fresh();
 
-        if ($classification['category'] === 'transient_harness_failure' && $incident->attempt_count < $maxAttempts) {
-            $incident->update(['status' => RecoveryIncidentStatus::Detected]);
-            $this->audit->record('recovery.retry_scheduled', ['recovery_incident_id' => $incident->id, 'attempt_count' => $incident->attempt_count, 'retry_limit' => $maxAttempts], $incident->project, $task);
+        if (
+            $classification['category'] === 'transient_harness_failure'
+            && $incident->attempt_count < $maxAttempts
+        ) {
+            $incident->update([
+                'status' => RecoveryIncidentStatus::Detected,
+            ]);
+
+            $this->audit->record('recovery.retry_scheduled', [
+                'recovery_incident_id' => $incident->id,
+                'attempt_count' => $incident->attempt_count,
+                'retry_limit' => $maxAttempts,
+            ], $incident->project, $task);
 
             return $incident->fresh();
         }
 
         if (! $classification['recoverable'] || $incident->attempt_count >= $maxAttempts) {
-            return $this->escalate($incident, $classification, $task, $incident->attempt_count >= $maxAttempts ? 'Bounded recovery attempt limit reached.' : null);
+            return $this->escalate(
+                $incident,
+                $classification,
+                $task,
+                $incident->attempt_count >= $maxAttempts
+                    ? 'Bounded recovery attempt limit reached.'
+                    : null,
+                is_array($classification['validation_evidence'] ?? null)
+                    ? $classification['validation_evidence']
+                    : null,
+            );
         }
 
-        if ($task !== null && isset($classification['origin_task_id']) && $classification['origin_task_id'] !== $task->id) {
+        if (
+            $task !== null
+            && isset($classification['origin_task_id'])
+            && $classification['origin_task_id'] !== $task->id
+        ) {
             $originTask = Task::query()->find($classification['origin_task_id']);
+
             if ($originTask !== null) {
-                return $this->recoverViaOriginatingTask($incident, $task, $originTask, $classification['summary']);
+                return $this->recoverViaOriginatingTask(
+                    $incident,
+                    $task,
+                    $originTask,
+                    $classification['summary'],
+                );
             }
         }
 
@@ -173,17 +231,16 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Classify and gate one runtime incident without starting the P7-004 AI repair flow.
+     * Classify one runtime incident and execute only candidate AI repairs.
      */
     private function processRuntimeIncident(RecoveryIncident $incident): RecoveryIncident
     {
         $incident = $incident->fresh();
 
-        if (RecoveryIncidentStatus::from((string) $incident->getRawOriginal('status')) !== RecoveryIncidentStatus::Detected) {
-            return $incident;
-        }
-
-        if ($incident->root_cause_category === RuntimeRecoverabilityClassification::CandidateAiRepair->value) {
+        if (
+            RecoveryIncidentStatus::from((string) $incident->getRawOriginal('status'))
+            !== RecoveryIncidentStatus::Detected
+        ) {
             return $incident;
         }
 
@@ -192,52 +249,381 @@ class WorkflowRecoveryEngine
         }
 
         $incident = $incident->fresh();
-        $task = $incident->task_id === null ? null : Task::query()->find($incident->task_id);
-        $classification = $this->runtimePolicy->classify($incident);
+        $task = $incident->task_id === null
+            ? null
+            : Task::query()->find($incident->task_id);
 
-        $incident->update([
-            'root_cause' => $classification['summary'],
-            'root_cause_category' => $classification['category'],
-            'recoverable' => $classification['recoverable'],
-        ]);
-        $incident = $incident->fresh();
+        $alreadyCandidate = $incident->root_cause_category
+            === RuntimeRecoverabilityClassification::CandidateAiRepair->value;
 
-        $this->audit->record('recovery.runtime_classified', [
-            'recovery_incident_id' => $incident->id,
-            'failure_type' => $incident->failure_type,
-            'fingerprint' => $incident->fingerprint,
-            'classification' => $classification['category'],
-            'deterministic_repair' => $classification['deterministic_repair'],
-        ], $incident->project, $task);
+        $classification = $alreadyCandidate
+            ? $this->persistedCandidateRuntimeClassification($incident)
+            : $this->runtimePolicy->classify($incident);
+
+        if (! $alreadyCandidate) {
+            $incident->update([
+                'root_cause' => $classification['summary'],
+                'root_cause_category' => $classification['category'],
+                'recoverable' => $classification['recoverable'],
+            ]);
+
+            $incident = $incident->fresh();
+
+            $this->audit->record('recovery.runtime_classified', [
+                'recovery_incident_id' => $incident->id,
+                'failure_type' => $incident->failure_type,
+                'fingerprint' => $incident->fingerprint,
+                'classification' => $classification['category'],
+                'deterministic_repair' => $classification['deterministic_repair'],
+            ], $incident->project, $task);
+        }
 
         return match (RuntimeRecoverabilityClassification::from($classification['category'])) {
-            RuntimeRecoverabilityClassification::KnownDeterministicRepair => $this->applyKnownRuntimeRepair($incident, $classification, $task),
-            RuntimeRecoverabilityClassification::CandidateAiRepair => $this->deferRuntimeAiRepair($incident, $task),
-            RuntimeRecoverabilityClassification::OperatorOnly => $this->escalateRuntime($incident, $classification, $task),
-            RuntimeRecoverabilityClassification::NonActionable => $this->closeNonActionableRuntimeIncident($incident, $task),
+            RuntimeRecoverabilityClassification::KnownDeterministicRepair => $this->applyKnownRuntimeRepair(
+                $incident,
+                $classification,
+                $task,
+            ),
+            RuntimeRecoverabilityClassification::CandidateAiRepair => $this->attemptRuntimeAiRepair(
+                $incident,
+                $classification,
+                $task,
+            ),
+            RuntimeRecoverabilityClassification::OperatorOnly => $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+            ),
+            RuntimeRecoverabilityClassification::NonActionable => $this->closeNonActionableRuntimeIncident(
+                $incident,
+                $task,
+            ),
         };
     }
 
     /**
-     * Apply only an explicitly allowlisted AIOS deterministic runtime repair and bound failed retries.
+     * Rebuild the stable P7-003 candidate classification without re-running policy on each retry.
+     *
+     * @return array<string, mixed>
+     */
+    private function persistedCandidateRuntimeClassification(RecoveryIncident $incident): array
+    {
+        return [
+            'category' => RuntimeRecoverabilityClassification::CandidateAiRepair->value,
+            'summary' => filled($incident->root_cause)
+                ? (string) $incident->root_cause
+                : 'The runtime incident is bounded and project-scoped, but no deterministic repair is proven safe.',
+            'recoverable' => true,
+            'fix_applied' => false,
+            'changed_files' => [],
+            'fix_summary' => null,
+            'escalation_reason' => null,
+            'deterministic_repair' => null,
+        ];
+    }
+
+    /**
+     * Execute one project-scoped candidate runtime repair through the existing isolated Recovery Engineer lifecycle.
      *
      * @param  array<string, mixed>  $classification
      */
-    private function applyKnownRuntimeRepair(RecoveryIncident $incident, array $classification, ?Task $task): RecoveryIncident
-    {
+    private function attemptRuntimeAiRepair(
+        RecoveryIncident $incident,
+        array $classification,
+        ?Task $task,
+    ): RecoveryIncident {
         $maxAttempts = max(1, (int) config('aios.recovery_max_attempts'));
 
         if ($incident->attempt_count >= $maxAttempts) {
-            return $this->escalateRuntime($incident, $classification, $task, 'Bounded recovery attempt limit reached.');
+            return $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+                'Bounded recovery attempt limit reached.',
+            );
+        }
+
+        if ($incident->project === null) {
+            return $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+                'Runtime AI repair requires a provable managed-project scope.',
+            );
+        }
+
+        try {
+            $agent = $this->globalAgents->forRole(AgentRole::RecoveryEngineer);
+            $this->harnesses->resolve($agent);
+        } catch (LogicException $exception) {
+            $reason = $this->safeRecoveryText($exception->getMessage())
+                ?? 'The global Recovery Engineer Agent is unavailable.';
+
+            $this->audit->record('recovery.blocked_agent_misconfigured', [
+                'recovery_incident_id' => $incident->id,
+                'reason' => $reason,
+            ], $incident->project, $task);
+
+            return $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+                $reason,
+            );
+        }
+
+        $repositoryPath = (string) config('aios.recovery_repository_path');
+        $preflight = $this->lifecycle->preflight($repositoryPath);
+
+        if (! $preflight['clean'] || $preflight['head_sha'] === null) {
+            return $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+                'AIOS recovery repository preflight failed before runtime AI repair.',
+            );
+        }
+
+        try {
+            $worktreePath = $this->worktrees->create(
+                $repositoryPath,
+                $preflight['head_sha'],
+            );
+        } catch (Throwable $exception) {
+            $this->audit->record('recovery.blocked_worktree_isolation_failed', [
+                'recovery_incident_id' => $incident->id,
+                'reason' => $this->safeRecoveryText($exception->getMessage()),
+            ], $incident->project, $task);
+
+            return $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+                'Recovery worktree isolation failed before runtime AI repair.',
+            );
+        }
+
+        /** @var array<string, mixed>|null $proposal */
+        $proposal = null;
+
+        try {
+            try {
+                $assembled = $this->contextAssembler->assemble(
+                    $agent,
+                    AgentRole::RecoveryEngineer,
+                    $this->buildRuntimeRecoveryContext(
+                        $incident,
+                        $task,
+                        $preflight['head_sha'],
+                    ),
+                );
+
+                $prompt = $this->buildRecoveryPrompt($assembled);
+
+                $run = $this->runs->start(
+                    $incident->project,
+                    AgentRole::RecoveryEngineer,
+                    $prompt,
+                    $task,
+                    agent: $agent,
+                    context: $assembled,
+                );
+
+                $run->update([
+                    'recovery_incident_id' => $incident->id,
+                ]);
+            } catch (Throwable $exception) {
+                $this->audit->record('recovery.runtime_ai_repair_preparation_failed', [
+                    'recovery_incident_id' => $incident->id,
+                    'reason' => $this->safeRecoveryText($exception->getMessage()),
+                ], $incident->project, $task);
+
+                return $this->escalateRuntime(
+                    $incident,
+                    $classification,
+                    $task,
+                    'Recovery Engineer execution context could not be prepared safely.',
+                );
+            }
+
+            try {
+                $this->databaseProtection->guard();
+            } catch (DatabaseProtectionFailed $exception) {
+                $this->runs->complete(
+                    $run,
+                    $this->failedExecution(
+                        'Database protection blocked Recovery Engineer execution.',
+                    ),
+                );
+
+                $this->audit->record('recovery.blocked_database_protection_failed', [
+                    'recovery_incident_id' => $incident->id,
+                    'reason' => $this->safeRecoveryText($exception->getMessage()),
+                ], $incident->project, $task);
+
+                return $this->escalateRuntime(
+                    $incident,
+                    $classification,
+                    $task,
+                    'Database protection guard failed before runtime AI repair.',
+                );
+            }
+
+            $incident->update([
+                'status' => RecoveryIncidentStatus::Repairing,
+                'attempt_count' => $incident->attempt_count + 1,
+            ]);
+
+            $incident = $incident->fresh();
+
+            $this->audit->record('recovery.runtime_ai_repair_started', [
+                'recovery_incident_id' => $incident->id,
+                'attempt_count' => $incident->attempt_count,
+                'base_sha' => $preflight['head_sha'],
+                'agent_run_id' => $run->id,
+            ], $incident->project, $task);
+
+            try {
+                $result = $this->engineer->run(
+                    $agent,
+                    $prompt,
+                    $worktreePath,
+                );
+            } catch (Throwable $exception) {
+                $reason = 'Recovery Engineer execution threw ['.$exception::class.'].';
+
+                $this->runs->complete(
+                    $run,
+                    $this->failedExecution($reason),
+                );
+
+                return $this->recordRuntimeAttemptFailure(
+                    $incident,
+                    $classification,
+                    $task,
+                    $reason,
+                );
+            }
+
+            $this->runs->complete($run, $result['execution']);
+
+            if (
+                $result['execution']['exit_code'] !== 0
+                || $result['decision'] === null
+            ) {
+                return $this->recordRuntimeAttemptFailure(
+                    $incident,
+                    $classification,
+                    $task,
+                    'Recovery Engineer execution failed or returned no structured decision.',
+                );
+            }
+
+            $proposal = $this->inspectRecoveryProposal(
+                $result['decision'],
+                $run->fresh(),
+                $worktreePath,
+                $repositoryPath,
+                $preflight['head_sha'],
+            );
+
+            if (! $proposal['passed']) {
+                $incident->update([
+                    'status' => RecoveryIncidentStatus::Validating,
+                    'base_sha' => $preflight['head_sha'],
+                    'changed_files' => $proposal['changed_files'],
+                    'validation_evidence' => $proposal['validation'],
+                ]);
+
+                return $this->recordRuntimeAttemptFailure(
+                    $incident->fresh(),
+                    $classification,
+                    $task,
+                    $proposal['reason']
+                        ?? 'The proposed runtime repair failed AIOS validation.',
+                );
+            }
+
+            $incident->update([
+                'root_cause' => $proposal['decision']['root_cause_summary'],
+                'base_sha' => $preflight['head_sha'],
+                'changed_files' => $proposal['changed_files'],
+                'validation_evidence' => $proposal['validation'],
+            ]);
+
+            $incident = $incident->fresh();
+
+            if (! $proposal['decision']['recoverable']) {
+                return $this->escalateRuntime(
+                    $incident,
+                    $classification,
+                    $task,
+                    $proposal['decision']['escalation_reason']
+                        ?? 'Recovery Engineer determined that automatic repair is unsafe.',
+                );
+            }
+
+            if (! $proposal['decision']['fix_applied']) {
+                return $this->recordRuntimeAttemptFailure(
+                    $incident,
+                    $classification,
+                    $task,
+                    'Recovery Engineer completed without producing a bounded AIOS code fix.',
+                );
+            }
+        } finally {
+            $this->worktrees->destroy($repositoryPath, $worktreePath);
+        }
+
+        if ($proposal === null) {
+            return $this->escalateRuntime(
+                $incident->fresh(),
+                $classification,
+                $task,
+                'Runtime AI repair ended without durable proposal evidence.',
+            );
+        }
+
+        return $this->applyRuntimeRepair(
+            $incident->fresh(),
+            $classification,
+            $proposal,
+            $task,
+        );
+    }
+
+    /**
+     * Apply an allowlisted deterministic runtime repair.
+     *
+     * @param  array<string, mixed>  $classification
+     */
+    private function applyKnownRuntimeRepair(
+        RecoveryIncident $incident,
+        array $classification,
+        ?Task $task,
+    ): RecoveryIncident {
+        $maxAttempts = max(1, (int) config('aios.recovery_max_attempts'));
+
+        if ($incident->attempt_count >= $maxAttempts) {
+            return $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+                'Bounded recovery attempt limit reached.',
+            );
         }
 
         $incident->update([
             'status' => RecoveryIncidentStatus::Repairing,
             'attempt_count' => $incident->attempt_count + 1,
         ]);
+
         $incident = $incident->fresh();
 
-        if ($classification['deterministic_repair'] !== 'stale_worker_recovery' || $incident->project === null) {
+        if (
+            $classification['deterministic_repair'] !== 'stale_worker_recovery'
+            || $incident->project === null
+        ) {
             return $this->escalateRuntime(
                 $incident,
                 $classification,
@@ -268,6 +654,7 @@ class WorkflowRecoveryEngine
                 'claim_token' => null,
                 'claimed_at' => null,
             ]);
+
             $this->audit->record('recovery.runtime_deterministic_repair_superseded', [
                 'recovery_incident_id' => $incident->id,
                 'deterministic_repair' => $classification['deterministic_repair'],
@@ -293,6 +680,7 @@ class WorkflowRecoveryEngine
             'claim_token' => null,
             'claimed_at' => null,
         ]);
+
         $this->audit->record('recovery.runtime_deterministic_repair_completed', [
             'recovery_incident_id' => $incident->id,
             'deterministic_repair' => $classification['deterministic_repair'],
@@ -304,7 +692,7 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Confirm that the exact expired worker referenced by the runtime incident still requires deterministic recovery.
+     * Confirm that the worker referenced by a stale-worker incident still requires recovery.
      */
     private function staleWorkerIncidentStillActionable(RecoveryIncident $incident): bool
     {
@@ -316,17 +704,26 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Persist one failed runtime repair attempt, open the no-progress breaker when required, or schedule a bounded retry.
+     * Persist a failed runtime recovery attempt and apply the bounded retry/circuit-breaker policy.
      *
      * @param  array<string, mixed>  $classification
      */
-    private function recordRuntimeAttemptFailure(RecoveryIncident $incident, array $classification, ?Task $task, string $reason): RecoveryIncident
-    {
+    private function recordRuntimeAttemptFailure(
+        RecoveryIncident $incident,
+        array $classification,
+        ?Task $task,
+        string $reason,
+    ): RecoveryIncident {
         $incident = $incident->fresh();
-        $noProgress = $this->noProgress->runtimeRecoveryFailure($incident, [
-            'classification' => $classification['category'],
-            'reason' => $reason,
-        ]);
+
+        $noProgress = $this->noProgress->runtimeRecoveryFailure(
+            $incident,
+            [
+                'classification' => $classification['category'],
+                'reason' => $reason,
+            ],
+        );
+
         $maxAttempts = max(1, (int) config('aios.recovery_max_attempts'));
 
         $this->audit->record('recovery.runtime_attempt_failed', [
@@ -356,7 +753,12 @@ class WorkflowRecoveryEngine
         }
 
         if ($incident->attempt_count >= $maxAttempts) {
-            return $this->escalateRuntime($incident, $classification, $task, 'Bounded recovery attempt limit reached.');
+            return $this->escalateRuntime(
+                $incident,
+                $classification,
+                $task,
+                'Bounded recovery attempt limit reached.',
+            );
         }
 
         $incident->update([
@@ -364,6 +766,7 @@ class WorkflowRecoveryEngine
             'claim_token' => null,
             'claimed_at' => null,
         ]);
+
         $this->audit->record('recovery.runtime_retry_scheduled', [
             'recovery_incident_id' => $incident->id,
             'attempt_count' => $incident->attempt_count,
@@ -375,30 +778,12 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Park an eligible candidate for P7-004 without launching, resuming, or reusing an LLM execution in P7-003.
+     * Close a runtime incident that does not contain sufficient safe identity for recovery.
      */
-    private function deferRuntimeAiRepair(RecoveryIncident $incident, ?Task $task): RecoveryIncident
-    {
-        $incident->update([
-            'status' => RecoveryIncidentStatus::Detected,
-            'claim_token' => null,
-            'claimed_at' => null,
-        ]);
-        $this->audit->record('recovery.runtime_ai_repair_deferred', [
-            'recovery_incident_id' => $incident->id,
-            'fingerprint' => $incident->fingerprint,
-            'classification' => RuntimeRecoverabilityClassification::CandidateAiRepair->value,
-            'next_capability' => 'P7-004',
-        ], $incident->project, $task);
-
-        return $incident->fresh();
-    }
-
-    /**
-     * Close a runtime incident that lacks the stable evidence required for any safe automated action.
-     */
-    private function closeNonActionableRuntimeIncident(RecoveryIncident $incident, ?Task $task): RecoveryIncident
-    {
+    private function closeNonActionableRuntimeIncident(
+        RecoveryIncident $incident,
+        ?Task $task,
+    ): RecoveryIncident {
         $incident->update([
             'status' => RecoveryIncidentStatus::Recovered,
             'recoverable' => false,
@@ -407,6 +792,7 @@ class WorkflowRecoveryEngine
             'claim_token' => null,
             'claimed_at' => null,
         ]);
+
         $this->audit->record('recovery.runtime_non_actionable', [
             'recovery_incident_id' => $incident->id,
             'classification' => RuntimeRecoverabilityClassification::NonActionable->value,
@@ -416,20 +802,27 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Escalate a runtime incident without discarding previously persisted validation or Git evidence.
+     * Escalate a runtime incident while preserving any existing validation and Git evidence.
      *
      * @param  array<string, mixed>  $classification
      */
-    private function escalateRuntime(RecoveryIncident $incident, array $classification, ?Task $task, ?string $reasonOverride = null): RecoveryIncident
-    {
+    private function escalateRuntime(
+        RecoveryIncident $incident,
+        array $classification,
+        ?Task $task,
+        ?string $reasonOverride = null,
+    ): RecoveryIncident {
         $incident->update([
             'status' => RecoveryIncidentStatus::Escalated,
             'recoverable' => false,
-            'escalation_reason' => $reasonOverride ?? $classification['escalation_reason'] ?? 'Automatic runtime recovery could not safely resolve this incident.',
+            'escalation_reason' => $reasonOverride
+                ?? $classification['escalation_reason']
+                ?? 'Automatic runtime recovery could not safely resolve this incident.',
             'resolved_at' => now(),
             'claim_token' => null,
             'claimed_at' => null,
         ]);
+
         $this->audit->record('recovery.escalated', [
             'recovery_incident_id' => $incident->id,
             'root_cause_category' => $classification['category'],
@@ -440,20 +833,28 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Reclaim one stale recovery claim while preserving the incident and interrupting any linked running recovery run.
+     * Reclaim an abandoned incident claim and interrupt its stale Recovery Engineer run.
      */
     private function reclaimIncidentClaim(RecoveryIncident $incident): RecoveryIncident
     {
         AgentRun::query()
             ->where('recovery_incident_id', $incident->id)
             ->where('status', AgentRunStatus::Running)
-            ->update(['status' => AgentRunStatus::Interrupted, 'finished_at' => now()]);
+            ->update([
+                'status' => AgentRunStatus::Interrupted,
+                'finished_at' => now(),
+            ]);
+
         $incident->update([
             'status' => RecoveryIncidentStatus::Detected,
             'claim_token' => null,
             'claimed_at' => null,
         ]);
-        $task = $incident->task_id === null ? null : Task::query()->find($incident->task_id);
+
+        $task = $incident->task_id === null
+            ? null
+            : Task::query()->find($incident->task_id);
+
         $this->audit->record('recovery.claim_reclaimed', [
             'recovery_incident_id' => $incident->id,
         ], $incident->project, $task);
@@ -462,7 +863,7 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Return every runtime failure family value for bounded runtime recovery queries.
+     * Return the durable runtime failure-family values used by recovery queries.
      *
      * @return list<string>
      */
@@ -474,6 +875,9 @@ class WorkflowRecoveryEngine
         );
     }
 
+    /**
+     * Atomically claim one detected incident.
+     */
     private function claim(RecoveryIncident $incident): bool
     {
         $updated = RecoveryIncident::query()
@@ -488,40 +892,71 @@ class WorkflowRecoveryEngine
         return $updated === 1;
     }
 
+    /**
+     * Determine whether a workflow Task remains eligible for recovery.
+     */
     private function stillEligible(Task $task): bool
     {
-        return in_array(TaskStatus::from($task->getRawOriginal('status')), [TaskStatus::Blocked, TaskStatus::Interrupted, TaskStatus::Failed], true);
+        return in_array(
+            TaskStatus::from($task->getRawOriginal('status')),
+            [
+                TaskStatus::Blocked,
+                TaskStatus::Interrupted,
+                TaskStatus::Failed,
+            ],
+            true,
+        );
     }
 
-    private function resolveAlreadyHandled(RecoveryIncident $incident, Task $task): RecoveryIncident
-    {
+    /**
+     * Close an incident whose Task was already handled by another durable workflow transition.
+     */
+    private function resolveAlreadyHandled(
+        RecoveryIncident $incident,
+        Task $task,
+    ): RecoveryIncident {
         $incident->update([
             'status' => RecoveryIncidentStatus::Recovered,
             'root_cause' => 'The task left its stuck state before the Workflow Recovery Engineer diagnosed it.',
             'root_cause_category' => null,
             'recoverable' => true,
-            'resulting_task_transition' => TaskStatus::from($task->getRawOriginal('status'))->value,
+            'resulting_task_transition' => TaskStatus::from(
+                $task->getRawOriginal('status'),
+            )->value,
             'resolved_at' => now(),
         ]);
-        $this->audit->record('recovery.superseded', ['recovery_incident_id' => $incident->id, 'task_status' => $task->getRawOriginal('status')], $incident->project, $task);
+
+        $this->audit->record('recovery.superseded', [
+            'recovery_incident_id' => $incident->id,
+            'task_status' => $task->getRawOriginal('status'),
+        ], $incident->project, $task);
 
         return $incident->fresh();
     }
 
-    /** @return ?array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string, origin_task_id?: int} */
+    /**
+     * Classify known workflow blocks without invoking an Agent.
+     *
+     * @return array<string, mixed>|null
+     */
     private function classifyDeterministically(?Task $task): ?array
     {
         if ($task === null) {
             return null;
         }
 
-        $blockingEvent = $task->auditEvents()->whereIn('event_type', array_keys(self::KnownDeterministicBlocks))->latest('occurred_at')->first();
+        $blockingEvent = $task->auditEvents()
+            ->whereIn('event_type', array_keys(self::KnownDeterministicBlocks))
+            ->latest('occurred_at')
+            ->first();
+
         if ($blockingEvent === null) {
             return null;
         }
 
         if ($blockingEvent->event_type === 'task.blocked_dirty_repository') {
             $attribution = $this->attributeStaleAttempt($task);
+
             if ($attribution !== null) {
                 return $attribution;
             }
@@ -541,17 +976,14 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * A task blocked on a dirty repository is often blocked by another task's own abandoned work,
-     * not its own: if the dirty tree is fully explained by a persisted, uncommitted TaskAttempt
-     * belonging to some task in the project, that origin task (not this one) is the actual thing
-     * to resume. Refuses to guess: any unexplained file, or more than one equally-plausible
-     * origin, falls through to the existing unconditional escalation.
+     * Attribute a dirty managed-project repository to one persisted abandoned TaskAttempt.
      *
-     * @return ?array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string, origin_task_id: int}
+     * @return array<string, mixed>|null
      */
     private function attributeStaleAttempt(Task $task): ?array
     {
         $task->loadMissing('project');
+
         $state = $this->git->inspect($task->project->path);
 
         if (! $state['inspectable'] || $state['clean']) {
@@ -559,6 +991,7 @@ class WorkflowRecoveryEngine
         }
 
         $attempt = $this->attributor->attribute($task->project, $state);
+
         if ($attempt === null) {
             return null;
         }
@@ -577,10 +1010,21 @@ class WorkflowRecoveryEngine
         ];
     }
 
-    private function recoverViaOriginatingTask(RecoveryIncident $incident, Task $incidentTask, Task $originTask, string $summary): RecoveryIncident
-    {
-        $incident->update(['status' => RecoveryIncidentStatus::Validating]);
+    /**
+     * Requeue the actual originating Task for an attributed stale attempt.
+     */
+    private function recoverViaOriginatingTask(
+        RecoveryIncident $incident,
+        Task $incidentTask,
+        Task $originTask,
+        string $summary,
+    ): RecoveryIncident {
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Validating,
+        ]);
+
         $resultingStatus = $this->requeueTask($originTask);
+
         $this->audit->record('task.stale_attempt_reclaimed', [
             'recovery_incident_id' => $incident->id,
             'origin_task_id' => $originTask->id,
@@ -594,6 +1038,7 @@ class WorkflowRecoveryEngine
             'resulting_task_transition' => "task_{$originTask->key}:{$resultingStatus}",
             'resolved_at' => now(),
         ]);
+
         $this->audit->record('recovery.recovered', [
             'recovery_incident_id' => $incident->id,
             'resulting_task_transition' => $incident->fresh()->resulting_task_transition,
@@ -603,22 +1048,20 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * Guarantees process() always records an attempt, even when diagnosis itself throws (a harness
-     * crash, an unhandled provider exception, etc.), so recovery_max_attempts always bounds retries.
-     * Without this, an incident that fails before returning a classification stays claimed and gets
-     * reset to Detected by reclaimStaleClaims() forever, retrying indefinitely without ever reaching
-     * the attempt cap or escalating.
+     * Ensure workflow diagnosis exceptions become bounded recovery evidence rather than escaping.
      *
-     * @return array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string}
+     * @return array<string, mixed>
      */
-    private function diagnoseSafely(RecoveryIncident $incident, ?Task $task): array
-    {
+    private function diagnoseSafely(
+        RecoveryIncident $incident,
+        ?Task $task,
+    ): array {
         try {
             return $this->diagnoseWithRecoveryEngineer($incident, $task);
         } catch (Throwable $exception) {
             $this->audit->record('recovery.diagnosis_exception', [
                 'recovery_incident_id' => $incident->id,
-                'exception' => $exception->getMessage(),
+                'exception_class' => $exception::class,
             ], $incident->project, $task);
 
             return [
@@ -628,21 +1071,30 @@ class WorkflowRecoveryEngine
                 'fix_applied' => false,
                 'changed_files' => [],
                 'fix_summary' => null,
-                'escalation_reason' => 'Repeated Workflow Recovery Engineer executions threw unhandled exceptions: '.$exception->getMessage(),
+                'escalation_reason' => 'Repeated Workflow Recovery Engineer executions threw unhandled exceptions.',
             ];
         }
     }
 
-    /** @return array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string} */
-    private function diagnoseWithRecoveryEngineer(RecoveryIncident $incident, ?Task $task): array
-    {
+    /**
+     * Execute workflow diagnosis/repair inside a disposable worktree and validate it before live materialization.
+     *
+     * @return array<string, mixed>
+     */
+    private function diagnoseWithRecoveryEngineer(
+        RecoveryIncident $incident,
+        ?Task $task,
+    ): array {
         try {
             $agent = $this->globalAgents->forRole(AgentRole::RecoveryEngineer);
             $this->harnesses->resolve($agent);
         } catch (LogicException $exception) {
+            $reason = $this->safeRecoveryText($exception->getMessage())
+                ?? 'Recovery Engineer configuration is invalid.';
+
             $this->audit->record('recovery.blocked_agent_misconfigured', [
                 'recovery_incident_id' => $incident->id,
-                'reason' => $exception->getMessage(),
+                'reason' => $reason,
             ], $incident->project, $task);
 
             return [
@@ -652,7 +1104,7 @@ class WorkflowRecoveryEngine
                 'fix_applied' => false,
                 'changed_files' => [],
                 'fix_summary' => null,
-                'escalation_reason' => $exception->getMessage(),
+                'escalation_reason' => $reason,
             ];
         }
 
@@ -667,35 +1119,19 @@ class WorkflowRecoveryEngine
                 'fix_applied' => false,
                 'changed_files' => [],
                 'fix_summary' => null,
-                'escalation_reason' => 'AIOS recovery repository preflight failed: '.implode(' ', $preflight['errors'] ?: ['unknown error']),
+                'escalation_reason' => 'AIOS recovery repository preflight failed.',
             ];
         }
 
         try {
-            $this->databaseProtection->guard();
-        } catch (DatabaseProtectionFailed $exception) {
-            $this->audit->record('recovery.blocked_database_protection_failed', [
-                'recovery_incident_id' => $incident->id,
-                'reason' => $exception->getMessage(),
-            ], $incident->project, $task);
-
-            return [
-                'category' => 'configuration_environment',
-                'summary' => 'No verified database recovery point was available, so no diagnosis was attempted.',
-                'recoverable' => false,
-                'fix_applied' => false,
-                'changed_files' => [],
-                'fix_summary' => null,
-                'escalation_reason' => 'Database protection guard failed: '.$exception->getMessage(),
-            ];
-        }
-
-        try {
-            $worktreePath = $this->worktrees->create($repositoryPath, $preflight['head_sha']);
+            $worktreePath = $this->worktrees->create(
+                $repositoryPath,
+                $preflight['head_sha'],
+            );
         } catch (Throwable $exception) {
             $this->audit->record('recovery.blocked_worktree_isolation_failed', [
                 'recovery_incident_id' => $incident->id,
-                'reason' => $exception->getMessage(),
+                'reason' => $this->safeRecoveryText($exception->getMessage()),
             ], $incident->project, $task);
 
             return [
@@ -705,139 +1141,761 @@ class WorkflowRecoveryEngine
                 'fix_applied' => false,
                 'changed_files' => [],
                 'fix_summary' => null,
-                'escalation_reason' => 'Recovery worktree isolation failed: '.$exception->getMessage(),
+                'escalation_reason' => 'Recovery worktree isolation failed.',
             ];
         }
 
         try {
-            $prompt = $this->buildPrompt($incident, $task, $preflight['head_sha']);
-            $project = $task?->project;
-            $run = $this->runs->start($project ?? $incident->project, AgentRole::RecoveryEngineer, $prompt, $task, agent: $agent);
-            $run->update(['recovery_incident_id' => $incident->id]);
-            $result = $this->engineer->run($agent, $prompt, $worktreePath);
+            $project = $task?->project ?? $incident->project;
+
+            if ($project === null) {
+                return [
+                    'category' => 'configuration_environment',
+                    'summary' => 'The recovery incident has no project scope for durable AgentRun attribution.',
+                    'recoverable' => false,
+                    'fix_applied' => false,
+                    'changed_files' => [],
+                    'fix_summary' => null,
+                    'escalation_reason' => 'Recovery execution requires a durable project scope.',
+                ];
+            }
+
+            $assembled = $this->contextAssembler->assemble(
+                $agent,
+                AgentRole::RecoveryEngineer,
+                $this->buildWorkflowRecoveryContext(
+                    $incident,
+                    $task,
+                    $preflight['head_sha'],
+                ),
+            );
+
+            $prompt = $this->buildRecoveryPrompt($assembled);
+
+            $run = $this->runs->start(
+                $project,
+                AgentRole::RecoveryEngineer,
+                $prompt,
+                $task,
+                agent: $agent,
+                context: $assembled,
+            );
+
+            $run->update([
+                'recovery_incident_id' => $incident->id,
+            ]);
+
+            try {
+                $this->databaseProtection->guard();
+            } catch (DatabaseProtectionFailed $exception) {
+                $this->runs->complete(
+                    $run,
+                    $this->failedExecution(
+                        'Database protection blocked Recovery Engineer execution.',
+                    ),
+                );
+
+                $reason = $this->safeRecoveryText($exception->getMessage())
+                    ?? 'Database protection failed.';
+
+                $this->audit->record('recovery.blocked_database_protection_failed', [
+                    'recovery_incident_id' => $incident->id,
+                    'reason' => $reason,
+                ], $incident->project, $task);
+
+                return [
+                    'category' => 'configuration_environment',
+                    'summary' => 'No verified database recovery point was available, so no diagnosis was attempted.',
+                    'recoverable' => false,
+                    'fix_applied' => false,
+                    'changed_files' => [],
+                    'fix_summary' => null,
+                    'escalation_reason' => $reason,
+                ];
+            }
+
+            try {
+                $result = $this->engineer->run(
+                    $agent,
+                    $prompt,
+                    $worktreePath,
+                );
+            } catch (Throwable $exception) {
+                $this->runs->complete(
+                    $run,
+                    $this->failedExecution(
+                        'Recovery Engineer execution threw ['.$exception::class.'].',
+                    ),
+                );
+
+                throw $exception;
+            }
+
             $this->runs->complete($run, $result['execution']);
 
-            $candidateChangedFiles = $result['decision']['changed_files'] ?? null;
-            if (is_array($candidateChangedFiles) && $candidateChangedFiles !== []) {
-                $this->copyChangedFilesIntoRepository($worktreePath, $repositoryPath, $candidateChangedFiles);
+            if (
+                $result['execution']['exit_code'] !== 0
+                || $result['decision'] === null
+            ) {
+                return [
+                    'category' => 'transient_harness_failure',
+                    'summary' => 'The Workflow Recovery Engineer execution failed or returned no structured decision.',
+                    'recoverable' => true,
+                    'fix_applied' => false,
+                    'changed_files' => [],
+                    'fix_summary' => null,
+                    'escalation_reason' => 'Repeated Workflow Recovery Engineer executions failed or returned no structured decision.',
+                ];
             }
+
+            $proposal = $this->inspectRecoveryProposal(
+                $result['decision'],
+                $run->fresh(),
+                $worktreePath,
+                $repositoryPath,
+                $preflight['head_sha'],
+            );
+
+            if (! $proposal['passed']) {
+                return [
+                    'category' => $proposal['failure_category'],
+                    'summary' => $proposal['reason']
+                        ?? 'The Recovery Engineer proposal failed AIOS validation.',
+                    'recoverable' => false,
+                    'fix_applied' => false,
+                    'changed_files' => $proposal['changed_files'],
+                    'fix_summary' => null,
+                    'escalation_reason' => $proposal['reason']
+                        ?? 'The Recovery Engineer proposal could not be trusted.',
+                    'validation_evidence' => $proposal['validation'],
+                ];
+            }
+
+            return [
+                'category' => $proposal['decision']['root_cause_category'],
+                'summary' => $proposal['decision']['root_cause_summary'],
+                'recoverable' => $proposal['decision']['recoverable'],
+                'fix_applied' => $proposal['decision']['fix_applied'],
+                'changed_files' => $proposal['changed_files'],
+                'fix_summary' => $proposal['decision']['fix_summary'],
+                'escalation_reason' => $proposal['decision']['escalation_reason'],
+                'base_sha' => $preflight['head_sha'],
+                'validation_evidence' => $proposal['validation'],
+            ];
         } finally {
             $this->worktrees->destroy($repositoryPath, $worktreePath);
         }
+    }
 
-        if ($result['execution']['exit_code'] !== 0 || $result['decision'] === null) {
+    /**
+     * Validate untrusted Recovery Engineer output, derive the real worktree diff, validate it,
+     * and materialize only the AIOS-derived change set after the live repository is rechecked.
+     *
+     * @param  array<string, mixed>  $decision
+     * @return array{
+     *     passed: bool,
+     *     failure_category: string,
+     *     reason: ?string,
+     *     decision: ?array<string, mixed>,
+     *     changed_files: list<string>,
+     *     validation: array<string, mixed>
+     * }
+     */
+    private function inspectRecoveryProposal(
+        array $decision,
+        AgentRun $run,
+        string $worktreePath,
+        string $repositoryPath,
+        string $baseSha,
+    ): array {
+        $validation = [
+            'checks' => [],
+            'evidence' => [],
+        ];
+
+        try {
+            $validated = validator($decision, [
+                'root_cause_category' => [
+                    'required',
+                    'in:application_defect,orchestration_defect,configuration_environment,transient_harness_failure,stale_lease,validation_failure,unsafe_git_state,managed_project_defect',
+                ],
+                'root_cause_summary' => ['required', 'string', 'max:8000'],
+                'recoverable' => ['required', 'boolean'],
+                'fix_applied' => ['required', 'boolean'],
+                'changed_files' => ['required', 'array'],
+                'changed_files.*' => ['required', 'string', 'max:512'],
+                'fix_summary' => ['nullable', 'string', 'max:8000'],
+                'escalation_reason' => ['nullable', 'string', 'max:8000'],
+            ])->validate();
+        } catch (ValidationException) {
+            $validation['checks']['structured_decision'] = false;
+
+            return $this->failedRecoveryProposal(
+                'The Recovery Engineer returned an invalid structured decision.',
+                $validation,
+                failureCategory: 'orchestration_defect',
+            );
+        }
+
+        $validation['checks']['structured_decision'] = true;
+
+        $rootCauseSummary = $this->safeRecoveryText(
+            $validated['root_cause_summary'],
+        );
+
+        $fixSummary = is_string($validated['fix_summary'] ?? null)
+            ? $this->safeRecoveryText($validated['fix_summary'])
+            : null;
+
+        $escalationReason = is_string($validated['escalation_reason'] ?? null)
+            ? $this->safeRecoveryText($validated['escalation_reason'])
+            : null;
+
+        if ($rootCauseSummary === null) {
+            return $this->failedRecoveryProposal(
+                'The Recovery Engineer root-cause summary became empty after sanitization.',
+                $validation,
+                failureCategory: 'orchestration_defect',
+            );
+        }
+
+        $fixApplied = (bool) $validated['fix_applied'];
+        $recoverable = (bool) $validated['recoverable'];
+
+        if ($fixApplied && $fixSummary === null) {
+            return $this->failedRecoveryProposal(
+                'A Recovery Engineer proposal that applies a fix must include a bounded fix summary.',
+                $validation,
+                failureCategory: 'orchestration_defect',
+            );
+        }
+
+        if (! $recoverable && $escalationReason === null) {
+            return $this->failedRecoveryProposal(
+                'A non-recoverable Recovery Engineer decision must include an escalation reason.',
+                $validation,
+                failureCategory: 'orchestration_defect',
+            );
+        }
+
+        if (! $recoverable && $fixApplied) {
+            return $this->failedRecoveryProposal(
+                'A non-recoverable Recovery Engineer decision cannot simultaneously claim that a fix was applied.',
+                $validation,
+                failureCategory: 'orchestration_defect',
+            );
+        }
+
+        $declaredChangedFiles = $this->normalizeDeclaredChangedFiles(
+            $validated['changed_files'],
+        );
+
+        if ($declaredChangedFiles === null) {
+            $validation['checks']['declared_change_paths'] = false;
+
+            return $this->failedRecoveryProposal(
+                'The Recovery Engineer declared an unsafe or duplicate changed-file path.',
+                $validation,
+            );
+        }
+
+        $validation['checks']['declared_change_paths'] = true;
+
+        $forbiddenGitCommands = $this->forbiddenRecoveryGitCommands($run);
+        $validation['checks']['forbidden_git_commands'] = $forbiddenGitCommands === [];
+        $validation['evidence']['forbidden_git_commands'] = $forbiddenGitCommands;
+
+        if ($forbiddenGitCommands !== []) {
+            return $this->failedRecoveryProposal(
+                'The Recovery Engineer attempted a prohibited Git lifecycle command.',
+                $validation,
+                $declaredChangedFiles,
+            );
+        }
+
+        $worktreeState = $this->lifecycle->preflight($worktreePath);
+        $worktreeHeadUnchanged = $worktreeState['head_sha'] === $baseSha;
+
+        $validation['checks']['worktree_head_unchanged'] = $worktreeHeadUnchanged;
+        $validation['evidence']['worktree_head_sha'] = $worktreeState['head_sha'];
+
+        if (! $worktreeHeadUnchanged) {
+            return $this->failedRecoveryProposal(
+                'The Recovery Engineer worktree HEAD moved away from the AIOS-recorded base SHA.',
+                $validation,
+                $declaredChangedFiles,
+            );
+        }
+
+        $actualChangedFiles = $this->lifecycle->changedFilesFromBase(
+            $worktreePath,
+            $baseSha,
+        );
+
+        $validation['checks']['worktree_change_set'] = $actualChangedFiles !== null;
+        $validation['evidence']['worktree_changed_files'] = $actualChangedFiles ?? [];
+
+        if ($actualChangedFiles === null) {
+            return $this->failedRecoveryProposal(
+                'AIOS could not independently derive the Recovery Engineer worktree change set.',
+                $validation,
+                $declaredChangedFiles,
+            );
+        }
+
+        foreach ($actualChangedFiles as $actualChangedFile) {
+            if (! $this->isSafeRecoveryPath($actualChangedFile)) {
+                $validation['checks']['actual_change_paths'] = false;
+
+                return $this->failedRecoveryProposal(
+                    'The AIOS-derived worktree change set contains an unsafe relative path.',
+                    $validation,
+                    $actualChangedFiles,
+                );
+            }
+        }
+
+        $validation['checks']['actual_change_paths'] = true;
+
+        $declaredMatchesActual = $declaredChangedFiles === $actualChangedFiles;
+        $changeShapeValid = $fixApplied
+            ? $actualChangedFiles !== [] && $declaredMatchesActual
+            : $actualChangedFiles === [] && $declaredChangedFiles === [];
+
+        $validation['checks']['declared_change_set_matches_actual'] = $declaredMatchesActual;
+        $validation['checks']['fix_applied_matches_actual_changes'] = $changeShapeValid;
+
+        if (! $changeShapeValid) {
+            return $this->failedRecoveryProposal(
+                'Recovery Engineer fix_applied/changed_files did not exactly match the AIOS-derived worktree changes.',
+                $validation,
+                $actualChangedFiles,
+            );
+        }
+
+        $validatedDecision = [
+            'root_cause_category' => (string) $validated['root_cause_category'],
+            'root_cause_summary' => $rootCauseSummary,
+            'recoverable' => $recoverable,
+            'fix_applied' => $fixApplied,
+            'changed_files' => $actualChangedFiles,
+            'fix_summary' => $fixSummary,
+            'escalation_reason' => $escalationReason,
+        ];
+
+        if (! $fixApplied) {
             return [
-                'category' => 'transient_harness_failure',
-                'summary' => 'The Workflow Recovery Engineer execution failed or returned no structured decision.',
-                'recoverable' => true,
-                'fix_applied' => false,
+                'passed' => true,
+                'failure_category' => 'validation_failure',
+                'reason' => null,
+                'decision' => $validatedDecision,
                 'changed_files' => [],
-                'fix_summary' => null,
-                'escalation_reason' => 'Repeated Workflow Recovery Engineer executions failed or returned no structured decision.',
+                'validation' => $validation,
             ];
         }
 
-        try {
-            $validated = validator($result['decision'], [
-                'root_cause_category' => ['required', 'in:application_defect,orchestration_defect,configuration_environment,transient_harness_failure,stale_lease,validation_failure,unsafe_git_state,managed_project_defect'],
-                'root_cause_summary' => ['required', 'string'],
-                'recoverable' => ['required', 'boolean'],
-                'fix_applied' => ['required', 'boolean'],
-                'changed_files' => ['nullable', 'array'],
-                'changed_files.*' => ['string'],
-                'fix_summary' => ['nullable', 'string'],
-                'escalation_reason' => ['exclude_unless:recoverable,false', 'required', 'string'],
-            ])->validate();
-        } catch (ValidationException) {
-            return [
-                'category' => 'orchestration_defect',
-                'summary' => 'The Workflow Recovery Engineer returned an invalid structured decision.',
-                'recoverable' => false,
-                'fix_applied' => false,
-                'changed_files' => [],
-                'fix_summary' => null,
-                'escalation_reason' => 'The recovery decision failed structural validation and could not be trusted.',
-            ];
+        $isolatedValidation = $this->lifecycle->validate(
+            $worktreePath,
+            $actualChangedFiles,
+        );
+
+        $validation = $this->appendValidationStage(
+            $validation,
+            'isolated_validation',
+            $isolatedValidation,
+        );
+
+        if (! $isolatedValidation['passed']) {
+            return $this->failedRecoveryProposal(
+                'The proposed Recovery Engineer fix failed validation inside the disposable worktree.',
+                $validation,
+                $actualChangedFiles,
+            );
+        }
+
+        $liveState = $this->lifecycle->preflight($repositoryPath);
+        $liveRepositoryUnchanged = $liveState['clean']
+            && $liveState['head_sha'] === $baseSha;
+
+        $validation['checks']['live_repository_unchanged'] = $liveRepositoryUnchanged;
+        $validation['evidence']['live_repository_head_sha'] = $liveState['head_sha'];
+
+        if (! $liveRepositoryUnchanged) {
+            return $this->failedRecoveryProposal(
+                'The live AIOS repository changed after the Recovery Engineer attempt began.',
+                $validation,
+                $actualChangedFiles,
+            );
+        }
+
+        $materialized = $this->copyChangedFilesIntoRepository(
+            $worktreePath,
+            $repositoryPath,
+            $actualChangedFiles,
+        );
+
+        $validation['checks']['materialization'] = $materialized;
+
+        if (! $materialized) {
+            return $this->failedRecoveryProposal(
+                'AIOS could not safely materialize the validated worktree changes into the recovery repository.',
+                $validation,
+                $actualChangedFiles,
+            );
+        }
+
+        $liveChangedFiles = $this->lifecycle->changedFilesFromBase(
+            $repositoryPath,
+            $baseSha,
+        );
+
+        $liveChangeSetMatches = $liveChangedFiles === $actualChangedFiles;
+
+        $validation['checks']['live_change_set_matches'] = $liveChangeSetMatches;
+        $validation['evidence']['live_changed_files'] = $liveChangedFiles ?? [];
+
+        if (! $liveChangeSetMatches) {
+            return $this->failedRecoveryProposal(
+                'The materialized live change set does not exactly match the validated isolated worktree change set.',
+                $validation,
+                $actualChangedFiles,
+            );
         }
 
         return [
-            'category' => $validated['root_cause_category'],
-            'summary' => $validated['root_cause_summary'],
-            'recoverable' => $validated['recoverable'],
-            'fix_applied' => $validated['fix_applied'],
-            'changed_files' => $validated['changed_files'] ?? [],
-            'fix_summary' => $validated['fix_summary'] ?? null,
-            'escalation_reason' => $validated['escalation_reason'] ?? null,
-            'base_sha' => $preflight['head_sha'],
+            'passed' => true,
+            'failure_category' => 'validation_failure',
+            'reason' => null,
+            'decision' => $validatedDecision,
+            'changed_files' => $actualChangedFiles,
+            'validation' => $validation,
         ];
     }
 
     /**
-     * Materializes the Recovery Engineer's edits from the disposable worktree into the live
-     * repository's working tree as plain, uncommitted file changes, mirroring exactly what the
-     * harness would have produced had it edited the live checkout directly. AIOS still performs
-     * every trust decision afterward: RecoveryRepositoryLifecycle::validate()/commit() (used by
-     * applyRepair()) independently re-diffs the live repository against the recorded base SHA and
-     * refuses to commit unless that diff exactly matches the declared changed files, so a path this
-     * method skips (traversal, symlink escape, or a file the worktree never actually produced)
-     * simply fails that later match rather than silently entering durable state.
+     * Build a uniform failed proposal result.
      *
-     * @param  array<int, mixed>  $changedFiles  untrusted, not-yet-validated decision JSON
+     * @param  array<string, mixed>  $validation
+     * @param  list<string>  $changedFiles
+     * @return array{
+     *     passed: false,
+     *     failure_category: string,
+     *     reason: string,
+     *     decision: null,
+     *     changed_files: list<string>,
+     *     validation: array<string, mixed>
+     * }
      */
-    private function copyChangedFilesIntoRepository(string $worktreePath, string $repositoryPath, array $changedFiles): void
+    private function failedRecoveryProposal(
+        string $reason,
+        array $validation,
+        array $changedFiles = [],
+        string $failureCategory = 'validation_failure',
+    ): array {
+        $validation['evidence'] = is_array($validation['evidence'] ?? null)
+            ? $validation['evidence']
+            : [];
+
+        $validation['evidence']['failure_reason'] = $reason;
+
+        return [
+            'passed' => false,
+            'failure_category' => $failureCategory,
+            'reason' => $reason,
+            'decision' => null,
+            'changed_files' => $changedFiles,
+            'validation' => $validation,
+        ];
+    }
+
+    /**
+     * Normalize and validate the Agent-declared file list without silently fixing unsafe values.
+     *
+     * @param  array<int, mixed>  $files
+     * @return list<string>|null
+     */
+    private function normalizeDeclaredChangedFiles(array $files): ?array
     {
+        $normalized = [];
+        $seen = [];
+
+        foreach ($files as $file) {
+            if (! is_string($file) || ! $this->isSafeRecoveryPath($file)) {
+                return null;
+            }
+
+            if (isset($seen[$file])) {
+                return null;
+            }
+
+            $seen[$file] = true;
+            $normalized[] = $file;
+        }
+
+        sort($normalized, SORT_STRING);
+
+        return $normalized;
+    }
+
+    /**
+     * Validate one repository-relative Recovery Engineer path.
+     */
+    private function isSafeRecoveryPath(string $path): bool
+    {
+        if (
+            $path === ''
+            || Str::length($path) > self::RecoveryPathLimit
+            || Str::contains($path, ["\0", '\\', '//'])
+            || Str::startsWith($path, '/')
+        ) {
+            return false;
+        }
+
+        $segments = explode('/', $path);
+
+        if ($segments === [] || $segments[0] === '.git') {
+            return false;
+        }
+
+        foreach ($segments as $segment) {
+            if ($segment === '' || $segment === '.' || $segment === '..') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Detect prohibited Agent-owned Git lifecycle commands from durable harness command evidence.
+     *
+     * @return list<string>
+     */
+    private function forbiddenRecoveryGitCommands(AgentRun $run): array
+    {
+        $forbidden = [];
+
+        foreach ((array) $run->commands as $commandEvidence) {
+            if (
+                ! is_array($commandEvidence)
+                || ! is_string($commandEvidence['command'] ?? null)
+            ) {
+                continue;
+            }
+
+            if (
+                preg_match(
+                    '~(?:^|[\s;&|])(?:[^\s;&|]*/)?git\s+(add|commit|reset|stash|checkout|switch|merge|rebase|cherry-pick|clean)\b~i',
+                    $commandEvidence['command'],
+                    $matches,
+                ) !== 1
+            ) {
+                continue;
+            }
+
+            $forbidden[] = 'git '.Str::lower($matches[1]);
+        }
+
+        return array_values(array_unique($forbidden));
+    }
+
+    /**
+     * Materialize only AIOS-derived validated paths from an isolated worktree.
+     *
+     * @param  list<string>  $changedFiles
+     */
+    private function copyChangedFilesIntoRepository(
+        string $worktreePath,
+        string $repositoryPath,
+        array $changedFiles,
+    ): bool {
         $worktreeRoot = realpath($worktreePath);
         $repositoryRoot = realpath($repositoryPath);
 
         if ($worktreeRoot === false || $repositoryRoot === false) {
-            return;
+            return false;
         }
 
         foreach ($changedFiles as $relative) {
-            if (! is_string($relative) || $relative === '' || Str::contains($relative, ["\0", '..']) || Str::startsWith($relative, ['/', '\\'])) {
-                continue;
+            if (! $this->isSafeRecoveryPath($relative)) {
+                return false;
+            }
+
+            if (
+                $this->pathHasSymlinkParent($worktreeRoot, $relative)
+                || $this->pathHasSymlinkParent($repositoryRoot, $relative)
+            ) {
+                return false;
             }
 
             $source = $worktreeRoot.DIRECTORY_SEPARATOR.$relative;
             $destination = $repositoryRoot.DIRECTORY_SEPARATOR.$relative;
-            $resolvedSource = realpath($source);
 
-            if ($resolvedSource === false) {
-                // The agent deleted this file in the worktree; mirror the deletion in the live repo.
-                if (is_file($destination)) {
-                    @unlink($destination);
+            if (! file_exists($source) && ! is_link($source)) {
+                if (is_dir($destination) && ! is_link($destination)) {
+                    return false;
+                }
+
+                if (! is_file($destination) && ! is_link($destination)) {
+                    return false;
+                }
+
+                if (! @unlink($destination)) {
+                    return false;
                 }
 
                 continue;
             }
 
-            if (! Str::startsWith($resolvedSource, $worktreeRoot.DIRECTORY_SEPARATOR) || ! is_file($resolvedSource)) {
-                continue;
+            if (is_link($source) || is_link($destination)) {
+                return false;
             }
 
-            File::ensureDirectoryExists(dirname($destination));
-            @copy($resolvedSource, $destination);
+            $resolvedSource = realpath($source);
+
+            if (
+                $resolvedSource === false
+                || ! Str::startsWith(
+                    $resolvedSource,
+                    $worktreeRoot.DIRECTORY_SEPARATOR,
+                )
+                || ! is_file($resolvedSource)
+            ) {
+                return false;
+            }
+
+            if (is_dir($destination)) {
+                return false;
+            }
+
+            try {
+                File::ensureDirectoryExists(dirname($destination));
+            } catch (Throwable) {
+                return false;
+            }
+
+            $resolvedDestinationDirectory = realpath(dirname($destination));
+
+            if (
+                $resolvedDestinationDirectory === false
+                || (
+                    $resolvedDestinationDirectory !== $repositoryRoot
+                    && ! Str::startsWith(
+                        $resolvedDestinationDirectory,
+                        $repositoryRoot.DIRECTORY_SEPARATOR,
+                    )
+                )
+            ) {
+                return false;
+            }
+
+            if (! @copy($resolvedSource, $destination)) {
+                return false;
+            }
         }
+
+        return true;
     }
 
-    /** @param array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string, base_sha?: string} $classification */
-    private function applyRepair(RecoveryIncident $incident, array $classification, ?Task $task): RecoveryIncident
+    /**
+     * Detect symlink or non-directory parent components before a copy/unlink operation.
+     */
+    private function pathHasSymlinkParent(string $root, string $relative): bool
     {
-        $repositoryPath = (string) config('aios.recovery_repository_path');
-        $baseSha = $classification['base_sha'] ?? null;
-        $validation = $baseSha === null ? ['passed' => false, 'checks' => ['base_sha' => false], 'evidence' => []] : $this->lifecycle->validate($repositoryPath, $classification['changed_files']);
+        $segments = explode('/', $relative);
+        array_pop($segments);
 
-        if (! $validation['passed']) {
-            $incident->update(['status' => RecoveryIncidentStatus::Validating]);
+        $cursor = $root;
 
-            return $this->escalate($incident, $classification, $task, 'The proposed fix failed AIOS-independent validation.', $validation);
+        foreach ($segments as $segment) {
+            $cursor .= DIRECTORY_SEPARATOR.$segment;
+
+            if (is_link($cursor)) {
+                return true;
+            }
+
+            if (file_exists($cursor) && ! is_dir($cursor)) {
+                return true;
+            }
         }
 
-        $incident->update(['status' => RecoveryIncidentStatus::Repairing]);
-        $commitSha = $this->lifecycle->commit($repositoryPath, $classification['changed_files'], (string) $baseSha, "recovery: incident #{$incident->id} ({$incident->failure_type})");
+        return false;
+    }
+
+    /**
+     * Apply a workflow Recovery Engineer fix through the existing AIOS validation and commit lifecycle.
+     *
+     * @param  array<string, mixed>  $classification
+     */
+    private function applyRepair(
+        RecoveryIncident $incident,
+        array $classification,
+        ?Task $task,
+    ): RecoveryIncident {
+        $repositoryPath = (string) config('aios.recovery_repository_path');
+        $baseSha = $classification['base_sha'] ?? null;
+
+        $validationEvidence = is_array(
+            $classification['validation_evidence'] ?? null,
+        )
+            ? $classification['validation_evidence']
+            : [
+                'checks' => [],
+                'evidence' => [],
+            ];
+
+        $liveValidation = $baseSha === null
+            ? [
+                'passed' => false,
+                'checks' => ['base_sha' => false],
+                'evidence' => [],
+            ]
+            : $this->lifecycle->validate(
+                $repositoryPath,
+                $classification['changed_files'],
+            );
+
+        $validationEvidence = $this->appendValidationStage(
+            $validationEvidence,
+            'live_validation',
+            $liveValidation,
+        );
+
+        if (! $liveValidation['passed']) {
+            $incident->update([
+                'status' => RecoveryIncidentStatus::Validating,
+            ]);
+
+            return $this->escalate(
+                $incident,
+                $classification,
+                $task,
+                'The proposed fix failed AIOS-independent validation.',
+                $validationEvidence,
+            );
+        }
+
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Repairing,
+        ]);
+
+        $commitSha = $this->lifecycle->commit(
+            $repositoryPath,
+            $classification['changed_files'],
+            (string) $baseSha,
+            "recovery: incident #{$incident->id} ({$incident->failure_type})",
+        );
+
+        $validationEvidence['checks']['commit'] = $commitSha !== null;
 
         if ($commitSha === null) {
-            return $this->escalate($incident, $classification, $task, 'The validated fix could not be committed to the AIOS recovery repository.', $validation);
+            return $this->escalate(
+                $incident,
+                $classification,
+                $task,
+                'The validated fix could not be committed to the AIOS recovery repository.',
+                $validationEvidence,
+            );
         }
 
         $incident->update([
@@ -846,9 +1904,10 @@ class WorkflowRecoveryEngine
             'head_sha' => $commitSha,
             'commit_sha' => $commitSha,
             'changed_files' => $classification['changed_files'],
-            'validation_evidence' => $validation,
+            'validation_evidence' => $validationEvidence,
             'fix_summary' => $classification['fix_summary'],
         ]);
+
         $this->audit->record('recovery.fix_committed', [
             'recovery_incident_id' => $incident->id,
             'base_sha' => $baseSha,
@@ -856,13 +1915,139 @@ class WorkflowRecoveryEngine
             'changed_files' => $classification['changed_files'],
         ], $incident->project, $task);
 
-        return $this->recover($incident, $task, $classification['fix_summary'] ?? $classification['summary']);
+        return $this->recover(
+            $incident,
+            $task,
+            $classification['fix_summary'] ?? $classification['summary'],
+        );
     }
 
-    private function recover(RecoveryIncident $incident, ?Task $task, ?string $fixSummary): RecoveryIncident
-    {
-        $incident->update(['status' => RecoveryIncidentStatus::Validating]);
-        $resultingTransition = $task === null ? null : $this->requeueTask($task);
+    /**
+     * Commit a validated runtime repair without changing Task workflow state.
+     *
+     * @param  array<string, mixed>  $classification
+     * @param  array<string, mixed>  $proposal
+     */
+    private function applyRuntimeRepair(
+        RecoveryIncident $incident,
+        array $classification,
+        array $proposal,
+        ?Task $task,
+    ): RecoveryIncident {
+        $repositoryPath = (string) config('aios.recovery_repository_path');
+        $baseSha = (string) $incident->base_sha;
+        $changedFiles = $proposal['changed_files'];
+        $validationEvidence = $proposal['validation'];
+
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Validating,
+            'base_sha' => $baseSha,
+            'changed_files' => $changedFiles,
+            'validation_evidence' => $validationEvidence,
+        ]);
+
+        $liveValidation = $this->lifecycle->validate(
+            $repositoryPath,
+            $changedFiles,
+        );
+
+        $validationEvidence = $this->appendValidationStage(
+            $validationEvidence,
+            'live_validation',
+            $liveValidation,
+        );
+
+        if (! $liveValidation['passed']) {
+            $incident->update([
+                'validation_evidence' => $validationEvidence,
+            ]);
+
+            return $this->recordRuntimeAttemptFailure(
+                $incident->fresh(),
+                $classification,
+                $task,
+                'The materialized runtime repair failed AIOS-independent live validation.',
+            );
+        }
+
+        $commitSha = $this->lifecycle->commit(
+            $repositoryPath,
+            $changedFiles,
+            $baseSha,
+            "recovery: incident #{$incident->id} ({$incident->failure_type})",
+        );
+
+        $validationEvidence['checks']['commit'] = $commitSha !== null;
+
+        if ($commitSha === null) {
+            $incident->update([
+                'validation_evidence' => $validationEvidence,
+            ]);
+
+            return $this->recordRuntimeAttemptFailure(
+                $incident->fresh(),
+                $classification,
+                $task,
+                'The validated runtime repair could not be committed by AIOS.',
+            );
+        }
+
+        $decision = $proposal['decision'];
+
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Recovered,
+            'root_cause' => $decision['root_cause_summary'],
+            'recoverable' => true,
+            'fix_summary' => $decision['fix_summary'],
+            'base_sha' => $baseSha,
+            'head_sha' => $commitSha,
+            'commit_sha' => $commitSha,
+            'changed_files' => $changedFiles,
+            'validation_evidence' => $validationEvidence,
+            'resolved_at' => now(),
+            'claim_token' => null,
+            'claimed_at' => null,
+        ]);
+
+        $this->audit->record('recovery.fix_committed', [
+            'recovery_incident_id' => $incident->id,
+            'base_sha' => $baseSha,
+            'commit_sha' => $commitSha,
+            'changed_files' => $changedFiles,
+        ], $incident->project, $task);
+
+        $this->audit->record('recovery.runtime_ai_repair_completed', [
+            'recovery_incident_id' => $incident->id,
+            'attempt_count' => $incident->fresh()->attempt_count,
+            'policy_classification' => RuntimeRecoverabilityClassification::CandidateAiRepair->value,
+            'agent_root_cause_category' => $decision['root_cause_category'],
+            'commit_sha' => $commitSha,
+            'changed_files' => $changedFiles,
+        ], $incident->project, $task);
+
+        $this->audit->record('recovery.recovered', [
+            'recovery_incident_id' => $incident->id,
+            'resulting_task_transition' => null,
+        ], $incident->project, $task);
+
+        return $incident->fresh();
+    }
+
+    /**
+     * Complete workflow recovery and requeue the affected Task when applicable.
+     */
+    private function recover(
+        RecoveryIncident $incident,
+        ?Task $task,
+        ?string $fixSummary,
+    ): RecoveryIncident {
+        $incident->update([
+            'status' => RecoveryIncidentStatus::Validating,
+        ]);
+
+        $resultingTransition = $task === null
+            ? null
+            : $this->requeueTask($task);
 
         $incident->update([
             'status' => RecoveryIncidentStatus::Recovered,
@@ -870,6 +2055,7 @@ class WorkflowRecoveryEngine
             'resulting_task_transition' => $resultingTransition,
             'resolved_at' => now(),
         ]);
+
         $this->audit->record('recovery.recovered', [
             'recovery_incident_id' => $incident->id,
             'resulting_task_transition' => $resultingTransition,
@@ -878,19 +2064,29 @@ class WorkflowRecoveryEngine
         return $incident->fresh();
     }
 
-    /** A fresh normal Coder/Reviewer attempt is claimed independently by the durable workflow loop. */
+    /**
+     * Requeue a workflow Task through the existing durable Task state machine.
+     */
     private function requeueTask(Task $task): string
     {
         $status = TaskStatus::from($task->getRawOriginal('status'));
 
         return match ($status) {
-            TaskStatus::Blocked => $this->transitionAndReturn($task, TaskStatus::Queued),
-            TaskStatus::Interrupted => $this->transitionAndReturn($task, TaskStatus::Failed),
-            // A Failed task is already selected by the normal Coder claim query; no transition is needed.
+            TaskStatus::Blocked => $this->transitionAndReturn(
+                $task,
+                TaskStatus::Queued,
+            ),
+            TaskStatus::Interrupted => $this->transitionAndReturn(
+                $task,
+                TaskStatus::Failed,
+            ),
             default => $status->value,
         };
     }
 
+    /**
+     * Apply one workflow transition and return its durable status value.
+     */
     private function transitionAndReturn(Task $task, TaskStatus $to): string
     {
         $this->workflow->transition($task, $to);
@@ -899,18 +2095,28 @@ class WorkflowRecoveryEngine
     }
 
     /**
-     * @param  array{category: string, summary: string, recoverable: bool, fix_applied: bool, changed_files: array<int, string>, fix_summary: ?string, escalation_reason: ?string}  $classification
-     * @param  ?array<string, mixed>  $validationEvidence
+     * Escalate one workflow incident.
+     *
+     * @param  array<string, mixed>  $classification
+     * @param  array<string, mixed>|null  $validationEvidence
      */
-    private function escalate(RecoveryIncident $incident, array $classification, ?Task $task, ?string $reasonOverride = null, ?array $validationEvidence = null): RecoveryIncident
-    {
+    private function escalate(
+        RecoveryIncident $incident,
+        array $classification,
+        ?Task $task,
+        ?string $reasonOverride = null,
+        ?array $validationEvidence = null,
+    ): RecoveryIncident {
         $incident->update([
             'status' => RecoveryIncidentStatus::Escalated,
             'recoverable' => false,
-            'escalation_reason' => $reasonOverride ?? $classification['escalation_reason'] ?? 'Automatic recovery could not safely resolve this incident.',
+            'escalation_reason' => $reasonOverride
+                ?? $classification['escalation_reason']
+                ?? 'Automatic recovery could not safely resolve this incident.',
             'validation_evidence' => $validationEvidence,
             'resolved_at' => now(),
         ]);
+
         $this->audit->record('recovery.escalated', [
             'recovery_incident_id' => $incident->id,
             'root_cause_category' => $classification['category'],
@@ -920,25 +2126,288 @@ class WorkflowRecoveryEngine
         return $incident->fresh();
     }
 
-    private function buildPrompt(RecoveryIncident $incident, ?Task $task, string $baseSha): string
-    {
-        $previousAttempts = $incident->recoveryRuns()->latest('started_at')->limit(5)->get()
-            ->map(fn (AgentRun $run): array => ['status' => $run->getRawOriginal('status'), 'exit_code' => $run->exit_code, 'decision' => $run->result])
-            ->all();
-
-        $context = [
-            'objective' => 'Diagnose the root cause of an AIOS workflow failure and, only if it is a bounded AIOS/system defect you can safely fix, apply the smallest production-safe fix inside this repository (AIOS itself, not the managed project).',
+    /**
+     * Build a bounded workflow Recovery Engineer task context.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildWorkflowRecoveryContext(
+        RecoveryIncident $incident,
+        ?Task $task,
+        string $baseSha,
+    ): array {
+        return $this->boundedSanitizedPayload([
+            'recovery_mode' => 'workflow',
+            'objective' => 'Diagnose the workflow failure and apply a minimal AIOS code fix only when the defect is safely repairable inside AIOS itself.',
             'repository_base_sha' => $baseSha,
-            'incident' => $incident->only(['id', 'failure_type', 'status', 'attempt_count', 'evidence']),
-            'task' => $task?->only(['key', 'title', 'objective', 'acceptance_criteria', 'status']),
-            'previous_recovery_attempts' => $previousAttempts,
-            'root_cause_categories' => ['application_defect', 'orchestration_defect', 'configuration_environment', 'transient_harness_failure', 'stale_lease', 'validation_failure', 'unsafe_git_state', 'managed_project_defect'],
-            'response_contract' => 'Return exactly one JSON object with: root_cause_category (one of root_cause_categories), root_cause_summary (string), recoverable (bool), fix_applied (bool, true only if you edited files in this repository), changed_files (array of relative paths you edited, required when fix_applied is true), fix_summary (string, required when fix_applied is true), escalation_reason (string, required when recoverable is false).',
-            'constraints' => 'Only edit files in this repository (AIOS itself) if the root cause is an AIOS orchestration/application defect you are confident about and can fix with a minimal, safe change. Never edit the managed project. Never run git add/commit/reset/stash/checkout yourself; AIOS validates and commits independently. If the root cause is the managed project\'s own implementation, an environment/credential problem, or ambiguous, set recoverable/fix_applied accordingly instead of guessing.',
+            'incident' => [
+                'id' => $incident->id,
+                'failure_type' => $incident->failure_type,
+                'status' => $incident->getRawOriginal('status'),
+                'attempt_count' => $incident->attempt_count,
+                'evidence' => $incident->evidence ?? [],
+            ],
+            'project' => $incident->project === null
+                ? null
+                : [
+                    'id' => $incident->project->id,
+                    'name' => $incident->project->name,
+                ],
+            'task' => $task === null
+                ? null
+                : [
+                    'id' => $task->id,
+                    'key' => $task->key,
+                    'title' => $task->title,
+                    'objective' => $task->objective,
+                    'acceptance_criteria' => $task->acceptance_criteria,
+                    'status' => $task->getRawOriginal('status'),
+                ],
+            'previous_recovery_attempts' => $this->boundedPreviousRecoveryAttempts(
+                $incident,
+            ),
+        ]);
+    }
+
+    /**
+     * Build a bounded runtime Recovery Engineer context from sanitized durable incident evidence only.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildRuntimeRecoveryContext(
+        RecoveryIncident $incident,
+        ?Task $task,
+        string $baseSha,
+    ): array {
+        return $this->boundedSanitizedPayload([
+            'recovery_mode' => 'runtime',
+            'objective' => 'Diagnose this bounded project-scoped runtime incident and apply the smallest safe AIOS code fix only when supported by the durable evidence.',
+            'repository_base_sha' => $baseSha,
+            'attempt_number' => $incident->attempt_count + 1,
+            'incident' => [
+                'id' => $incident->id,
+                'failure_type' => $incident->failure_type,
+                'fingerprint' => $incident->fingerprint,
+                'source' => $incident->source,
+                'exception_class' => $incident->exception_class,
+                'occurrence_count' => $incident->occurrence_count,
+                'first_seen_at' => $incident->first_seen_at?->toIso8601String(),
+                'last_seen_at' => $incident->last_seen_at?->toIso8601String(),
+                'evidence' => $incident->evidence ?? [],
+            ],
+            'project' => $incident->project === null
+                ? null
+                : [
+                    'id' => $incident->project->id,
+                    'name' => $incident->project->name,
+                ],
+            'task' => $task === null
+                ? null
+                : [
+                    'id' => $task->id,
+                    'key' => $task->key,
+                    'title' => $task->title,
+                    'status' => $task->getRawOriginal('status'),
+                ],
+            'current_validation_evidence' => $incident->validation_evidence ?? [],
+            'previous_recovery_attempts' => $this->boundedPreviousRecoveryAttempts(
+                $incident,
+            ),
+        ]);
+    }
+
+    /**
+     * Return bounded outcome evidence from previous Recovery Engineer runs without replaying transcripts.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function boundedPreviousRecoveryAttempts(
+        RecoveryIncident $incident,
+    ): array {
+        return $incident->recoveryRuns()
+            ->latest('started_at')
+            ->limit(self::RecoveryHistoryLimit)
+            ->get()
+            ->map(function (AgentRun $run): array {
+                $fileModifications = [];
+
+                foreach (array_slice((array) $run->file_modifications, 0, 20) as $modification) {
+                    if (
+                        ! is_array($modification)
+                        || ! is_string($modification['path'] ?? null)
+                        || ! is_string($modification['kind'] ?? null)
+                    ) {
+                        continue;
+                    }
+
+                    $fileModifications[] = [
+                        'path' => $modification['path'],
+                        'kind' => $modification['kind'],
+                    ];
+                }
+
+                return [
+                    'status' => $run->getRawOriginal('status'),
+                    'exit_code' => $run->exit_code,
+                    'failure_summary' => $this->runs->failureReason($run),
+                    'file_modifications' => $fileModifications,
+                    'finished_at' => $run->finished_at?->toIso8601String(),
+                ];
+            })
+            ->all();
+    }
+
+    /**
+     * Build the provider-facing Recovery Engineer prompt around an immutable assembled context.
+     */
+    private function buildRecoveryPrompt(
+        AssembledAgentContext $context,
+    ): string {
+        $contract = <<<'TEXT'
+You are the AIOS Workflow Recovery Engineer, a system-level reliability role distinct from Project Manager, Coder, and Reviewer. Read AGENTS.md, MASTER-PROMPT.md, CLAUDE.md when applicable, and the relevant repository rules first.
+
+You are executing only inside an AIOS-owned disposable recovery worktree. Never modify the managed project. Never run or control git add, git commit, git reset, git stash, git checkout, git switch, git merge, git rebase, git cherry-pick, or git clean. AIOS independently derives the actual diff, validates it, decides whether it may enter the live recovery repository, and owns every commit and durable state transition.
+
+Return exactly one JSON object with:
+root_cause_category: one of application_defect, orchestration_defect, configuration_environment, transient_harness_failure, stale_lease, validation_failure, unsafe_git_state, managed_project_defect
+root_cause_summary: string
+recoverable: boolean
+fix_applied: boolean
+changed_files: array of repository-relative file paths
+fix_summary: string|null
+escalation_reason: string|null
+
+Set fix_applied=true only when you actually changed files in this disposable worktree. changed_files must exactly describe those edits. If automatic repair is unsafe or unsupported by the available evidence, do not guess.
+TEXT;
+
+        return $contract."\n\n".json_encode(
+            $context->toArray(),
+            JSON_THROW_ON_ERROR
+                | JSON_UNESCAPED_SLASHES
+                | JSON_UNESCAPED_UNICODE,
+        );
+    }
+
+    /**
+     * Sanitize and deterministically bound a recovery context before Agent assembly.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function boundedSanitizedPayload(array $payload): array
+    {
+        $bounded = $this->boundedContextValue(
+            $this->sanitizer->sanitizePayload($payload),
+        );
+
+        return is_array($bounded) ? $bounded : [];
+    }
+
+    /**
+     * Deterministically bound nested context depth, item count, and string length.
+     */
+    private function boundedContextValue(
+        mixed $value,
+        int $depth = 0,
+    ): mixed {
+        if ($depth >= self::RecoveryContextDepthLimit) {
+            return '[TRUNCATED]';
+        }
+
+        if (is_string($value)) {
+            return Str::limit(
+                $value,
+                self::RecoveryContextStringLimit,
+                '',
+            );
+        }
+
+        if (! is_array($value)) {
+            return is_scalar($value) || $value === null
+                ? $value
+                : null;
+        }
+
+        $bounded = [];
+        $count = 0;
+
+        foreach ($value as $key => $nestedValue) {
+            if ($count >= self::RecoveryContextArrayLimit) {
+                break;
+            }
+
+            $bounded[$key] = $this->boundedContextValue(
+                $nestedValue,
+                $depth + 1,
+            );
+
+            $count++;
+        }
+
+        return $bounded;
+    }
+
+    /**
+     * Sanitize and bound Agent-authored summaries before durable persistence.
+     */
+    private function safeRecoveryText(?string $text): ?string
+    {
+        if ($text === null) {
+            return null;
+        }
+
+        $sanitized = Str::squish(
+            $this->sanitizer->sanitizeText($text),
+        );
+
+        if ($sanitized === '') {
+            return null;
+        }
+
+        return Str::limit(
+            $sanitized,
+            self::RecoverySummaryLimit,
+            '',
+        );
+    }
+
+    /**
+     * Append one deterministic validation stage to persisted validation evidence.
+     *
+     * @param  array<string, mixed>  $validation
+     * @param  array<string, mixed>  $stage
+     * @return array<string, mixed>
+     */
+    private function appendValidationStage(
+        array $validation,
+        string $name,
+        array $stage,
+    ): array {
+        $validation['checks'] = is_array($validation['checks'] ?? null)
+            ? $validation['checks']
+            : [];
+
+        $validation['evidence'] = is_array($validation['evidence'] ?? null)
+            ? $validation['evidence']
+            : [];
+
+        $validation['checks'][$name] = (bool) ($stage['passed'] ?? false);
+        $validation['evidence'][$name] = $stage;
+
+        return $validation;
+    }
+
+    /**
+     * Build a sanitized synthetic failed execution result for thrown pre/provider failures.
+     *
+     * @return array{exit_code: int, output: string, error_output: string}
+     */
+    private function failedExecution(string $reason): array
+    {
+        return [
+            'exit_code' => -1,
+            'output' => '',
+            'error_output' => $reason,
         ];
-
-        $prompt = "You are the AIOS Workflow Recovery Engineer, a system-level reliability role distinct from Project Manager/Coder/Reviewer. Read AGENTS.md and MASTER-PROMPT.md in this repository first.\n\n".json_encode($context, JSON_THROW_ON_ERROR);
-
-        return $prompt;
     }
 }
