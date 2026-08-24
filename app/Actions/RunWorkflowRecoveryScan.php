@@ -3,6 +3,9 @@
 namespace App\Actions;
 
 use App\Models\Project;
+use App\Models\RecoveryIncident;
+use App\RecoveryIncidentStatus;
+use App\Services\WorkflowBoundaryHandoffRecorder;
 use App\Services\WorkflowRecoveryEngine;
 use App\Services\WorkflowRecoveryScanner;
 
@@ -14,16 +17,45 @@ use App\Services\WorkflowRecoveryScanner;
  */
 class RunWorkflowRecoveryScan
 {
-    public function __construct(private WorkflowRecoveryScanner $scanner, private WorkflowRecoveryEngine $engine) {}
+    /**
+     * Inject the existing recovery scanner/engine and post-boundary handoff recorder.
+     */
+    public function __construct(
+        private WorkflowRecoveryScanner $scanner,
+        private WorkflowRecoveryEngine $engine,
+        private WorkflowBoundaryHandoffRecorder $boundaryHandoffs,
+    ) {}
 
     /**
-     * Reconcile one running or stopping project's workflow and runtime recovery incidents.
+     * Reconcile one running or stopping project's workflow/runtime incidents and accepted recovery handoffs.
      */
     public function handle(Project $project): void
     {
         $this->engine->reclaimStaleClaims($project);
         $this->scanner->scan($project);
+
+        $processedIncidentIds = RecoveryIncident::query()
+            ->whereBelongsTo($project)
+            ->where('status', RecoveryIncidentStatus::Detected->value)
+            ->orderBy('detected_at')
+            ->pluck('id')
+            ->all();
+
         $this->engine->processOpenIncidents($project);
+
+        if ($processedIncidentIds === []) {
+            return;
+        }
+
+        $processedIncidents = RecoveryIncident::query()
+            ->whereBelongsTo($project)
+            ->whereKey($processedIncidentIds)
+            ->orderBy('id')
+            ->get();
+
+        foreach ($processedIncidents as $incident) {
+            $this->boundaryHandoffs->recordRecoveryAdvice($incident);
+        }
     }
 
     /**

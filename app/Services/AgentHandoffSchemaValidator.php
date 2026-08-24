@@ -141,7 +141,7 @@ final class AgentHandoffSchemaValidator
                     'max:4000',
                 ],
                 'payload.changed_files' => [
-                    'required',
+                    'present',
                     'array',
                     'max:100',
                 ],

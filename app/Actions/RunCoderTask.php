@@ -30,6 +30,7 @@ use App\Services\TaskPlanningEscalationWorkflow;
 use App\Services\TaskValidator;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
+use App\Services\WorkflowBoundaryHandoffRecorder;
 use App\Services\WorkspacePathResolver;
 use App\TaskStatus;
 use App\WorkerLease;
@@ -38,8 +39,35 @@ use Throwable;
 
 class RunCoderTask
 {
-    public function __construct(private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private TaskContextCapsuleFactory $capsules, private TaskContractGuard $contracts, private TaskPlanningDefectPreflight $planningPreflight, private TaskPlanningEscalationWorkflow $planningEscalations, private TaskValidator $validator, private TaskCommitter $committer, private TaskWorkflow $workflow, private NoProgressRetryGuard $noProgress, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private WorkspacePathResolver $paths, private CoderRepositoryGuard $repositoryGuard, private ProjectGitState $git, private DatabaseProtectionGuard $databaseProtection) {}
+    /**
+     * Inject the existing Coder execution, validation, Git, workflow, and handoff boundaries.
+     */
+    public function __construct(
+        private CodexCliRunner $runner,
+        private AgentResolver $agents,
+        private AgentHarnessResolver $harnesses,
+        private AgentContextAssembler $contextAssembler,
+        private AgentRunRecorder $runs,
+        private TaskContextCapsuleFactory $capsules,
+        private TaskContractGuard $contracts,
+        private TaskPlanningDefectPreflight $planningPreflight,
+        private TaskPlanningEscalationWorkflow $planningEscalations,
+        private TaskValidator $validator,
+        private TaskCommitter $committer,
+        private TaskWorkflow $workflow,
+        private NoProgressRetryGuard $noProgress,
+        private WorkerHeartbeat $heartbeat,
+        private AuditLogger $audit,
+        private WorkspacePathResolver $paths,
+        private CoderRepositoryGuard $repositoryGuard,
+        private ProjectGitState $git,
+        private DatabaseProtectionGuard $databaseProtection,
+        private WorkflowBoundaryHandoffRecorder $boundaryHandoffs,
+    ) {}
 
+    /**
+     * Execute one claimed Coder task through AIOS-owned validation, commit, and review readiness.
+     */
     public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
     {
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Coding, 409, 'Only claimed coding tasks may execute.');
@@ -223,7 +251,18 @@ class RunCoderTask
             $this->workflow->transition($task, $execution['exit_code'] === 0 ? TaskStatus::Validating : $this->retryStatus($task, $attempt));
 
             if ($execution['exit_code'] === 0) {
-                $this->workflow->transition($task, $passed ? TaskStatus::ReadyForReview : $this->retryStatus($task, $attempt));
+                $transitionedTask = $this->workflow->transition(
+                    $task,
+                    $passed ? TaskStatus::ReadyForReview : $this->retryStatus($task, $attempt),
+                );
+
+                if ($passed) {
+                    $this->boundaryHandoffs->recordImplementationReady(
+                        $transitionedTask,
+                        $attempt->refresh(),
+                        $run->refresh(),
+                    );
+                }
             }
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
@@ -262,6 +301,8 @@ class RunCoderTask
     }
 
     /**
+     * Resolve the current or interrupted-attempt Agent execution configuration deterministically.
+     *
      * @param  array<string, mixed>  $context
      * @return array{0: ?Agent, 1: ?AgentHarness, 2: ?AssembledAgentContext}
      */
@@ -309,6 +350,8 @@ class RunCoderTask
     }
 
     /**
+     * Persist the latest inspected managed-project Git state on the project record.
+     *
      * @param array{
      *     inspectable: bool,
      *     clean: bool,
@@ -328,6 +371,9 @@ class RunCoderTask
         ]);
     }
 
+    /**
+     * Resolve the bounded Coder retry status while preserving no-progress evidence.
+     */
     private function retryStatus(Task $task, TaskAttempt $attempt): TaskStatus
     {
         $attempt = $attempt->refresh();
@@ -376,7 +422,11 @@ class RunCoderTask
         return TaskStatus::Failed;
     }
 
-    /** @return array{type:string,fingerprint:string,evidence:array<string,mixed>,allowed_fields:list<string>}|null */
+    /**
+     * Parse one bounded Coder-reported deterministic planning defect proposal when present.
+     *
+     * @return array{type:string,fingerprint:string,evidence:array<string,mixed>,allowed_fields:list<string>}|null
+     */
     private function reportedPlanningDefect(string $output): ?array
     {
         $decoded = json_decode($output, true);
@@ -391,7 +441,11 @@ class RunCoderTask
         return ['type' => $type, 'fingerprint' => hash('sha256', json_encode([$type, $field, $evidence], JSON_THROW_ON_ERROR)), 'evidence' => ['field' => $field, ...$evidence], 'allowed_fields' => [$field]];
     }
 
-    /** @return array{0: ?Agent, 1: ?AgentHarness} */
+    /**
+     * Resolve the project Agent and harness for the requested workflow role.
+     *
+     * @return array{0: ?Agent, 1: ?AgentHarness}
+     */
     private function resolveAgent(Project $project, AgentRole $role): array
     {
         try {
@@ -404,6 +458,8 @@ class RunCoderTask
     }
 
     /**
+     * Block deterministic Task contract drift before a Coder harness executes.
+     *
      * @param array{
      *     drifted: bool,
      *     baseline: ?array{schema_version: int, fingerprint: string, input_hashes: array<string, mixed>},
@@ -450,6 +506,9 @@ class RunCoderTask
         return $attempt;
     }
 
+    /**
+     * Block one Coder task when the bound Agent configuration is invalid.
+     */
     private function blockMisconfiguredAgent(Task $task, LogicException $exception): TaskAttempt
     {
         $attempt = TaskAttempt::create([
@@ -474,6 +533,9 @@ class RunCoderTask
         return $attempt;
     }
 
+    /**
+     * Block one Coder task whose persisted workspace path violates project isolation.
+     */
     private function blockUnsafeProjectPath(Task $task, UnsafeProjectPath $exception): TaskAttempt
     {
         $attempt = TaskAttempt::create([
@@ -490,6 +552,9 @@ class RunCoderTask
         return $attempt;
     }
 
+    /**
+     * Convert an unexpected pre-execution exception into durable blocked Task evidence.
+     */
     private function blockUnexpectedFailure(Task $task, Throwable $throwable): TaskAttempt
     {
         report($throwable);
@@ -509,6 +574,8 @@ class RunCoderTask
     }
 
     /**
+     * Block one Coder task when repository preflight cannot prove a safe execution base.
+     *
      * @param array{
      *     allowed: bool,
      *     mode: 'normal'|'recovery'|'blocked',

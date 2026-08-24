@@ -3,8 +3,10 @@
 namespace App\Actions;
 
 use App\AgentRole;
+use App\AgentRunStatus;
 use App\Exceptions\AgentNotBoundToRole;
 use App\Models\Agent;
+use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\Review;
 use App\Models\Task;
@@ -23,6 +25,7 @@ use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskContractGuard;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
+use App\Services\WorkflowBoundaryHandoffRecorder;
 use App\TaskStatus;
 use App\WorkerLease;
 use Illuminate\Validation\ValidationException;
@@ -31,15 +34,52 @@ use Throwable;
 
 class RunReviewerTask
 {
-    public function __construct(private TaskWorkflow $workflow, private CodexCliRunner $runner, private AgentResolver $agents, private AgentHarnessResolver $harnesses, private AgentContextAssembler $contextAssembler, private AgentRunRecorder $runs, private StructuredResultParser $parser, private TaskContextCapsuleFactory $capsules, private TaskContractGuard $contracts, private WorkerHeartbeat $heartbeat, private AuditLogger $audit, private DatabaseProtectionGuard $databaseProtection) {}
+    /**
+     * Inject the existing Reviewer execution, workflow, and boundary-handoff dependencies.
+     */
+    public function __construct(
+        private TaskWorkflow $workflow,
+        private CodexCliRunner $runner,
+        private AgentResolver $agents,
+        private AgentHarnessResolver $harnesses,
+        private AgentContextAssembler $contextAssembler,
+        private AgentRunRecorder $runs,
+        private StructuredResultParser $parser,
+        private TaskContextCapsuleFactory $capsules,
+        private TaskContractGuard $contracts,
+        private WorkerHeartbeat $heartbeat,
+        private AuditLogger $audit,
+        private DatabaseProtectionGuard $databaseProtection,
+        private WorkflowBoundaryHandoffRecorder $boundaryHandoffs,
+    ) {}
 
-    /** @return array{exit_code: int, output: string, error_output: string} */
+    /**
+     * Execute one claimed Reviewer task and persist only an AIOS-validated finalized decision.
+     *
+     * @return array{exit_code: int, output: string, error_output: string}
+     */
     public function run(Task $task, TaskAttempt $attempt, ?WorkerLease $lease = null): array
     {
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Reviewing, 409, 'Only claimed review tasks may execute.');
         $task->loadMissing('project', 'phase');
 
-        if ($this->workflow->reconcileExistingReviewerDecision($task, $attempt) !== null) {
+        $existingReview = $this->workflow->reconcileExistingReviewerDecision(
+            $task,
+            $attempt,
+        );
+
+        if ($existingReview !== null) {
+            $sourceRun = $this->completedReviewerRun($task, $attempt);
+
+            if ($sourceRun !== null) {
+                $this->boundaryHandoffs->recordReviewFinding(
+                    $task->fresh() ?? $task,
+                    $attempt->fresh() ?? $attempt,
+                    $existingReview,
+                    $sourceRun,
+                );
+            }
+
             return ['exit_code' => 0, 'output' => '', 'error_output' => ''];
         }
 
@@ -163,7 +203,7 @@ class RunReviewerTask
             return $execution;
         }
 
-        $this->record(
+        $persistedReview = $this->record(
             $task,
             $attempt,
             ReviewStatus::from($validated['outcome']),
@@ -171,10 +211,21 @@ class RunReviewerTask
             $validated['findings'] ?? [],
         );
 
+        $this->boundaryHandoffs->recordReviewFinding(
+            $task->fresh() ?? $task,
+            $attempt->fresh() ?? $attempt,
+            $persistedReview,
+            $run->refresh(),
+        );
+
         return $execution;
     }
 
-    /** @param array<int, array<string, string>> $findings */
+    /**
+     * Finalize one validated Reviewer outcome through the authoritative TaskWorkflow service.
+     *
+     * @param  array<int, array<string, string>>  $findings
+     */
     private function record(Task $task, TaskAttempt $attempt, ReviewStatus $outcome, ?string $summary = null, array $findings = []): Review
     {
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Reviewing, 409, 'Only claimed review tasks may be decided.');
@@ -190,7 +241,27 @@ class RunReviewerTask
         );
     }
 
-    /** @param list<string> $changedInputs */
+    /**
+     * Resolve the latest completed Reviewer run for an already-finalized TaskAttempt reconciliation.
+     */
+    private function completedReviewerRun(Task $task, TaskAttempt $attempt): ?AgentRun
+    {
+        return AgentRun::query()
+            ->whereBelongsTo($task)
+            ->where('role', AgentRole::Reviewer->value)
+            ->where('attempt_number', $attempt->number)
+            ->where('status', AgentRunStatus::Completed->value)
+            ->whereNotNull('finished_at')
+            ->orderByDesc('started_at')
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    /**
+     * Allow only completed dependency-documentation drift as additional Reviewer context.
+     *
+     * @param  list<string>  $changedInputs
+     */
     private function isCompletedDependencyDocumentation(Task $task, array $changedInputs): bool
     {
         $documents = collect($changedInputs)
@@ -211,7 +282,11 @@ class RunReviewerTask
         return $documents->every(fn (string $document): bool => $dependencyOutputs->contains($document));
     }
 
-    /** @return list<string> */
+    /**
+     * Return the latest AIOS-derived changed-file list for one completed dependency task.
+     *
+     * @return list<string>
+     */
     private function latestChangedFiles(Task $task): array
     {
         $attempt = $task->attempts()->latest('number')->first();
@@ -226,7 +301,11 @@ class RunReviewerTask
             : [];
     }
 
-    /** @return array{0: ?Agent, 1: ?AgentHarness} */
+    /**
+     * Resolve the project Agent and harness for the requested Reviewer workflow role.
+     *
+     * @return array{0: ?Agent, 1: ?AgentHarness}
+     */
     private function resolveAgent(Project $project, AgentRole $role): array
     {
         try {
