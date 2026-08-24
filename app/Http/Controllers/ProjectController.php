@@ -497,22 +497,24 @@ class ProjectController extends Controller
         foreach ($workers as $worker) {
             $run = $worker->runs->first();
             $task = $run?->task;
-            $leaseExpiresAt = $worker->getAttribute(
+            $leaseExpiresAt = $this->dateAttribute(
+                $worker,
                 'lease_expires_at',
             );
-            $leaseState = ! $leaseExpiresAt
-                    instanceof CarbonInterface
+            $leaseState = $leaseExpiresAt === null
                     ? 'none'
                     : ($leaseExpiresAt->isFuture()
                     ? 'active'
                     : 'expired');
             $workerStatus = (string) $worker->getAttribute('status');
-            $cooldownEndsAt = in_array($worker->role, [
+            $workerRole = AgentRole::from((string) $worker->getRawOriginal('role'));
+            $taskCompletedAt = $this->dateAttribute($worker, 'task_completed_at');
+            $cooldownEndsAt = in_array($workerRole, [
                 AgentRole::Coder,
                 AgentRole::Reviewer,
             ], true)
-                && $worker->task_completed_at instanceof CarbonInterface
-                ? $worker->task_completed_at->addSeconds(
+                && $taskCompletedAt !== null
+                ? $taskCompletedAt->addSeconds(
                     max(0, (int) config('aios.worker_task_cooldown_seconds')),
                 )
                 : null;
@@ -774,15 +776,26 @@ class ProjectController extends Controller
         ];
     }
 
+    /**
+     * Resolve one Eloquent date cast through a dynamic attribute boundary with an explicit runtime type.
+     */
+    private function dateAttribute(
+        AgentRun|AgentWorker|Task $model,
+        string $attribute,
+    ): ?CarbonInterface {
+        $value = $model->getAttribute($attribute);
+
+        return $value instanceof CarbonInterface ? $value : null;
+    }
+
+    /**
+     * Serialize one cast date attribute for the Inertia project payload.
+     */
     private function serializeDateAttribute(
         AgentRun|AgentWorker|Task $model,
         string $attribute,
     ): ?string {
-        $value = $model->getAttribute($attribute);
-
-        return $value instanceof CarbonInterface
-            ? $value->toISOString()
-            : null;
+        return $this->dateAttribute($model, $attribute)?->toISOString();
     }
 
     public function destroy(

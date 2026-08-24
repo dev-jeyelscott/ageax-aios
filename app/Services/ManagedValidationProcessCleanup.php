@@ -48,33 +48,69 @@ class ManagedValidationProcessCleanup
     /** @return list<array{pid: int, command: list<string>}> */
     private function recordedProcesses(Task $task): array
     {
-        return $task->attempts()
-            ->get(['id', 'task_id', 'validation_results'])
-            ->flatMap(function ($attempt): array {
-                $results = $attempt->validation_results;
-                $processes = is_array($results) && is_array($results['managed_processes'] ?? null)
-                    ? $results['managed_processes']
-                    : [];
+        /** @var list<array{pid: int, command: list<string>}> $recorded */
+        $recorded = [];
+        /** @var array<string, true> $seen */
+        $seen = [];
 
-                return collect($processes)
-                    ->filter(fn (mixed $process): bool => is_array($process))
-                    ->map(function (array $process): ?array {
-                        $pid = $process['pid'] ?? null;
-                        $command = $process['command'] ?? null;
+        foreach ($task->attempts()->get(['id', 'task_id', 'validation_results']) as $attempt) {
+            $attemptData = $attempt->toArray();
+            $results = $attemptData['validation_results'] ?? null;
 
-                        if (! is_int($pid) || $pid <= 0 || ! is_array($command) || ! array_is_list($command) || collect($command)->contains(fn (mixed $argument): bool => ! is_string($argument) || $argument === '')) {
-                            return null;
-                        }
+            if (! is_array($results)) {
+                continue;
+            }
 
-                        return ['pid' => $pid, 'command' => array_values($command)];
-                    })
-                    ->filter()
-                    ->values()
-                    ->all();
-            })
-            ->unique(fn (array $process): string => $process['pid']."\0".implode("\0", $process['command']))
-            ->values()
-            ->all();
+            $processes = $results['managed_processes'] ?? null;
+
+            if (! is_array($processes)) {
+                continue;
+            }
+
+            foreach ($processes as $process) {
+                if (! is_array($process)) {
+                    continue;
+                }
+
+                $pid = $process['pid'] ?? null;
+                $command = $process['command'] ?? null;
+
+                if (! is_int($pid) || $pid <= 0 || ! is_array($command) || ! array_is_list($command)) {
+                    continue;
+                }
+
+                $normalizedCommand = [];
+                $validCommand = true;
+
+                foreach ($command as $argument) {
+                    if (! is_string($argument) || $argument === '') {
+                        $validCommand = false;
+
+                        break;
+                    }
+
+                    $normalizedCommand[] = $argument;
+                }
+
+                if (! $validCommand) {
+                    continue;
+                }
+
+                $fingerprint = $pid."\0".implode("\0", $normalizedCommand);
+
+                if (isset($seen[$fingerprint])) {
+                    continue;
+                }
+
+                $seen[$fingerprint] = true;
+                $recorded[] = [
+                    'pid' => $pid,
+                    'command' => $normalizedCommand,
+                ];
+            }
+        }
+
+        return $recorded;
     }
 
     /** @param list<string> $command */
@@ -136,6 +172,6 @@ class ManagedValidationProcessCleanup
     {
         $stat = @file_get_contents("/proc/{$pid}/stat");
 
-        return is_string($stat) && preg_match('/\) ([^ ])/', $stat, $matches) === 1 && ($matches[1] ?? null) !== 'Z';
+        return is_string($stat) && preg_match('/\) ([^ ])/', $stat, $matches) === 1 && $matches[1] !== 'Z';
     }
 }

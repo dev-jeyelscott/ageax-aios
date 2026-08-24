@@ -198,12 +198,18 @@ class RunCoderTask
             }
 
             $managedProcesses = [];
+            /**
+             * Persist each AIOS-managed validation process so interrupted finalization can clean it safely.
+             */
             $recordValidationProcess = function (int $pid, array $command) use ($attempt, &$managedProcesses): void {
                 $managedProcesses[] = ['pid' => $pid, 'command' => $command];
-                $validationResults = $attempt->refresh()->validation_results;
+                $attemptData = $attempt->refresh()->toArray();
+                $validationResults = $attemptData['validation_results'] ?? null;
+                $validationResults = is_array($validationResults) ? $validationResults : [];
+
                 $attempt->update([
                     'validation_results' => [
-                        ...(is_array($validationResults) ? $validationResults : []),
+                        ...$validationResults,
                         'managed_processes' => $managedProcesses,
                     ],
                 ]);
