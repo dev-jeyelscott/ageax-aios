@@ -61,6 +61,7 @@ type Task = {
     attempts: Attempt[];
     reviews: Review[];
     runs: Run[];
+    handoffs: Handoff[];
     operator_messages: OperatorMessage[];
     audit_events: AuditEvent[];
 };
@@ -106,6 +107,27 @@ type Run = {
     exit_code: number | null;
     started_at: string | null;
     finished_at: string | null;
+};
+type HandoffSourceRun = {
+    id: number;
+    role: string;
+    status: string;
+    attempt_number: number | null;
+    started_at: string | null;
+    finished_at: string | null;
+};
+type Handoff = {
+    id: number;
+    from_role: string;
+    to_role: string;
+    handoff_type: string;
+    schema_version: number;
+    payload: unknown;
+    content_hash: string;
+    status: string;
+    created_at: string;
+    consumed_at: string | null;
+    source_run: HandoffSourceRun | null;
 };
 type OperatorMessage = {
     id: number;
@@ -188,6 +210,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Return one non-empty string from structured handoff evidence.
+ */
+function evidenceText(
+    payload: Record<string, unknown>,
+    key: string,
+): string | null {
+    const value = payload[key];
+
+    return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+/**
+ * Return only string members from one structured handoff evidence list.
+ */
+function evidenceList(payload: Record<string, unknown>, key: string): string[] {
+    const value = payload[key];
+
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value.filter(
+        (item): item is string =>
+            typeof item === 'string' && item.trim() !== '',
+    );
+}
+
+/**
+ * Return only object members from one structured handoff evidence list.
+ */
+function evidenceRecords(
+    payload: Record<string, unknown>,
+    key: string,
+): Record<string, unknown>[] {
+    const value = payload[key];
+
+    return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
 function validationChecks(value: unknown): ValidationCheck[] {
     if (!isRecord(value) || !isRecord(value.checks)) {
         return [];
@@ -210,7 +272,13 @@ function validationPassed(value: unknown): boolean | null {
 
 function statusBadgeClasses(status: string): string {
     if (
-        ['done', 'completed', 'approved', 'ready_for_review'].includes(status)
+        [
+            'done',
+            'completed',
+            'approved',
+            'ready_for_review',
+            'consumed',
+        ].includes(status)
     ) {
         return 'border-success/30 bg-success/10 text-success-foreground';
     }
@@ -219,7 +287,11 @@ function statusBadgeClasses(status: string): string {
         return 'status-glow-pulse border-primary/30 bg-primary/10 text-primary';
     }
 
-    if (['changes_required', 'blocked', 'interrupted'].includes(status)) {
+    if (
+        ['changes_required', 'blocked', 'interrupted', 'pending'].includes(
+            status,
+        )
+    ) {
         return 'border-warning/30 bg-warning/10 text-warning-foreground';
     }
 
@@ -506,6 +578,439 @@ function RunEvidenceGateway({
         </Card>
     );
 }
+/**
+ * Render one labeled text field from durable handoff evidence.
+ */
+function HandoffEvidenceText({
+    label,
+    value,
+    mono = false,
+}: {
+    label: string;
+    value: string | null;
+    mono?: boolean;
+}) {
+    if (!value) {
+        return null;
+    }
+
+    return (
+        <div className="grid gap-1">
+            <p className="font-mono text-2xs tracking-[0.08em] text-muted-foreground uppercase">
+                {label}
+            </p>
+            <p
+                className={
+                    mono
+                        ? 'font-mono text-2xs leading-5 break-all text-foreground/85'
+                        : 'text-xs leading-5 break-words whitespace-pre-wrap text-foreground/90'
+                }
+            >
+                {value}
+            </p>
+        </div>
+    );
+}
+
+/**
+ * Render one bounded string list from durable handoff evidence.
+ */
+function HandoffEvidenceList({
+    label,
+    items,
+    mono = false,
+}: {
+    label: string;
+    items: string[];
+    mono?: boolean;
+}) {
+    if (items.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className="grid gap-1.5">
+            <p className="font-mono text-2xs tracking-[0.08em] text-muted-foreground uppercase">
+                {label}
+            </p>
+            <ul className="grid gap-1.5">
+                {items.map((item, index) => (
+                    <li
+                        key={`${label}-${index}`}
+                        className="flex min-w-0 items-start gap-2"
+                    >
+                        <span
+                            aria-hidden="true"
+                            className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary"
+                        />
+                        <span
+                            className={
+                                mono
+                                    ? 'min-w-0 font-mono text-2xs leading-5 break-all text-foreground/85'
+                                    : 'min-w-0 text-xs leading-5 break-words text-foreground/90'
+                            }
+                        >
+                            {item}
+                        </span>
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+}
+
+/**
+ * Render only the approved schema fields for one typed durable handoff.
+ */
+function HandoffPayloadEvidence({ handoff }: { handoff: Handoff }) {
+    const payload = isRecord(handoff.payload) ? handoff.payload : {};
+
+    if (handoff.handoff_type === 'implementation_handoff') {
+        return (
+            <div className="grid gap-3">
+                <HandoffEvidenceText
+                    label="Summary"
+                    value={evidenceText(payload, 'summary')}
+                />
+                <HandoffEvidenceList
+                    label="Changed files"
+                    items={evidenceList(payload, 'changed_files')}
+                    mono
+                />
+                <HandoffEvidenceList
+                    label="Tests added or updated"
+                    items={evidenceList(payload, 'tests_added_or_updated')}
+                    mono
+                />
+                <HandoffEvidenceList
+                    label="Verification attempts"
+                    items={evidenceList(payload, 'verification_attempts')}
+                />
+                <HandoffEvidenceList
+                    label="Blockers"
+                    items={evidenceList(payload, 'blockers')}
+                />
+            </div>
+        );
+    }
+
+    if (handoff.handoff_type === 'review_request') {
+        return (
+            <div className="grid gap-3">
+                <HandoffEvidenceText
+                    label="Summary"
+                    value={evidenceText(payload, 'summary')}
+                />
+                <HandoffEvidenceList
+                    label="Focus areas"
+                    items={evidenceList(payload, 'focus_areas')}
+                />
+            </div>
+        );
+    }
+
+    if (handoff.handoff_type === 'review_finding') {
+        const findings = evidenceRecords(payload, 'findings');
+
+        return (
+            <div className="grid gap-3">
+                <HandoffEvidenceText
+                    label="Summary"
+                    value={evidenceText(payload, 'summary')}
+                />
+
+                {findings.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                        No structured findings were recorded.
+                    </p>
+                ) : (
+                    <div className="grid gap-2">
+                        {findings.map((finding, index) => (
+                            <div
+                                key={`handoff-finding-${index}`}
+                                className="rounded-lg border border-warning/20 bg-warning/[0.035] p-3"
+                            >
+                                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                    <p className="font-mono text-2xs text-muted-foreground uppercase">
+                                        Finding {index + 1}
+                                    </p>
+                                    {evidenceText(finding, 'severity') && (
+                                        <Badge
+                                            variant="outline"
+                                            className="border-warning/30 bg-warning/10 font-mono text-2xs text-warning-foreground"
+                                        >
+                                            {evidenceText(finding, 'severity')}
+                                        </Badge>
+                                    )}
+                                </div>
+
+                                <div className="grid gap-3">
+                                    <HandoffEvidenceText
+                                        label="Location"
+                                        value={evidenceText(
+                                            finding,
+                                            'location',
+                                        )}
+                                        mono
+                                    />
+                                    <HandoffEvidenceText
+                                        label="Current implementation"
+                                        value={evidenceText(
+                                            finding,
+                                            'current_implementation',
+                                        )}
+                                    />
+                                    <HandoffEvidenceText
+                                        label="Expected implementation"
+                                        value={evidenceText(
+                                            finding,
+                                            'expected_implementation',
+                                        )}
+                                    />
+                                    <HandoffEvidenceText
+                                        label="Why incorrect"
+                                        value={evidenceText(
+                                            finding,
+                                            'why_incorrect',
+                                        )}
+                                    />
+                                    <HandoffEvidenceText
+                                        label="Required fix"
+                                        value={evidenceText(
+                                            finding,
+                                            'required_fix',
+                                        )}
+                                    />
+                                    <HandoffEvidenceText
+                                        label="Verification requirement"
+                                        value={evidenceText(
+                                            finding,
+                                            'verification_requirement',
+                                        )}
+                                    />
+                                    <HandoffEvidenceText
+                                        label="Implementation fix context"
+                                        value={evidenceText(
+                                            finding,
+                                            'implementation_fix_context',
+                                        )}
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    if (handoff.handoff_type === 'context_request') {
+        return (
+            <div className="grid gap-3">
+                <HandoffEvidenceText
+                    label="Request"
+                    value={evidenceText(payload, 'request')}
+                />
+                <HandoffEvidenceList
+                    label="Requested evidence"
+                    items={evidenceList(payload, 'requested_evidence')}
+                />
+                <HandoffEvidenceText
+                    label="Reason"
+                    value={evidenceText(payload, 'reason')}
+                />
+            </div>
+        );
+    }
+
+    if (handoff.handoff_type === 'recovery_advice') {
+        return (
+            <div className="grid gap-3">
+                <HandoffEvidenceText
+                    label="Summary"
+                    value={evidenceText(payload, 'summary')}
+                />
+                <HandoffEvidenceText
+                    label="Root cause category"
+                    value={evidenceText(payload, 'root_cause_category')}
+                    mono
+                />
+                <HandoffEvidenceText
+                    label="Recommended focus"
+                    value={evidenceText(payload, 'recommended_focus')}
+                />
+                <HandoffEvidenceList
+                    label="Changed files"
+                    items={evidenceList(payload, 'changed_files')}
+                    mono
+                />
+                <HandoffEvidenceText
+                    label="Escalation reason"
+                    value={evidenceText(payload, 'escalation_reason')}
+                />
+            </div>
+        );
+    }
+
+    if (handoff.handoff_type === 'knowledge_reference') {
+        return (
+            <div className="grid gap-3">
+                <HandoffEvidenceText
+                    label="Evidence summary"
+                    value={evidenceText(payload, 'evidence_summary')}
+                />
+                <HandoffEvidenceText
+                    label="Proposed change"
+                    value={evidenceText(payload, 'proposed_change')}
+                />
+                <HandoffEvidenceText
+                    label="Confidence"
+                    value={evidenceText(payload, 'confidence')}
+                    mono
+                />
+                <HandoffEvidenceList
+                    label="References"
+                    items={evidenceList(payload, 'references')}
+                    mono
+                />
+            </div>
+        );
+    }
+
+    return <JsonDetail value={handoff.payload} />;
+}
+
+/**
+ * Render typed Agent collaboration as read-only workflow evidence.
+ */
+function HandoffEvidenceCard({
+    project,
+    handoffs,
+}: {
+    project: Project;
+    handoffs: Handoff[];
+}) {
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                    <GitBranch className="size-4 text-primary" />
+                    Handoff evidence
+                </CardTitle>
+                <CardDescription>
+                    Typed AIOS-mediated workflow artifacts. These records are
+                    read-only evidence, not an Agent conversation.
+                </CardDescription>
+            </CardHeader>
+
+            <CardContent>
+                {handoffs.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                        No Agent handoffs recorded for this task.
+                    </p>
+                ) : (
+                    <ol className="grid gap-2">
+                        {handoffs.map((handoff) => (
+                            <li key={handoff.id}>
+                                <article className="panel-recessed overflow-hidden">
+                                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border-subtle p-3">
+                                        <div className="min-w-0">
+                                            <p className="text-xs font-semibold text-foreground">
+                                                {titleize(handoff.from_role)}
+                                                <span
+                                                    aria-hidden="true"
+                                                    className="px-1.5 text-primary"
+                                                >
+                                                    →
+                                                </span>
+                                                {titleize(handoff.to_role)}
+                                            </p>
+                                            <p className="mt-1 font-mono text-2xs text-muted-foreground">
+                                                {titleize(handoff.handoff_type)}{' '}
+                                                · schema v
+                                                {handoff.schema_version}
+                                            </p>
+                                        </div>
+
+                                        <StatusBadge status={handoff.status} />
+                                    </div>
+
+                                    <div className="grid gap-3 p-3">
+                                        <HandoffPayloadEvidence
+                                            handoff={handoff}
+                                        />
+
+                                        <div className="grid gap-2 border-t border-border-subtle pt-3">
+                                            <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-2xs text-muted-foreground">
+                                                <span>
+                                                    Created{' '}
+                                                    {formatDateTime(
+                                                        handoff.created_at,
+                                                    )}
+                                                </span>
+                                                {handoff.consumed_at && (
+                                                    <span className="text-success-foreground">
+                                                        Consumed{' '}
+                                                        {formatDateTime(
+                                                            handoff.consumed_at,
+                                                        )}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <span
+                                                    title={handoff.content_hash}
+                                                    className="font-mono text-2xs text-muted-foreground"
+                                                >
+                                                    Hash{' '}
+                                                    {handoff.content_hash.slice(
+                                                        0,
+                                                        12,
+                                                    )}
+                                                </span>
+
+                                                {handoff.source_run ? (
+                                                    <Link
+                                                        href={showAgentRun({
+                                                            project: project.id,
+                                                            run: handoff
+                                                                .source_run.id,
+                                                        })}
+                                                        aria-label={`Inspect source run #${handoff.source_run.id}`}
+                                                        className="font-mono text-2xs text-primary transition hover:text-primary/80"
+                                                    >
+                                                        Run #
+                                                        {handoff.source_run.id}{' '}
+                                                        ·{' '}
+                                                        {titleize(
+                                                            handoff.source_run
+                                                                .role,
+                                                        )}{' '}
+                                                        · attempt{' '}
+                                                        {handoff.source_run
+                                                            .attempt_number ??
+                                                            '—'}{' '}
+                                                        →
+                                                    </Link>
+                                                ) : (
+                                                    <span className="font-mono text-2xs text-muted-foreground">
+                                                        Source run unavailable
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </article>
+                            </li>
+                        ))}
+                    </ol>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
 function ReviewSummary({ review }: { review: Review | undefined }) {
     if (!review) {
         return (
@@ -1713,6 +2218,11 @@ export default function TaskShow({
                                     ))}
                                 </CardContent>
                             </Card>
+
+                            <HandoffEvidenceCard
+                                project={project}
+                                handoffs={task.handoffs}
+                            />
 
                             <Card>
                                 <CardHeader>

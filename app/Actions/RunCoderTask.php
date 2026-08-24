@@ -165,6 +165,13 @@ class RunCoderTask
                 : $this->runner->run($task->project, $prompt, $onOutput, $onHeartbeat);
             $this->runs->complete($run, $execution);
 
+            if ($execution['exit_code'] === 0) {
+                $task = $this->workflow->transition(
+                    $task,
+                    TaskStatus::Validating,
+                );
+            }
+
             $renewLease = $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease);
             if ($renewLease !== null) {
                 $renewLease();
@@ -260,7 +267,6 @@ class RunCoderTask
                 'base_sha' => $baseSha,
                 'changed_files' => $candidateFiles,
             ], $task->project, $task);
-            $this->workflow->transition($task, $execution['exit_code'] === 0 ? TaskStatus::Validating : $this->retryStatus($task, $attempt));
 
             if ($execution['exit_code'] === 0) {
                 $transitionedTask = $this->workflow->transition(
@@ -275,6 +281,11 @@ class RunCoderTask
                         $run->refresh(),
                     );
                 }
+            } else {
+                $this->workflow->transition(
+                    $task,
+                    $this->retryStatus($task, $attempt),
+                );
             }
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];

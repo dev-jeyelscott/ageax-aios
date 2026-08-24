@@ -346,6 +346,14 @@ function workerMessage(worker: OfficeWorker, active: boolean): string {
     }
 
     if (
+        worker.role === 'coder' &&
+        worker.status === 'working' &&
+        worker.task?.status === 'validating'
+    ) {
+        return `Validating ${worker.task.key} against the task contract and repository evidence.`;
+    }
+
+    if (
         worker.activity_mode === 'recent' &&
         worker.run?.status === 'completed' &&
         worker.task
@@ -401,6 +409,18 @@ function workerPresentation(
             dotClass: 'bg-warning',
             badgeClass:
                 'border-warning/25 bg-warning/8 text-warning-foreground',
+        };
+    }
+
+    if (
+        worker.role === 'coder' &&
+        worker.status === 'working' &&
+        worker.task?.status === 'validating'
+    ) {
+        return {
+            label: 'Validating',
+            dotClass: 'bg-primary',
+            badgeClass: 'border-primary/30 bg-primary/8 text-primary',
         };
     }
 
@@ -711,10 +731,7 @@ function AgentNode({
     const thumbnail = roleThumbnails[worker.role] ?? null;
     const message = workerMessage(worker, active);
     const displayedTask = worker.task ?? fallbackTask;
-    const displayedTaskStatus =
-        worker.activity_mode === 'recent' && worker.run !== null
-            ? worker.run.status
-            : displayedTask?.status;
+    const displayedTaskStatus = displayedTask?.status;
     const configuration = executionConfiguration(worker, agent);
     const timestamp =
         worker.run?.finished_at ??

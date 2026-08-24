@@ -531,6 +531,46 @@ test('a coder execution that makes no changes because the task is already implem
         ->and($attempt->validation_results['evidence']['task_commit']['summary'])->toContain('already satisfies this task');
 });
 
+test('a successful Coder run enters validation before deterministic checks execute', function () {
+    $path = '/tmp/aios-validation-state-'.fake()->uuid();
+    File::ensureDirectoryExists($path);
+    Process::path($path)->run(['git', 'init']);
+    Process::path($path)->run(['git', 'config', 'user.email', 'aios@example.test']);
+    Process::path($path)->run(['git', 'config', 'user.name', 'AIOS Test']);
+    File::put($path.'/feature.txt', 'already implemented');
+    Process::path($path)->run(['git', 'add', 'feature.txt']);
+    Process::path($path)->run(['git', 'commit', '-m', 'Baseline']);
+    $project = Project::create(['name' => 'Validation state', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = Task::create([
+        'project_id' => $project->id,
+        'key' => 'TASK-002',
+        'position' => 2,
+        'title' => 'Validation state task',
+        'objective' => 'Show the deterministic validation state.',
+        'acceptance_criteria' => ['The task enters validation before checks run.'],
+        'implementation_prompt' => 'Validate the existing implementation.',
+        'context_capsule' => [],
+        'status' => TaskStatus::Coding,
+    ]);
+    mock(CodexCliRunner::class)
+        ->shouldReceive('run')
+        ->once()
+        ->andReturn(['exit_code' => 0, 'output' => '{"summary":"The feature already exists."}', 'error_output' => '']);
+    mock(TaskValidator::class)
+        ->shouldReceive('validate')
+        ->once()
+        ->withArgs(fn (Task $validatingTask): bool => $validatingTask->refresh()->status === TaskStatus::Validating)
+        ->andReturn([
+            'passed' => true,
+            'checks' => [],
+            'evidence' => [],
+        ]);
+
+    app(RunCoderTask::class)->handle($task);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview);
+});
+
 test('an unsafe persisted project path blocks coding before any process starts', function () {
     $project = Project::create(['name' => 'Unsafe', 'path' => base_path(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = Task::create([

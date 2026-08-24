@@ -38,17 +38,26 @@ test('project overview uses thumbnail assets instead of the procedural robot pre
         ->not->toContain('<Canvas');
 });
 
-test('project overview distinguishes a completed run from a completed task', function () {
+test('project overview displays the task status instead of the latest run status', function () {
     $source = file_get_contents(
         resource_path('js/components/agent-office.tsx'),
     );
 
     expect($source)
         ->toContain('Completed ${labelForRole(worker.role)} run for')
-        ->toContain("worker.activity_mode === 'recent' && worker.run !== null")
-        ->toContain('? worker.run.status')
-        ->toContain("worker.activity_mode !== 'recent' &&")
-        ->not->toContain('Completed ${worker.task.key} · ${worker.task.title}.');
+        ->toContain('const displayedTaskStatus = displayedTask?.status;')
+        ->not->toContain('? worker.run.status');
+});
+
+test('project overview identifies Coder validation after the harness run finishes', function () {
+    $source = file_get_contents(
+        resource_path('js/components/agent-office.tsx'),
+    );
+
+    expect($source)
+        ->toContain("worker.task?.status === 'validating'")
+        ->toContain('Validating ${worker.task.key} against the task contract and repository evidence.')
+        ->toContain("label: 'Validating'");
 });
 
 test('project overview exposes durable operational evidence without inventing missing values', function () {

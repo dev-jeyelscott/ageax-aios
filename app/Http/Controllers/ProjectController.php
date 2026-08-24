@@ -858,6 +858,46 @@ class ProjectController extends Controller
                     'finished_at',
                 ])
                 ->latest('started_at'),
+            'handoffs' => fn ($query) => $query
+                ->where('project_id', $project->id)
+                ->whereHas(
+                    'sourceRun',
+                    fn ($sourceRuns) => $sourceRuns
+                        ->where('project_id', $project->id)
+                        ->where('task_id', $task->id),
+                )
+                ->select([
+                    'id',
+                    'project_id',
+                    'task_id',
+                    'from_agent_run_id',
+                    'from_role',
+                    'to_role',
+                    'handoff_type',
+                    'schema_version',
+                    'payload',
+                    'content_hash',
+                    'status',
+                    'created_at',
+                    'consumed_at',
+                ])
+                ->with([
+                    'sourceRun' => fn ($sourceRuns) => $sourceRuns
+                        ->where('project_id', $project->id)
+                        ->where('task_id', $task->id)
+                        ->select([
+                            'id',
+                            'project_id',
+                            'task_id',
+                            'role',
+                            'status',
+                            'attempt_number',
+                            'started_at',
+                            'finished_at',
+                        ]),
+                ])
+                ->oldest('created_at')
+                ->oldest('id'),
             'operatorMessages' => fn ($query) => $query
                 ->oldest()
                 ->with('user:id,name'),

@@ -1,37 +1,12 @@
 # Project Rules Index
 
-Before planning or editing, find every row whose glob matches a file in scope and read every applicable rule file. If multiple rows match, all matching rules apply.
-
-For any Phase 4+ capability work involving orchestration recommendations, knowledge intelligence, runtime recovery, Agent collaboration, voice, parallel execution, custom workflows, or automatic execution routing, also read the canonical governance contracts in `MASTER-PROMPT.md`, `AGENTS.md`, and the selected harness supplement such as `CLAUDE.md`, plus every path-specific rule matched below. Phase 4+ governance does not grant runtime authority by itself. Only separately approved implementation tasks may introduce capability code, and their Actions/Services remain subordinate to the AIOS-owned authority boundaries defined by those contracts.
+Before planning or editing, find the row whose globs match the file's path and read that rule file.
 
 | Applies to | Rule file |
 | --- | --- |
-| app/Actions/** | .ai/rules/actions.md |
+| app/Actions/**, app/Actions/RunCoderTask.php | .ai/rules/actions.md |
 | bootstrap/app.php | .ai/rules/bootstrap.md |
-| app/Actions/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
-| app/Actions/*GlobalKnowledgePattern*.php | .ai/rules/knowledge-improvements.md |
+| resources/js/components/agent-office.tsx | .ai/rules/components.md |
+| app/Actions/*KnowledgeImprovement*.php, app/Services/*KnowledgeImprovement*.php, app/Services/*KnowledgeSource*.php, app/KnowledgeImprovement*.php, app/Models/KnowledgeImprovement*.php, app/Models/KnowledgeSource*.php, app/Http/Controllers/**/*KnowledgeImprovement*.php, app/Http/Requests/**/*KnowledgeImprovement*.php, app/Console/Commands/*KnowledgeImprovement*.php, database/migrations/*knowledge_improvement*.php, database/migrations/*knowledge_source*.php, database/factories/KnowledgeSource*.php, resources/js/**/knowledge-improvements/** | .ai/rules/knowledge-improvements.md |
 | app/Services/** | .ai/rules/services.md |
-| app/Services/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
-| app/Services/*KnowledgeSource*.php | .ai/rules/knowledge-improvements.md |
-| app/KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
-| app/Models/KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
-| app/Models/KnowledgeSource*.php | .ai/rules/knowledge-improvements.md |
-| app/Models/GlobalKnowledgePattern.php | .ai/rules/knowledge-improvements.md |
-| app/Http/Controllers/**/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
-| app/Http/Requests/**/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
-| app/Http/Requests/**/*GlobalKnowledgePattern*.php | .ai/rules/knowledge-improvements.md |
-| app/Console/Commands/*KnowledgeImprovement*.php | .ai/rules/knowledge-improvements.md |
-| database/migrations/*knowledge_improvement*.php | .ai/rules/knowledge-improvements.md |
-| database/migrations/*knowledge_source*.php | .ai/rules/knowledge-improvements.md |
-| database/migrations/*global_knowledge_pattern*.php | .ai/rules/knowledge-improvements.md |
-| database/factories/KnowledgeSource*.php | .ai/rules/knowledge-improvements.md |
-| resources/js/**/knowledge-improvements/** | .ai/rules/knowledge-improvements.md |
-| app/Ticket*.php | .ai/rules/tickets.md |
-| app/Models/Ticket*.php | .ai/rules/tickets.md |
-| app/Policies/Ticket*.php | .ai/rules/tickets.md |
-| app/Http/Controllers/**/*Ticket*.php | .ai/rules/tickets.md |
-| app/Http/Requests/**/*Ticket*.php | .ai/rules/tickets.md |
-| app/Console/Commands/*Ticket*.php | .ai/rules/tickets.md |
-| app/Console/Commands/RunAiosWorkers.php | .ai/rules/tickets.md |
-| database/migrations/*ticket*.php | .ai/rules/tickets.md |
-| resources/js/**/tickets/** | .ai/rules/tickets.md |
+| app/Ticket*.php, app/Models/Ticket*.php, app/Policies/Ticket*.php, app/Http/Controllers/**/*Ticket*.php, app/Http/Requests/**/*Ticket*.php, app/Console/Commands/*Ticket*.php, app/Console/Commands/RunAiosWorkers.php, database/migrations/*ticket*.php, resources/js/**/tickets/** | .ai/rules/tickets.md |

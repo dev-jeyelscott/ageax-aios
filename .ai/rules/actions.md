@@ -1,6 +1,7 @@
 ---
 paths:
   - 'app/Actions/**'
+  - app/Actions/RunCoderTask.php
 ---
 
 # Actions
@@ -127,3 +128,6 @@ A future Orchestrator is recommendation-first. Its structured output may propose
 A future Knowledge Architect is proposal-first and remains subject to `.ai/rules/knowledge-improvements.md`. Voice is input/output only: a confirmed transcript must enter the same authenticated, authorized domain Action as equivalent text and must never become a direct shell, permission, Agent-selection, or workflow-transition path.
 
 Runtime self-healing must use the existing `RecoveryIncident` lifecycle and AIOS-owned recovery Actions/Services. Agent collaboration must use typed, bounded, AIOS-validated handoffs that carry evidence only and never perform transitions. Future parallel execution must preserve dependency and phase eligibility, isolated AIOS-owned Git workspaces, worker/lease authority, deterministic validation, and serialized AIOS-owned repository integration. Custom workflow definitions may request only approved declarative step types; they cannot contain executable code or grant transition authority. Automatic Agent/harness/model/reasoning routing remains disabled unless an explicit operator-owned routing policy activates it after the separately approved advisory and shadow stages, and any automatic selection must occur before a fresh attempt with immutable evidence and a deterministic fallback. No mid-attempt model or harness switching is allowed.
+
+## Coder validation starts when harness execution ends
+After a successful harness run is persisted, transition the Task from coding to validating before deterministic validation/commit work starts. A completed AgentRun is execution evidence only; it must never leave an actively validating task displayed as coding or an available worker.

@@ -67,6 +67,16 @@ class Task extends Model
         return $this->hasMany(AgentRun::class);
     }
 
+    /**
+     * Return durable typed Agent handoff evidence scoped to this Task.
+     *
+     * @return HasMany<AgentHandoff, $this>
+     */
+    public function handoffs(): HasMany
+    {
+        return $this->hasMany(AgentHandoff::class);
+    }
+
     /** @return HasMany<AuditEvent, $this> */
     public function auditEvents(): HasMany
     {
