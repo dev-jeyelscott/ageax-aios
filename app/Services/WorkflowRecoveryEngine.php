@@ -14,6 +14,7 @@ use App\RecoveryIncidentStatus;
 use App\RuntimeRecoverabilityClassification;
 use App\RuntimeRecoveryIncidentFamily;
 use App\TaskStatus;
+use DateTimeInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
@@ -211,7 +212,9 @@ class WorkflowRecoveryEngine
             && isset($classification['origin_task_id'])
             && $classification['origin_task_id'] !== $task->id
         ) {
-            $originTask = Task::query()->find($classification['origin_task_id']);
+            $originTask = Task::query()
+                ->whereKey((int) $classification['origin_task_id'])
+                ->first();
 
             if ($originTask !== null) {
                 return $this->recoverViaOriginatingTask(
@@ -573,15 +576,6 @@ class WorkflowRecoveryEngine
             }
         } finally {
             $this->worktrees->destroy($repositoryPath, $worktreePath);
-        }
-
-        if ($proposal === null) {
-            return $this->escalateRuntime(
-                $incident->fresh(),
-                $classification,
-                $task,
-                'Runtime AI repair ended without durable proposal evidence.',
-            );
         }
 
         return $this->applyRuntimeRepair(
@@ -1146,7 +1140,9 @@ class WorkflowRecoveryEngine
         }
 
         try {
-            $project = $task?->project ?? $incident->project;
+            $project = $task === null
+                ? $incident->project
+                : $task->project;
 
             if ($project === null) {
                 return [
@@ -1322,7 +1318,7 @@ class WorkflowRecoveryEngine
                 'root_cause_summary' => ['required', 'string', 'max:8000'],
                 'recoverable' => ['required', 'boolean'],
                 'fix_applied' => ['required', 'boolean'],
-                'changed_files' => ['required', 'array'],
+                'changed_files' => ['present', 'array'],
                 'changed_files.*' => ['required', 'string', 'max:512'],
                 'fix_summary' => ['nullable', 'string', 'max:8000'],
                 'escalation_reason' => ['nullable', 'string', 'max:8000'],
@@ -1653,7 +1649,7 @@ class WorkflowRecoveryEngine
 
         $segments = explode('/', $path);
 
-        if ($segments === [] || $segments[0] === '.git') {
+        if ($segments[0] === '.git') {
             return false;
         }
 
@@ -1673,20 +1669,29 @@ class WorkflowRecoveryEngine
      */
     private function forbiddenRecoveryGitCommands(AgentRun $run): array
     {
+        $commands = $run->getAttribute('commands');
+
+        if (! is_array($commands)) {
+            return [];
+        }
+
         $forbidden = [];
 
-        foreach ((array) $run->commands as $commandEvidence) {
-            if (
-                ! is_array($commandEvidence)
-                || ! is_string($commandEvidence['command'] ?? null)
-            ) {
+        foreach ($commands as $commandEvidence) {
+            if (! is_array($commandEvidence)) {
+                continue;
+            }
+
+            $command = $commandEvidence['command'] ?? null;
+
+            if (! is_string($command)) {
                 continue;
             }
 
             if (
                 preg_match(
                     '~(?:^|[\s;&|])(?:[^\s;&|]*/)?git\s+(add|commit|reset|stash|checkout|switch|merge|rebase|cherry-pick|clean)\b~i',
-                    $commandEvidence['command'],
+                    $command,
                     $matches,
                 ) !== 1
             ) {
@@ -2191,8 +2196,12 @@ class WorkflowRecoveryEngine
                 'source' => $incident->source,
                 'exception_class' => $incident->exception_class,
                 'occurrence_count' => $incident->occurrence_count,
-                'first_seen_at' => $incident->first_seen_at?->toIso8601String(),
-                'last_seen_at' => $incident->last_seen_at?->toIso8601String(),
+                'first_seen_at' => $this->iso8601(
+                    $incident->getAttribute('first_seen_at'),
+                ),
+                'last_seen_at' => $this->iso8601(
+                    $incident->getAttribute('last_seen_at'),
+                ),
                 'evidence' => $incident->evidence ?? [],
             ],
             'project' => $incident->project === null
@@ -2224,37 +2233,68 @@ class WorkflowRecoveryEngine
     private function boundedPreviousRecoveryAttempts(
         RecoveryIncident $incident,
     ): array {
-        return $incident->recoveryRuns()
+        $attempts = [];
+
+        $runs = $incident->recoveryRuns()
             ->latest('started_at')
             ->limit(self::RecoveryHistoryLimit)
-            ->get()
-            ->map(function (AgentRun $run): array {
-                $fileModifications = [];
+            ->get();
 
-                foreach (array_slice((array) $run->file_modifications, 0, 20) as $modification) {
+        foreach ($runs as $run) {
+            $fileModifications = [];
+            $modifications = $run->getAttribute('file_modifications');
+
+            if (is_array($modifications)) {
+                foreach (
+                    array_slice(
+                        array_values($modifications),
+                        0,
+                        20,
+                    ) as $modification
+                ) {
+                    if (! is_array($modification)) {
+                        continue;
+                    }
+
+                    $modificationPath = $modification['path'] ?? null;
+                    $kind = $modification['kind'] ?? null;
+
                     if (
-                        ! is_array($modification)
-                        || ! is_string($modification['path'] ?? null)
-                        || ! is_string($modification['kind'] ?? null)
+                        ! is_string($modificationPath)
+                        || ! is_string($kind)
                     ) {
                         continue;
                     }
 
                     $fileModifications[] = [
-                        'path' => $modification['path'],
-                        'kind' => $modification['kind'],
+                        'path' => $modificationPath,
+                        'kind' => $kind,
                     ];
                 }
+            }
 
-                return [
-                    'status' => $run->getRawOriginal('status'),
-                    'exit_code' => $run->exit_code,
-                    'failure_summary' => $this->runs->failureReason($run),
-                    'file_modifications' => $fileModifications,
-                    'finished_at' => $run->finished_at?->toIso8601String(),
-                ];
-            })
-            ->all();
+            $attempts[] = [
+                'status' => $run->getRawOriginal('status'),
+                'exit_code' => $run->exit_code,
+                'failure_summary' => $this->runs->failureReason($run),
+                'file_modifications' => $fileModifications,
+                'finished_at' => $this->iso8601(
+                    $run->getAttribute('finished_at'),
+                ),
+            ];
+        }
+
+        return $attempts;
+    }
+
+    /**
+     * Normalize one Eloquent datetime attribute for bounded recovery context.
+     */
+    private function iso8601(mixed $value): ?string
+    {
+        return $value instanceof DateTimeInterface
+            ? $value->format(DATE_ATOM)
+            : null;
     }
 
     /**
