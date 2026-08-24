@@ -60,6 +60,30 @@ test('project overview identifies Coder validation after the harness run finishe
         ->toContain("label: 'Validating'");
 });
 
+test('project overview shows a live cooldown countdown before the next agent execution check', function () {
+    $source = file_get_contents(
+        resource_path('js/components/agent-office.tsx'),
+    );
+
+    expect($source)
+        ->toContain('cooldown_ends_at: string | null;')
+        ->toContain('function useCurrentTime(): number')
+        ->toContain('function cooldownCountdown(')
+        ->toContain('Next execution check')
+        ->toContain('Execution check pending');
+});
+
+test('project overview shows a live task runtime while an agent is active', function () {
+    $source = file_get_contents(
+        resource_path('js/components/agent-office.tsx'),
+    );
+
+    expect($source)
+        ->toContain('started_at: string | null;')
+        ->toContain('const taskRuntime = active')
+        ->toContain('Task runtime');
+});
+
 test('project overview exposes durable operational evidence without inventing missing values', function () {
     $source = file_get_contents(
         resource_path('js/components/agent-office.tsx'),

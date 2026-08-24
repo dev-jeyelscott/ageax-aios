@@ -37,18 +37,18 @@ class TaskValidator
      * @param  (Closure(): mixed)|null  $onHeartbeat
      * @return array{passed: bool, checks: array<string, bool>, evidence: array<string, array<string, mixed>>}
      */
-    public function validate(Task $task, ?Closure $onHeartbeat = null): array
+    public function validate(Task $task, ?Closure $onHeartbeat = null, ?Closure $onProcessStarted = null): array
     {
-        $diff = $this->runManagedProjectProcess($task, ['git', 'diff', '--check'], onHeartbeat: $onHeartbeat);
-        $secrets = $this->runManagedProjectProcess($task, ['rg', '--hidden', '--glob', '!.git/**', '--glob', '!node_modules/**', '(AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36})'], onHeartbeat: $onHeartbeat);
-        $status = $this->runManagedProjectProcess($task, ['git', 'status', '--porcelain'], onHeartbeat: $onHeartbeat);
+        $diff = $this->runManagedProjectProcess($task, ['git', 'diff', '--check'], onHeartbeat: $onHeartbeat, onProcessStarted: $onProcessStarted);
+        $secrets = $this->runManagedProjectProcess($task, ['rg', '--hidden', '--glob', '!.git/**', '--glob', '!node_modules/**', '(AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36})'], onHeartbeat: $onHeartbeat, onProcessStarted: $onProcessStarted);
+        $status = $this->runManagedProjectProcess($task, ['git', 'status', '--porcelain'], onHeartbeat: $onHeartbeat, onProcessStarted: $onProcessStarted);
         $changedFiles = collect(preg_split('/\R/', $status->output()) ?: [])
             ->filter(fn (string $line): bool => $line !== '')
             ->map(fn (string $line): string => trim(substr($line, 3)))
             ->filter()
             ->values();
         $forbiddenFiles = $changedFiles->contains(fn (string $file): bool => $this->isForbiddenFile($file));
-        $verification = $this->runVerificationCommands($task, $onHeartbeat);
+        $verification = $this->runVerificationCommands($task, $onHeartbeat, $onProcessStarted);
         $checks = [
             'git_diff_check' => $diff->successful(),
             'secret_scan' => $secrets->exitCode() === 1,
@@ -88,7 +88,7 @@ class TaskValidator
      * @param  (Closure(): mixed)|null  $onHeartbeat
      * @return array{passed: bool, evidence: array<string, mixed>}
      */
-    private function runVerificationCommands(Task $task, ?Closure $onHeartbeat = null): array
+    private function runVerificationCommands(Task $task, ?Closure $onHeartbeat = null, ?Closure $onProcessStarted = null): array
     {
         $commands = $this->verificationCommands($task);
         if ($commands === null) {
@@ -106,6 +106,7 @@ class TaskValidator
                 preg_split('/\s+/', trim($command)) ?: [],
                 (int) config('aios.execution_timeout'),
                 $onHeartbeat,
+                $onProcessStarted,
             );
 
             $commandEvidence = $this->processEvidence('task_verification_command', $result->successful(), $command, $result);
@@ -125,7 +126,7 @@ class TaskValidator
      *
      * @param  list<string>  $command
      */
-    private function runManagedProjectProcess(Task $task, array $command, ?int $timeout = null, ?Closure $onHeartbeat = null): ProcessResult
+    private function runManagedProjectProcess(Task $task, array $command, ?int $timeout = null, ?Closure $onHeartbeat = null, ?Closure $onProcessStarted = null): ProcessResult
     {
         $pending = Process::path($this->paths->assertProjectPath($task->project->path));
 
@@ -133,16 +134,21 @@ class TaskValidator
             $pending = $pending->timeout($timeout);
         }
 
-        if ($onHeartbeat === null) {
+        if ($onHeartbeat === null && $onProcessStarted === null) {
             return $pending->run($this->environment->wrap($command));
         }
 
         $process = $pending->start($this->environment->wrap($command));
+        $processId = $process->id();
+
+        if (is_int($processId) && $onProcessStarted !== null) {
+            $onProcessStarted($processId, $command);
+        }
         $interval = max(1, (int) config('aios.worker_heartbeat_interval_seconds'));
         $nextHeartbeatAt = now();
 
         while ($process->running()) {
-            if (now()->gte($nextHeartbeatAt)) {
+            if ($onHeartbeat !== null && now()->gte($nextHeartbeatAt)) {
                 $onHeartbeat();
                 $nextHeartbeatAt = now()->addSeconds($interval);
             }

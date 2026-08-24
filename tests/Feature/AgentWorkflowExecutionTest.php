@@ -559,7 +559,7 @@ test('a successful Coder run enters validation before deterministic checks execu
     mock(TaskValidator::class)
         ->shouldReceive('validate')
         ->once()
-        ->withArgs(fn (Task $validatingTask): bool => $validatingTask->refresh()->status === TaskStatus::Validating)
+        ->withArgs(fn (Task $validatingTask, ?Closure $heartbeat, Closure $onProcessStarted): bool => $validatingTask->refresh()->status === TaskStatus::Validating)
         ->andReturn([
             'passed' => true,
             'checks' => [],

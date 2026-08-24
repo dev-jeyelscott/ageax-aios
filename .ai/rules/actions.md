@@ -131,3 +131,6 @@ Runtime self-healing must use the existing `RecoveryIncident` lifecycle and AIOS
 
 ## Coder validation starts when harness execution ends
 After a successful harness run is persisted, transition the Task from coding to validating before deterministic validation/commit work starts. A completed AgentRun is execution evidence only; it must never leave an actively validating task displayed as coding or an available worker.
+
+## Recover validating tasks before the Coder state guard
+A stale Coder task may already be `validating` when its completed harness run was abandoned. Accept that claimed state long enough to run `recoverAbandonedCoderFinalization()`; rejecting it first creates a lease reclaim loop and prevents durable recovery.

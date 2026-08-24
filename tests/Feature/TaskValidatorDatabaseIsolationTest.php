@@ -2,7 +2,9 @@
 
 use App\Models\Project;
 use App\Models\Task;
+use App\Models\TaskAttempt;
 use App\ProjectStatus;
+use App\Services\ManagedValidationProcessCleanup;
 use App\Services\TaskValidator;
 use App\TaskStatus;
 use Illuminate\Process\PendingProcess;
@@ -95,6 +97,57 @@ test('task validator isolates every managed-project subprocess from AIOS databas
         }
 
         $originalPath === false ? putenv('PATH') : putenv('PATH='.$originalPath);
+    }
+});
+
+test('task validator reports each managed validation process when it starts', function () {
+    $task = taskValidatorSecurityTask(['php artisan test --compact']);
+    $processes = [];
+    Process::fake(['*' => Process::describe()->id(4_321)]);
+
+    app(TaskValidator::class)->validate(
+        $task,
+        null,
+        function (int $pid, array $command) use (&$processes): void {
+            $processes[] = ['pid' => $pid, 'command' => $command];
+        },
+    );
+
+    expect($processes)
+        ->toHaveCount(4)
+        ->each->toMatchArray(['pid' => 4_321])
+        ->and($processes[3]['command'])
+        ->toBe(['php', 'artisan', 'test', '--compact']);
+});
+
+test('recorded stale validation processes are stopped before a fresh validation run', function () {
+    $task = taskValidatorSecurityTask([]);
+    $process = Process::path($task->project->path)->start(['sleep', '30']);
+    $pid = $process->id();
+
+    expect($pid)->toBeInt();
+
+    TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'status' => 'interrupted',
+        'validation_results' => [
+            'managed_processes' => [
+                ['pid' => $pid, 'command' => ['sleep', '30']],
+            ],
+        ],
+        'started_at' => now()->subMinute(),
+        'finished_at' => now(),
+    ]);
+
+    try {
+        $terminated = app(ManagedValidationProcessCleanup::class)
+            ->terminateStaleProcesses($task);
+
+        expect($terminated)->toContain($pid)
+            ->and($process->running())->toBeFalse();
+    } finally {
+        $process->stop();
     }
 });
 

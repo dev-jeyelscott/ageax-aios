@@ -409,6 +409,7 @@ class ProjectController extends Controller
      *     role: string,
      *     status: string,
      *     last_heartbeat_at: ?string,
+     *     cooldown_ends_at: ?string,
      *     lease_state: string,
      *     activity_mode: 'current'|'recent'|null,
      *     run: ?array{
@@ -432,6 +433,7 @@ class ProjectController extends Controller
      *         key: string,
      *         title: string,
      *         status: string,
+     *         started_at: ?string,
      *         return_from_reviewer: bool
      *     }
      * }>
@@ -448,6 +450,7 @@ class ProjectController extends Controller
                 'status',
                 'last_heartbeat_at',
                 'lease_expires_at',
+                'task_completed_at',
             ])
             ->orderBy('role')
             ->with([
@@ -472,7 +475,13 @@ class ProjectController extends Controller
                     ->limit(1)
                     ->with([
                         'task' => fn ($query) => $query
-                            ->select(['id', 'key', 'title', 'status'])
+                            ->select([
+                                'id',
+                                'key',
+                                'title',
+                                'status',
+                                'claimed_at',
+                            ])
                             ->with([
                                 'reviews' => fn ($reviews) => $reviews
                                     ->select(['id', 'task_id', 'status'])
@@ -498,6 +507,15 @@ class ProjectController extends Controller
                     ? 'active'
                     : 'expired');
             $workerStatus = (string) $worker->getAttribute('status');
+            $cooldownEndsAt = in_array($worker->role, [
+                AgentRole::Coder,
+                AgentRole::Reviewer,
+            ], true)
+                && $worker->task_completed_at instanceof CarbonInterface
+                ? $worker->task_completed_at->addSeconds(
+                    max(0, (int) config('aios.worker_task_cooldown_seconds')),
+                )
+                : null;
             $isCurrentActivity = $run !== null
                 && $leaseState !== 'expired'
                 && in_array(
@@ -526,6 +544,7 @@ class ProjectController extends Controller
                     $worker,
                     'last_heartbeat_at',
                 ),
+                'cooldown_ends_at' => $cooldownEndsAt?->toISOString(),
                 'lease_state' => $leaseState,
                 'activity_mode' => $activityMode,
                 'run' => $run === null
@@ -564,6 +583,10 @@ class ProjectController extends Controller
                         'title' => $task->title,
                         'status' => $task->getRawOriginal(
                             'status',
+                        ),
+                        'started_at' => $this->serializeDateAttribute(
+                            $task,
+                            'claimed_at',
                         ),
                         'return_from_reviewer' => $task->reviews->first()?->getRawOriginal('status') === 'changes_required',
                     ],
@@ -752,7 +775,7 @@ class ProjectController extends Controller
     }
 
     private function serializeDateAttribute(
-        AgentRun|AgentWorker $model,
+        AgentRun|AgentWorker|Task $model,
         string $attribute,
     ): ?string {
         $value = $model->getAttribute($attribute);

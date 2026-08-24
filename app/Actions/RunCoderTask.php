@@ -20,6 +20,7 @@ use App\Services\AuditLogger;
 use App\Services\CoderRepositoryGuard;
 use App\Services\CodexCliRunner;
 use App\Services\DatabaseProtectionGuard;
+use App\Services\ManagedValidationProcessCleanup;
 use App\Services\NoProgressRetryGuard;
 use App\Services\ProjectGitState;
 use App\Services\StaleWorkerRecovery;
@@ -54,6 +55,7 @@ class RunCoderTask
         private TaskPlanningDefectPreflight $planningPreflight,
         private TaskPlanningEscalationWorkflow $planningEscalations,
         private TaskValidator $validator,
+        private ManagedValidationProcessCleanup $validationProcessCleanup,
         private TaskCommitter $committer,
         private TaskWorkflow $workflow,
         private NoProgressRetryGuard $noProgress,
@@ -72,7 +74,7 @@ class RunCoderTask
      */
     public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
     {
-        abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Coding, 409, 'Only claimed coding tasks may execute.');
+        abort_unless(in_array(TaskStatus::from($task->getRawOriginal('status')), [TaskStatus::Coding, TaskStatus::Validating], true), 409, 'Only claimed coding tasks may execute.');
         $task->loadMissing('project');
 
         try {
@@ -166,6 +168,13 @@ class RunCoderTask
             $this->runs->complete($run, $execution);
 
             if ($execution['exit_code'] === 0) {
+                $terminatedProcesses = $this->validationProcessCleanup->terminateStaleProcesses($task);
+                if ($terminatedProcesses !== []) {
+                    $this->audit->record('task.validation_processes_cleaned', [
+                        'process_ids' => $terminatedProcesses,
+                    ], $task->project, $task);
+                }
+
                 $task = $this->workflow->transition(
                     $task,
                     TaskStatus::Validating,
@@ -188,8 +197,19 @@ class RunCoderTask
                 return $attempt->refresh();
             }
 
+            $managedProcesses = [];
+            $recordValidationProcess = function (int $pid, array $command) use ($attempt, &$managedProcesses): void {
+                $managedProcesses[] = ['pid' => $pid, 'command' => $command];
+                $validationResults = $attempt->refresh()->validation_results;
+                $attempt->update([
+                    'validation_results' => [
+                        ...(is_array($validationResults) ? $validationResults : []),
+                        'managed_processes' => $managedProcesses,
+                    ],
+                ]);
+            };
             $validation = $execution['exit_code'] === 0
-                ? $this->validator->validate($task, $renewLease)
+                ? $this->validator->validate($task, $renewLease, $recordValidationProcess)
                 : ['passed' => false, 'checks' => ['codex_execution' => false]];
             if ($renewLease !== null) {
                 $renewLease();
@@ -221,6 +241,7 @@ class RunCoderTask
                 'recovery_attempt_number' => $preflight['recovery_attempt']?->number,
             ];
             $validation['task_contract'] = $contractEvidence;
+            $validation['managed_processes'] = $managedProcesses;
             $validationPassed = $validation['passed'] && $changedFiles !== null && $headUnchanged;
             $alreadyImplemented = $validationPassed && $changedFiles === [];
             $commitSha = $validationPassed && ! $alreadyImplemented ? $this->committer->commit($task, $changedFiles, $baseSha) : null;

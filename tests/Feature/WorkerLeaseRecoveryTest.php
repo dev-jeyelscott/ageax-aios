@@ -149,6 +149,23 @@ test('a re-entered Coder task recovers an abandoned finalization before dirty-wo
         ->and($project->auditEvents()->where('event_type', 'task.recovered')->where('payload->reason', 'abandoned_finalization')->exists())->toBeTrue();
 });
 
+test('a re-entered validating Coder task recovers an abandoned finalization before the coding-state guard', function () {
+    $path = '/tmp/reentered-validating-coder-'.fake()->uuid();
+    File::ensureDirectoryExists($path);
+    $project = Project::create(['name' => 'Re-entered validating Coder', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $worker = leasedWorker($project);
+    $task = leasedTask($project, status: TaskStatus::Validating);
+    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'running', 'started_at' => now()->subMinute()]);
+    AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'task_attempt_id' => $attempt->id, 'agent_worker_id' => $worker->id, 'role' => AgentRole::Coder, 'status' => AgentRunStatus::Completed, 'exit_code' => 0, 'prompt_hash' => hash('sha256', 'reentered-validating'), 'started_at' => now()->subMinute(), 'finished_at' => now()->subSeconds(30)]);
+
+    $recoveredAttempt = app(RunCoderTask::class)->handle($task);
+
+    expect($recoveredAttempt->id)->toBe($attempt->id)
+        ->and($recoveredAttempt->refresh()->status)->toBe('interrupted')
+        ->and($task->refresh()->status)->toBe(TaskStatus::Failed)
+        ->and($project->auditEvents()->where('event_type', 'task.recovered')->where('payload->reason', 'abandoned_finalization')->exists())->toBeTrue();
+});
+
 test('a task still genuinely being coded is left untouched by abandoned-finalization recovery', function () {
     $project = Project::create(['name' => 'Active', 'path' => '/tmp/active-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $worker = leasedWorker($project);

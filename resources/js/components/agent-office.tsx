@@ -13,7 +13,7 @@ import {
     ShieldCheck,
     Workflow,
 } from 'lucide-react';
-import { Fragment, useMemo } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
     requeueRoadmap,
     show as showProject,
@@ -39,6 +39,7 @@ export type OfficeWorker = {
     role: string;
     status: string;
     last_heartbeat_at: string | null;
+    cooldown_ends_at: string | null;
     lease_state: 'active' | 'expired' | 'none';
     activity_mode: 'current' | 'recent' | null;
     run: {
@@ -56,6 +57,7 @@ export type OfficeWorker = {
         key: string;
         title: string;
         status: string;
+        started_at: string | null;
     } | null;
 };
 
@@ -270,13 +272,14 @@ function formatEvidenceTime(value: string | null): string {
 function formatRunDuration(
     startedAt: string | null,
     finishedAt: string | null,
+    currentTime = Date.now(),
 ): string {
     if (!startedAt) {
         return '—';
     }
 
     const started = new Date(startedAt).getTime();
-    const finished = finishedAt ? new Date(finishedAt).getTime() : Date.now();
+    const finished = finishedAt ? new Date(finishedAt).getTime() : currentTime;
 
     if (!Number.isFinite(started) || !Number.isFinite(finished)) {
         return '—';
@@ -501,6 +504,48 @@ function fallbackTaskForRole(
     return null;
 }
 
+function useCurrentTime(): number {
+    const [currentTime, setCurrentTime] = useState(() => Date.now());
+
+    useEffect(() => {
+        const interval = window.setInterval(() => {
+            setCurrentTime(Date.now());
+        }, 1_000);
+
+        return () => window.clearInterval(interval);
+    }, []);
+
+    return currentTime;
+}
+
+function cooldownCountdown(
+    endsAt: string | null,
+    currentTime: number,
+): string | null {
+    if (endsAt === null) {
+        return null;
+    }
+
+    const remainingSeconds = Math.max(
+        0,
+        Math.ceil((new Date(endsAt).getTime() - currentTime) / 1_000),
+    );
+
+    if (remainingSeconds === 0) {
+        return 'Execution check pending';
+    }
+
+    const hours = Math.floor(remainingSeconds / 3_600);
+    const minutes = Math.floor((remainingSeconds % 3_600) / 60);
+    const seconds = remainingSeconds % 60;
+
+    return hours > 0
+        ? `${hours}h ${minutes.toString().padStart(2, '0')}m`
+        : `${minutes.toString().padStart(2, '0')}:${seconds
+              .toString()
+              .padStart(2, '0')}`;
+}
+
 function executionConfiguration(
     worker: OfficeWorker,
     agent: OfficeAgent | undefined,
@@ -718,6 +763,7 @@ function AgentNode({
     index,
     projectStatus,
     fallbackTask,
+    currentTime,
 }: {
     projectId: number;
     worker: OfficeWorker;
@@ -726,6 +772,7 @@ function AgentNode({
     index: number;
     projectStatus: string;
     fallbackTask: OfficeTask | null;
+    currentTime: number;
 }) {
     const presentation = workerPresentation(worker, active, projectStatus);
     const thumbnail = roleThumbnails[worker.role] ?? null;
@@ -740,7 +787,16 @@ function AgentNode({
     const duration = formatRunDuration(
         worker.run?.started_at ?? null,
         worker.run?.finished_at ?? null,
+        currentTime,
     );
+    const taskRuntime = active
+        ? formatRunDuration(
+              worker.task?.started_at ?? worker.run?.started_at ?? null,
+              null,
+              currentTime,
+          )
+        : null;
+    const cooldown = cooldownCountdown(worker.cooldown_ends_at, currentTime);
 
     return (
         <article
@@ -824,6 +880,38 @@ function AgentNode({
             </div>
 
             <div className="mt-3 grid gap-2">
+                {taskRuntime && (
+                    <div className="execution-agent-meta-row">
+                        <div className="flex min-w-0 items-center gap-2">
+                            <Clock className="size-3.5 shrink-0 text-primary" />
+                            <div className="min-w-0">
+                                <p className="execution-meta-label">
+                                    Task runtime
+                                </p>
+                                <p className="mt-0.5 font-mono text-xs font-medium text-foreground">
+                                    {taskRuntime}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {cooldown && !active && (
+                    <div className="execution-agent-meta-row">
+                        <div className="flex min-w-0 items-center gap-2">
+                            <Clock className="size-3.5 shrink-0 text-primary" />
+                            <div className="min-w-0">
+                                <p className="execution-meta-label">
+                                    Next execution check
+                                </p>
+                                <p className="mt-0.5 font-mono text-xs font-medium text-foreground">
+                                    {cooldown}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <div className="execution-agent-meta-row">
                     <div className="flex min-w-0 items-center gap-2">
                         <Cpu className="size-3.5 shrink-0 text-primary" />
@@ -1864,6 +1952,7 @@ export function AgentOffice({
     };
 }) {
     const pageProject = usePage().props.project as OverviewProject | undefined;
+    const currentTime = useCurrentTime();
 
     const displayedWorkers = useMemo(
         () => selectOfficeWorkers(workers),
@@ -2084,6 +2173,7 @@ export function AgentOffice({
                                     active={worker.id === activeWorkerId}
                                     index={index + 1}
                                     projectStatus={projectStatus}
+                                    currentTime={currentTime}
                                     fallbackTask={fallbackTaskForRole(
                                         role,
                                         tasks,

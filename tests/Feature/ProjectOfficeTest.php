@@ -46,6 +46,7 @@ test('the project office includes persisted worker agent git and harness evidenc
         'implementation_prompt' => 'Build it.',
         'context_capsule' => [],
         'status' => TaskStatus::Coding,
+        'claimed_at' => now()->subMinute(),
     ]);
 
     $attempt = TaskAttempt::create([
@@ -79,6 +80,7 @@ test('the project office includes persisted worker agent git and harness evidenc
         'status' => 'working',
         'last_heartbeat_at' => now(),
         'lease_expires_at' => now()->addMinute(),
+        'task_completed_at' => now(),
     ]);
 
     AgentWorker::create([
@@ -125,8 +127,10 @@ test('the project office includes persisted worker agent git and harness evidenc
             ->where('project.office_workers.0.role', 'coder')
             ->where('project.office_workers.0.status', 'working')
             ->where('project.office_workers.0.lease_state', 'active')
+            ->has('project.office_workers.0.cooldown_ends_at')
             ->where('project.office_workers.0.run.id', $run->id)
             ->where('project.office_workers.0.task.key', 'TASK-001')
+            ->where('project.office_workers.0.task.started_at', $task->claimed_at?->toISOString())
             ->where('project.office_workers.1.role', 'knowledge_architect')
             ->where('project.office_workers.1.status', 'mystery')
             ->where('project.office_workers.1.lease_state', 'expired')
