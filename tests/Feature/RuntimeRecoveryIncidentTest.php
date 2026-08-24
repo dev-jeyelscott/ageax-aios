@@ -1,15 +1,12 @@
 <?php
 
-use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\RecoveryIncident;
 use App\Models\Task;
 use App\ProjectStatus;
 use App\RecoveryIncidentStatus;
 use App\RuntimeRecoveryIncidentFamily;
-use App\Services\RecoveryEngineerRunner;
 use App\Services\RuntimeRecoveryIncidentRecorder;
-use App\Services\WorkflowRecoveryEngine;
 use App\TaskStatus;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Cache\Lock;
@@ -374,8 +371,9 @@ test('raw secrets are absent from persisted incident and audit evidence', functi
         ->and($incident->evidence)->toBeNull();
 });
 
-test('runtime incidents remain fail closed from Recovery Engineer processing before P7-003', function () {
+test('recording a runtime incident remains passive until recovery processing is invoked', function () {
     $project = runtimeRecoveryProject();
+
     $incident = app(RuntimeRecoveryIncidentRecorder::class)->record(
         RuntimeRecoveryIncidentFamily::ApplicationException,
         'route:projects.index',
@@ -383,17 +381,12 @@ test('runtime incidents remain fail closed from Recovery Engineer processing bef
         'Application exception code 500.',
         project: $project,
     );
-    $engineer = Mockery::mock(RecoveryEngineerRunner::class);
-    $engineer->shouldNotReceive('run');
-    app()->instance(RecoveryEngineerRunner::class, $engineer);
 
-    $processed = app(WorkflowRecoveryEngine::class)->process($incident);
-
-    expect($processed->status)->toBe(RecoveryIncidentStatus::Detected)
-        ->and($processed->attempt_count)->toBe(0)
-        ->and($processed->claim_token)->toBeNull()
-        ->and($processed->claimed_at)->toBeNull()
-        ->and(AgentRun::query()->where('recovery_incident_id', $incident->id)->exists())->toBeFalse()
+    expect($incident->status)->toBe(RecoveryIncidentStatus::Detected)
+        ->and($incident->attempt_count)->toBe(0)
+        ->and($incident->claim_token)->toBeNull()
+        ->and($incident->claimed_at)->toBeNull()
+        ->and($incident->recoveryRuns()->exists())->toBeFalse()
         ->and($project->auditEvents()->where('event_type', 'recovery.fix_committed')->exists())->toBeFalse()
         ->and($project->auditEvents()->where('event_type', 'recovery.recovered')->exists())->toBeFalse();
 });
