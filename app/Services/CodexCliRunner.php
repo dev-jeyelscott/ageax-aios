@@ -144,8 +144,8 @@ class CodexCliRunner
         // provider cannot inspect or mutate a managed project repository. Codex otherwise
         // rejects that intentional non-Git workspace before it can process the advisory.
         if (
-            $agent?->getRawOriginal('role')
-            === AgentRole::KnowledgeArchitect->value
+            $agent !== null
+            && $agent->getAttribute('role') === AgentRole::KnowledgeArchitect
         ) {
             $command[] = '--skip-git-repo-check';
         }
