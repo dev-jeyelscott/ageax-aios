@@ -21,6 +21,10 @@ Write the latest uploaded roadmap to Planning/Roadmap Upload.md immediately. Aft
 
 New normal Coder work requires a clean Git index and working tree. TaskCommitter stages only the expected task files, rejects unexpected staged files, verifies the staged set before commit, and never uses stash, reset, clean, or broad staging to hide unrelated changes. Recovery may continue a dirty task-owned diff only when it remains tied to the persisted attempt base.
 
+## Explicit verification test paths are planning inputs
+
+When a Task verification command names a concrete `tests/*.php` file, validate that it resolves to a regular file inside the managed project during deterministic planning preflight. A missing target is a verification-command planning defect and must go through PM revision before Coder execution.
+
 ## Reviewer operational failures never reject implementations
 
 Only a validated Reviewer changes_required decision with actionable findings may transition a task to changes_required. Reviewer process, parsing, timeout, or stale-worker failures retain the completed implementation, record durable failure evidence, and retry review until the bounded limit blocks for operator intervention.

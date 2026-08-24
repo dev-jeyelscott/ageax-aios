@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Actions\ConsumeAgentHandoffs;
 use App\AgentHarness as AgentHarnessIdentifier;
 use App\AgentRole;
 use App\AgentRunStatus;
@@ -16,19 +17,25 @@ use Throwable;
 /**
  * AIOS-owned execution gate shared by provider harnesses.
  *
- * Normal PM/Coder/Reviewer/Ticket-triage execution creates the durable AgentRun before the
- * provider harness is invoked, so those paths always pass through Context Budget evaluation.
- * Raw harness calls without a matching AgentRun remain a narrow provider-boundary compatibility
- * path for harness capability/adapter verification and do not masquerade as AIOS workflow runs.
+ * Normal managed execution creates the durable AgentRun before the provider harness is invoked.
+ * Raw calls without a matching AgentRun remain only the existing provider-adapter compatibility path.
  */
 final readonly class ContextBudgetedAgentHarness
 {
+    /**
+     * Inject deterministic context, handoff, budget, consumption, and audit boundaries.
+     */
     public function __construct(
         private ContextBudgetGuard $guard,
+        private AgentContextAssembler $contextAssembler,
+        private AgentHandoffContextSelector $handoffs,
+        private ConsumeAgentHandoffs $consumeHandoffs,
         private AuditLogger $audit,
     ) {}
 
     /**
+     * Select handoffs, budget the final context, consume delivered evidence, then dispatch the provider.
+     *
      * @param  Closure(string, ?Closure, ?Closure): NormalizedExecutionResult  $provider
      */
     public function execute(
@@ -63,28 +70,56 @@ final readonly class ContextBudgetedAgentHarness
         }
 
         try {
-            $context = $this->guard->contextFromPrompt(
-                $prompt,
-            );
-
-            $capacity = $harness
-                ->capabilities()
-                ->resolveContextCapacity(
-                    $agent,
-                    $harness->identifier(),
+            $context =
+                $this->guard->contextFromPrompt(
+                    $prompt,
                 );
 
-            $recoverySource = $this->recoverySource(
-                $run,
-            );
+            $recoverySource =
+                $this->recoverySource($run);
+
+            $handoffSelection =
+                $this->handoffs->select(
+                    $run,
+                    $recoverySource,
+                );
+
+            if (
+                $handoffSelection['entries']
+                !== []
+            ) {
+                $context =
+                    $this->injectHandoffContext(
+                        $context,
+                        $handoffSelection[
+                            'entries'
+                        ],
+                    );
+
+                $prompt =
+                    $this->guard
+                        ->promptWithContext(
+                            $prompt,
+                            $context,
+                        );
+            }
+
+            $capacity =
+                $harness
+                    ->capabilities()
+                    ->resolveContextCapacity(
+                        $agent,
+                        $harness->identifier(),
+                    );
 
             $persistedPolicy = null;
 
             if ($recoverySource !== null) {
-                $snapshot = $this->arrayAttribute(
-                    $recoverySource,
-                    'context_budget_snapshot',
-                );
+                $snapshot =
+                    $this->arrayAttribute(
+                        $recoverySource,
+                        'context_budget_snapshot',
+                    );
 
                 if ($snapshot === null) {
                     throw new LogicException(
@@ -92,21 +127,54 @@ final readonly class ContextBudgetedAgentHarness
                     );
                 }
 
-                $capacity = $this->capacityFromSnapshot(
-                    $snapshot,
-                    $harness->identifier(),
-                );
+                $capacity =
+                    $this->capacityFromSnapshot(
+                        $snapshot,
+                        $harness->identifier(),
+                    );
 
-                $persistedPolicy = $snapshot;
+                $persistedPolicy =
+                    $snapshot;
             }
 
-            $decision = $this->guard->evaluate(
-                $this->role($run),
-                $prompt,
-                $context,
-                $capacity,
-                $persistedPolicy,
-            );
+            $decision =
+                $this->guard->evaluate(
+                    $this->role($run),
+                    $prompt,
+                    $context,
+                    $capacity,
+                    $persistedPolicy,
+                );
+
+            $finalContext =
+                $decision->context;
+
+            if ($finalContext === null) {
+                throw new LogicException(
+                    'Context Budget approval did not retain the final assembled Agent context.',
+                );
+            }
+
+            if (
+                $this->handoffs
+                    ->idsFromContext(
+                        $finalContext,
+                    )
+                    !== $handoffSelection[
+                        'handoff_ids'
+                    ]
+                || $this->handoffs
+                    ->contentHashesFromContext(
+                        $finalContext,
+                    )
+                    !== $handoffSelection[
+                        'content_hashes'
+                    ]
+            ) {
+                throw new LogicException(
+                    'Final Context Budget output changed required Agent handoff evidence.',
+                );
+            }
         } catch (Throwable $throwable) {
             $this->audit->record(
                 'context_budget.blocked',
@@ -121,7 +189,8 @@ final readonly class ContextBudgetedAgentHarness
 
             return $this->failure(
                 $harness->identifier(),
-                'Context Budget preflight failed safely: '.$throwable->getMessage(),
+                'Context Budget preflight failed safely: '
+                    .$throwable->getMessage(),
                 'context_budget_preflight_failed',
             );
         }
@@ -130,16 +199,30 @@ final readonly class ContextBudgetedAgentHarness
             ...$decision->evidence,
             'recovery_snapshot_reused' => $recoverySource !== null,
             'recovery_snapshot_source_run_id' => $recoverySource?->id,
+            'agent_handoff_ids' => $handoffSelection[
+                    'handoff_ids'
+                ],
+            'agent_handoff_pending_ids' => $handoffSelection[
+                    'pending_handoff_ids'
+                ],
+            'agent_handoff_content_hashes' => $handoffSelection[
+                    'content_hashes'
+                ],
+            'agent_handoff_replay_source_agent_run_id' => $handoffSelection[
+                    'replay_source_agent_run_id'
+                ],
         ];
-
-        $finalContext = $decision->context;
 
         $run->update([
             'prompt_hash' => $evidence['final_prompt_hash'],
-            'configuration_snapshot' => $finalContext?->configurationSnapshot(),
-            'context_schema_version' => $finalContext?->contextSchemaVersion,
-            'context_cost_estimate' => $finalContext?->contextCostEstimate,
-            'context_cost_schema_version' => $finalContext?->contextCostSchemaVersion,
+            'configuration_snapshot' => $finalContext
+                ->configurationSnapshot(),
+            'context_schema_version' => $finalContext
+                ->contextSchemaVersion,
+            'context_cost_estimate' => $finalContext
+                ->contextCostEstimate,
+            'context_cost_schema_version' => $finalContext
+                ->contextCostSchemaVersion,
             'context_budget_snapshot' => $evidence,
             'context_budget_schema_version' => ContextBudgetPolicy::SchemaVersion,
         ]);
@@ -160,6 +243,42 @@ final readonly class ContextBudgetedAgentHarness
             );
         }
 
+        try {
+            $this->consumeHandoffs->handle(
+                $run->refresh(),
+                $handoffSelection[
+                    'pending_handoff_ids'
+                ],
+                (string) $evidence[
+                    'final_context_hash'
+                ],
+                $recoverySource,
+            );
+        } catch (Throwable $throwable) {
+            $this->audit->record(
+                'agent_handoff.consumption_failed',
+                [
+                    'agent_run_id' => $run->id,
+                    'handoff_ids' => $handoffSelection[
+                            'pending_handoff_ids'
+                        ],
+                    'context_hash' => $evidence[
+                            'final_context_hash'
+                        ],
+                    'error' => $throwable->getMessage(),
+                ],
+                $project,
+                $run->task,
+            );
+
+            return $this->failure(
+                $harness->identifier(),
+                'Agent handoff consumption failed safely before provider dispatch: '
+                    .$throwable->getMessage(),
+                'agent_handoff_consumption_failed',
+            );
+        }
+
         return $provider(
             $decision->prompt,
             $onOutput,
@@ -167,6 +286,9 @@ final readonly class ContextBudgetedAgentHarness
         );
     }
 
+    /**
+     * Locate the exact running AgentRun for the original pre-injection prompt.
+     */
     private function currentRun(
         Project $project,
         Agent $agent,
@@ -187,6 +309,9 @@ final readonly class ContextBudgetedAgentHarness
             ->first();
     }
 
+    /**
+     * Resolve the exact interrupted AgentRun whose persisted execution evidence this run recovers.
+     */
     private function recoverySource(
         AgentRun $run,
     ): ?AgentRun {
@@ -216,38 +341,43 @@ final readonly class ContextBudgetedAgentHarness
             return null;
         }
 
-        $candidate = AgentRun::query()
-            ->where(
-                'project_id',
-                $run->project_id,
-            )
-            ->where(
-                'task_id',
-                $run->task_id,
-            )
-            ->where(
-                'role',
-                $run->getRawOriginal('role'),
-            )
-            ->where(
-                'id',
-                '<',
-                $run->id,
-            )
-            ->where(
-                'attempt_number',
-                $sourceAttemptNumber,
-            )
-            ->orderByDesc('id')
-            ->first();
+        $candidate =
+            AgentRun::query()
+                ->where(
+                    'project_id',
+                    $run->project_id,
+                )
+                ->where(
+                    'task_id',
+                    $run->task_id,
+                )
+                ->where(
+                    'role',
+                    $run->getRawOriginal(
+                        'role',
+                    ),
+                )
+                ->where(
+                    'id',
+                    '<',
+                    $run->id,
+                )
+                ->where(
+                    'attempt_number',
+                    $sourceAttemptNumber,
+                )
+                ->orderByDesc('id')
+                ->first();
 
         if ($candidate === null) {
             return null;
         }
 
         if (
-            $candidate->getRawOriginal('status')
-                !== AgentRunStatus::Interrupted->value
+            $candidate->getRawOriginal(
+                'status',
+            )
+            !== AgentRunStatus::Interrupted->value
         ) {
             return null;
         }
@@ -278,10 +408,14 @@ final readonly class ContextBudgetedAgentHarness
         return $candidate;
     }
 
+    /**
+     * Resolve the durable source attempt used by the existing Reviewer and Coder recovery semantics.
+     */
     private function recoverySourceAttemptNumber(
         AgentRun $run,
     ): ?int {
-        $role = $this->role($run);
+        $role =
+            $this->role($run);
 
         if ($role === AgentRole::Reviewer) {
             return (int) $run->attempt_number;
@@ -291,29 +425,32 @@ final readonly class ContextBudgetedAgentHarness
             return null;
         }
 
-        $attempt = TaskAttempt::query()
-            ->where(
-                'task_id',
-                $run->task_id,
-            )
-            ->where(
-                'number',
-                $run->attempt_number,
-            )
-            ->first();
+        $attempt =
+            TaskAttempt::query()
+                ->where(
+                    'task_id',
+                    $run->task_id,
+                )
+                ->where(
+                    'number',
+                    $run->attempt_number,
+                )
+                ->first();
 
-        $rawValidationResults = $attempt?->getRawOriginal(
-            'validation_results',
-        );
+        $rawValidationResults =
+            $attempt?->getRawOriginal(
+                'validation_results',
+            );
 
         if ($rawValidationResults === null) {
             return null;
         }
 
-        $validationResults = json_decode(
-            $rawValidationResults,
-            true,
-        );
+        $validationResults =
+            json_decode(
+                $rawValidationResults,
+                true,
+            );
 
         if (! is_array($validationResults)) {
             return null;
@@ -329,8 +466,11 @@ final readonly class ContextBudgetedAgentHarness
         }
 
         if (
-            ($repositoryPreflight['mode'] ?? null)
-                !== 'recovery'
+            (
+                $repositoryPreflight[
+                    'mode'
+                ] ?? null
+            ) !== 'recovery'
         ) {
             return null;
         }
@@ -352,22 +492,56 @@ final readonly class ContextBudgetedAgentHarness
         return $recoveryAttemptNumber;
     }
 
-    private function role(
-        AgentRun $run,
-    ): AgentRole {
-        return AgentRole::from(
-            (string) $run->getRawOriginal('role'),
+    /**
+     * Add selected handoffs to task context and recompute the deterministic context hash.
+     *
+     * @param  list<array<string, mixed>>  $entries
+     */
+    private function injectHandoffContext(
+        AssembledAgentContext $context,
+        array $entries,
+    ): AssembledAgentContext {
+        $taskContext =
+            $context->taskContext;
+
+        if (
+            array_key_exists(
+                AgentHandoffContextSelector::ContextKey,
+                $taskContext,
+            )
+        ) {
+            throw new LogicException(
+                'Managed prompts cannot supply Agent handoff context outside the AIOS selection boundary.',
+            );
+        }
+
+        $taskContext[
+            AgentHandoffContextSelector::ContextKey
+        ] = $entries;
+
+        return $this->contextAssembler->rebuild(
+            $context,
+            $context->agentSnapshot,
+            $context->skillsSnapshot,
+            $taskContext,
         );
     }
 
     /**
-     * Decode an AgentRun JSON column directly from its persisted database
-     * representation.
-     *
-     * Larastan correctly sees the underlying database value as string|null,
-     * while Eloquent normally converts it to an array through the model cast.
-     * Decoding the durable raw value explicitly keeps the runtime behavior and
-     * static type boundary deterministic.
+     * Resolve the persisted role for one AgentRun.
+     */
+    private function role(
+        AgentRun $run,
+    ): AgentRole {
+        return AgentRole::from(
+            (string) $run->getRawOriginal(
+                'role',
+            ),
+        );
+    }
+
+    /**
+     * Decode one persisted AgentRun JSON attribute.
      *
      * @return array<string, mixed>|null
      */
@@ -375,20 +549,22 @@ final readonly class ContextBudgetedAgentHarness
         AgentRun $run,
         string $attribute,
     ): ?array {
-        $raw = $run->getRawOriginal(
-            $attribute,
-        );
+        $raw =
+            $run->getRawOriginal(
+                $attribute,
+            );
 
         if ($raw === null) {
             return null;
         }
 
-        $decoded = json_decode(
-            (string) $raw,
-            true,
-            512,
-            JSON_THROW_ON_ERROR,
-        );
+        $decoded =
+            json_decode(
+                (string) $raw,
+                true,
+                512,
+                JSON_THROW_ON_ERROR,
+            );
 
         if (! is_array($decoded)) {
             throw new LogicException(
@@ -399,21 +575,14 @@ final readonly class ContextBudgetedAgentHarness
             );
         }
 
-        /** @var array<string, mixed> $decoded */
         return $decoded;
     }
 
     /**
+     * Restore provider-capacity evidence from the interrupted source snapshot.
+     *
      * @param  array<string, mixed>  $snapshot
-     * @return array{
-     *     harness: string,
-     *     model: string|null,
-     *     resolved_capacity_tokens: int,
-     *     max_output_tokens: int|null,
-     *     capacity_source: string,
-     *     capacity_source_version: int,
-     *     fallback: bool
-     * }
+     * @return array<string, mixed>
      */
     private function capacityFromSnapshot(
         array $snapshot,
@@ -424,8 +593,7 @@ final readonly class ContextBudgetedAgentHarness
                 ?? $identifier->value;
 
         $model =
-            $snapshot['model']
-                ?? null;
+            $snapshot['model'] ?? null;
 
         $resolvedCapacity =
             $snapshot[
@@ -527,6 +695,8 @@ final readonly class ContextBudgetedAgentHarness
     }
 
     /**
+     * Record append-only Context Budget audit evidence.
+     *
      * @param  array<string, mixed>  $evidence
      */
     private function recordEvidence(
@@ -575,8 +745,11 @@ final readonly class ContextBudgetedAgentHarness
         );
 
         if (
-            ($evidence['warning_reason'] ?? null)
-                !== null
+            (
+                $evidence[
+                    'warning_reason'
+                ] ?? null
+            ) !== null
         ) {
             $this->audit->record(
                 'context_budget.warning',
@@ -592,8 +765,11 @@ final readonly class ContextBudgetedAgentHarness
         }
 
         if (
-            ($evidence['reductions'] ?? [])
-                !== []
+            (
+                $evidence[
+                    'reductions'
+                ] ?? []
+            ) !== []
         ) {
             $this->audit->record(
                 'context_budget.reduced',
@@ -609,8 +785,11 @@ final readonly class ContextBudgetedAgentHarness
         }
 
         if (
-            ($evidence['block_reason'] ?? null)
-                !== null
+            (
+                $evidence[
+                    'block_reason'
+                ] ?? null
+            ) !== null
         ) {
             $this->audit->record(
                 'context_budget.blocked',
@@ -626,6 +805,9 @@ final readonly class ContextBudgetedAgentHarness
         }
     }
 
+    /**
+     * Identify AIOS-managed context envelopes.
+     */
     private function looksLikeManagedPrompt(
         string $prompt,
     ): bool {
@@ -639,6 +821,9 @@ final readonly class ContextBudgetedAgentHarness
             ) === 1;
     }
 
+    /**
+     * Return a normalized failure without dispatching the provider.
+     */
     private function failure(
         AgentHarnessIdentifier $identifier,
         string $message,

@@ -40,6 +40,40 @@ test('unsafe planned verification is blocked and queued once for PM revision bef
         ->and(TaskPlanningEscalation::query()->where('task_id', $task->id)->count())->toBe(1);
 });
 
+test('a planned verification command cannot reference a missing test file', function () {
+    $path = sys_get_temp_dir().'/aios-missing-verification-file-'.fake()->uuid();
+    File::ensureDirectoryExists($path.'/tests/Feature');
+    $project = Project::create(['name' => 'Missing verification file project', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = Task::create([
+        'project_id' => $project->id, 'key' => 'TASK-001', 'position' => 1, 'title' => 'Repair verification command',
+        'objective' => 'Use a test file that exists.', 'acceptance_criteria' => ['Verification can run.'],
+        'verification_commands' => ['php artisan test --compact tests/Feature/MissingTest.php'],
+        'implementation_prompt' => 'Do not begin implementation.', 'context_capsule' => [], 'status' => TaskStatus::Queued,
+    ]);
+
+    expect(app(TaskPlanningDefectPreflight::class)->evaluate($task))
+        ->toMatchArray([
+            'type' => 'missing_verification_file',
+            'evidence' => ['command' => 'php artisan test --compact tests/Feature/MissingTest.php', 'path' => 'tests/Feature/MissingTest.php'],
+            'allowed_fields' => ['verification_commands'],
+        ]);
+});
+
+test('a planned verification command may reference an existing test file', function () {
+    $path = sys_get_temp_dir().'/aios-existing-verification-file-'.fake()->uuid();
+    File::ensureDirectoryExists($path.'/tests/Feature');
+    File::put($path.'/tests/Feature/ExistingTest.php', '<?php');
+    $project = Project::create(['name' => 'Existing verification file project', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = Task::create([
+        'project_id' => $project->id, 'key' => 'TASK-001', 'position' => 1, 'title' => 'Keep verification command',
+        'objective' => 'Use a test file that exists.', 'acceptance_criteria' => ['Verification can run.'],
+        'verification_commands' => ['php artisan test --compact tests/Feature/ExistingTest.php'],
+        'implementation_prompt' => 'Do not begin implementation.', 'context_capsule' => [], 'status' => TaskStatus::Queued,
+    ]);
+
+    expect(app(TaskPlanningDefectPreflight::class)->evaluate($task))->toBeNull();
+});
+
 test('an active planning revision prevents the Coder from claiming the task', function () {
     $project = Project::create(['name' => 'Planning revision project', 'path' => sys_get_temp_dir(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = Task::create([

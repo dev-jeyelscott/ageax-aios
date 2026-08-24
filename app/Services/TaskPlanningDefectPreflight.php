@@ -13,7 +13,10 @@ class TaskPlanningDefectPreflight
         'verification_commands', 'implementation_prompt', 'dependencies',
     ];
 
-    public function __construct(private TaskValidator $validator) {}
+    public function __construct(
+        private TaskValidator $validator,
+        private WorkspacePathResolver $paths,
+    ) {}
 
     /** @return array{type: string, fingerprint: string, evidence: array<string, mixed>, allowed_fields: list<string>}|null */
     public function evaluate(Task $task): ?array
@@ -22,6 +25,10 @@ class TaskPlanningDefectPreflight
         $commands = $this->stringList($rawCommands);
         if ($commands === null || ! $this->verificationCommandsAreSafe($commands)) {
             return $this->defect('unsafe_verification_commands', ['verification_commands' => $rawCommands], ['verification_commands']);
+        }
+
+        if (($missingVerificationFile = $this->missingVerificationFile($task, $commands)) !== null) {
+            return $this->defect('missing_verification_file', $missingVerificationFile, ['verification_commands']);
         }
 
         $paths = $task->relevant_paths ?? [];
@@ -63,6 +70,36 @@ class TaskPlanningDefectPreflight
     private function verificationCommandsAreSafe(array $commands): bool
     {
         return $commands === [] || $this->validator->verificationCommandsAreSafe($commands);
+    }
+
+    /**
+     * @param  list<string>  $commands
+     * @return array{command: string, path: string}|null
+     */
+    private function missingVerificationFile(Task $task, array $commands): ?array
+    {
+        foreach ($commands as $command) {
+            foreach (preg_split('/\s+/', trim($command)) ?: [] as $token) {
+                if (! Str::startsWith($token, 'tests/') || ! Str::endsWith($token, '.php')) {
+                    continue;
+                }
+
+                $projectPath = rtrim($this->paths->assertProjectPath($task->project->path), DIRECTORY_SEPARATOR);
+                $resolvedProjectPath = realpath($projectPath);
+                if ($resolvedProjectPath === false) {
+                    return ['command' => $command, 'path' => $token];
+                }
+
+                $resolvedFile = realpath($resolvedProjectPath.DIRECTORY_SEPARATOR.$token);
+                if ($resolvedFile === false
+                    || ! Str::startsWith($resolvedFile, $resolvedProjectPath.DIRECTORY_SEPARATOR)
+                    || ! is_file($resolvedFile)) {
+                    return ['command' => $command, 'path' => $token];
+                }
+            }
+        }
+
+        return null;
     }
 
     /** @return list<string>|null */
