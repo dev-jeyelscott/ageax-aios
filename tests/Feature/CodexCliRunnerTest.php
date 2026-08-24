@@ -1,6 +1,8 @@
 <?php
 
+use App\AgentRole;
 use App\Exceptions\UnsafeProjectPath;
+use App\Models\Agent;
 use App\Models\Project;
 use App\ProjectStatus;
 use App\Services\CodexCliRunner;
@@ -33,6 +35,27 @@ test('runs Codex with an explicitly isolated environment', function () {
         $originalDbPassword === false ? putenv('DB_PASSWORD') : putenv('DB_PASSWORD='.$originalDbPassword);
         $originalApiToken === false ? putenv('AIOS_TEST_API_TOKEN') : putenv('AIOS_TEST_API_TOKEN='.$originalApiToken);
     }
+});
+
+test('allows the Knowledge Architect to run in its AIOS-created non-Git advisory workspace', function () {
+    $agent = Agent::factory()->make([
+        'project_id' => null,
+        'role' => AgentRole::KnowledgeArchitect,
+    ]);
+
+    Process::fake(['*' => Process::result(output: 'completed')]);
+
+    app(CodexCliRunner::class)->runAtPath(
+        sys_get_temp_dir(),
+        'Analyze the supplied advisory evidence.',
+        agent: $agent,
+    );
+
+    Process::assertRan(function (PendingProcess $process): bool {
+        $command = (new ReflectionProperty($process, 'command'))->getValue($process);
+
+        return in_array('--skip-git-repo-check', $command, true);
+    });
 });
 
 test('refuses to run Codex for a persisted project path outside the workspace', function () {
