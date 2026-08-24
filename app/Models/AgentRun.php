@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable(['project_id', 'task_id', 'agent_worker_id', 'recovery_incident_id', 'agent_id', 'worker_instance_id', 'worker_lease_id', 'role', 'harness', 'status', 'attempt_number', 'codex_run_id', 'external_run_id', 'prompt_hash', 'result', 'configuration_snapshot', 'context_schema_version', 'context_cost_estimate', 'context_cost_schema_version', 'context_budget_snapshot', 'context_budget_schema_version', 'commands', 'file_modifications', 'token_usage', 'log_path', 'live_output', 'exit_code', 'started_at', 'finished_at'])]
 /**
@@ -31,6 +32,9 @@ class AgentRun extends Model
     /** @use HasFactory<AgentRunFactory> */
     use HasFactory;
 
+    /**
+     * Cast persisted AgentRun evidence to its durable domain types.
+     */
     protected function casts(): array
     {
         return ['role' => AgentRole::class, 'status' => AgentRunStatus::class, 'result' => 'array', 'configuration_snapshot' => 'array', 'context_cost_estimate' => 'array', 'context_budget_snapshot' => 'array', 'commands' => 'array', 'file_modifications' => 'array', 'started_at' => 'immutable_datetime', 'finished_at' => 'immutable_datetime'];
@@ -67,7 +71,20 @@ class AgentRun extends Model
     }
 
     /**
-     * A run predates immutable configuration snapshots (P2-012) when it has none persisted.
+     * Return every durable handoff produced from this exact execution.
+     *
+     * @return HasMany<AgentHandoff, $this>
+     */
+    public function outgoingHandoffs(): HasMany
+    {
+        return $this->hasMany(
+            AgentHandoff::class,
+            'from_agent_run_id',
+        );
+    }
+
+    /**
+     * A run predates immutable configuration snapshots when it has none persisted.
      */
     public function isLegacyRun(): bool
     {
