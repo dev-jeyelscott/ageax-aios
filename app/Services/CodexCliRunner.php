@@ -143,7 +143,10 @@ class CodexCliRunner
         // Knowledge Architect advisories execute in an AIOS-created empty directory so the
         // provider cannot inspect or mutate a managed project repository. Codex otherwise
         // rejects that intentional non-Git workspace before it can process the advisory.
-        if ($agent?->role === AgentRole::KnowledgeArchitect) {
+        if (
+            $agent?->getRawOriginal('role')
+            === AgentRole::KnowledgeArchitect->value
+        ) {
             $command[] = '--skip-git-repo-check';
         }
 
