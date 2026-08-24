@@ -21,6 +21,8 @@ function taskContractProject(string $name): Project
 {
     $path = sys_get_temp_dir().'/aios-contract-drift-'.fake()->uuid();
     File::ensureDirectoryExists($path);
+    File::ensureDirectoryExists($path.'/tests/Feature');
+    File::put($path.'/tests/Feature/TaskContractDriftGateTest.php', '<?php');
 
     return Project::create([
         'name' => $name,

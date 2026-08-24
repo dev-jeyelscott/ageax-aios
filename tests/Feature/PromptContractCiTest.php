@@ -83,12 +83,20 @@ function promptContractProject(string $name): Project
 {
     $path = sys_get_temp_dir().'/ageax-prompt-contract-'.fake()->uuid();
     File::ensureDirectoryExists($path);
+    File::ensureDirectoryExists($path.'/tests/Feature');
     File::put($path.'/MASTER-PROMPT.md', "# Governance\nAIOS owns durable workflow truth.\n");
     File::put($path.'/AGENTS.md', "# Agents\nAgents remain subordinate to AIOS.\n");
+    File::put($path.'/tests/Feature/PromptContractCiTest.php', '<?php');
     Process::path($path)->run(['git', 'init']);
     Process::path($path)->run(['git', 'config', 'user.email', 'aios@example.test']);
     Process::path($path)->run(['git', 'config', 'user.name', 'AIOS Test']);
-    Process::path($path)->run(['git', 'add', 'MASTER-PROMPT.md', 'AGENTS.md']);
+    Process::path($path)->run([
+        'git',
+        'add',
+        'MASTER-PROMPT.md',
+        'AGENTS.md',
+        'tests/Feature/PromptContractCiTest.php',
+    ]);
     Process::path($path)->run(['git', 'commit', '-m', 'Baseline']);
 
     return Project::create([

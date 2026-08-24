@@ -28,6 +28,10 @@ pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
     ->beforeEach(function (): void {
         config()->set('aios.workspace_root', sys_get_temp_dir());
+        config()->set(
+            'aios.obsidian_vault_path',
+            sys_get_temp_dir().'/ageax-aios-obsidian-'.fake()->uuid(),
+        );
 
         /**
          * DatabaseProtectionGuard requires a verified, freshly created recovery point before any
