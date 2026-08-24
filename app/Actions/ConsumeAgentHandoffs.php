@@ -31,10 +31,9 @@ final class ConsumeAgentHandoffs
         AgentRun $targetRun,
         array $handoffIds,
         string $contextHash,
+        ?AgentRun $recoverySource = null,
     ): void {
-        $handoffIds = $this->normalizedIds(
-            $handoffIds,
-        );
+        $handoffIds = $this->normalizedIds($handoffIds);
 
         if ($handoffIds === []) {
             return;
@@ -51,6 +50,7 @@ final class ConsumeAgentHandoffs
                 $targetRun,
                 $handoffIds,
                 $contextHash,
+                $recoverySource,
             ): void {
                 $run = AgentRun::query()
                     ->whereKey($targetRun->id)
@@ -58,8 +58,7 @@ final class ConsumeAgentHandoffs
                     ->firstOrFail();
 
                 if (
-                    $run->getRawOriginal('status')
-                        !== AgentRunStatus::Running->value
+                    $run->getRawOriginal('status') !== AgentRunStatus::Running->value
                     || $run->task_id === null
                 ) {
                     throw new LogicException(
@@ -72,18 +71,31 @@ final class ConsumeAgentHandoffs
                     ->lockForUpdate()
                     ->firstOrFail();
 
+                if ((int) $task->project_id !== (int) $run->project_id) {
+                    throw new LogicException(
+                        'Agent handoff consumption cannot cross the target AgentRun project boundary.',
+                    );
+                }
+
                 $run->setRelation('task', $task);
+
+                $lockedRecoverySource = null;
+
+                if ($recoverySource !== null) {
+                    $lockedRecoverySource = AgentRun::query()
+                        ->whereKey($recoverySource->id)
+                        ->lockForUpdate()
+                        ->firstOrFail();
+                }
 
                 $handoffs = AgentHandoff::query()
                     ->whereIn('id', $handoffIds)
+                    ->with('sourceRun')
                     ->orderBy('id')
                     ->lockForUpdate()
                     ->get();
 
-                if (
-                    $handoffs->count()
-                    !== count($handoffIds)
-                ) {
+                if ($handoffs->count() !== count($handoffIds)) {
                     throw new LogicException(
                         'One or more approved Agent handoffs no longer exist at consumption time.',
                     );
@@ -91,11 +103,11 @@ final class ConsumeAgentHandoffs
 
                 foreach ($handoffs as $handoff) {
                     if (
-                        ! $this->selector
-                            ->isEligibleForRun(
-                                $handoff,
-                                $run,
-                            )
+                        ! $this->selector->isConsumableFor(
+                            $handoff,
+                            $run,
+                            $lockedRecoverySource,
+                        )
                     ) {
                         throw new LogicException(
                             "Agent handoff [{$handoff->id}] is no longer eligible for this execution.",
@@ -117,17 +129,16 @@ final class ConsumeAgentHandoffs
                             'agent_handoff_id' => $handoff->id,
                             'source_agent_run_id' => $handoff->from_agent_run_id,
                             'target_agent_run_id' => $run->id,
-                            'from_role' => $handoff->from_role->value,
-                            'to_role' => $handoff->to_role->value,
-                            'handoff_type' => $handoff
-                                ->handoff_type
-                                ->value,
+                            'from_role' => (string) $handoff->getRawOriginal('from_role'),
+                            'to_role' => (string) $handoff->getRawOriginal('to_role'),
+                            'handoff_type' => (string) $handoff->getRawOriginal('handoff_type'),
                             'schema_version' => $handoff->schema_version,
                             'content_hash' => $handoff->content_hash,
                             'project_id' => $run->project_id,
                             'task_id' => $run->task_id,
                             'target_attempt_number' => $run->attempt_number,
                             'context_hash' => $contextHash,
+                            'recovery_source_agent_run_id' => $lockedRecoverySource?->id,
                         ],
                         $run->project,
                         $run->task,
@@ -150,12 +161,21 @@ final class ConsumeAgentHandoffs
         $ids = [];
 
         foreach ($handoffIds as $id) {
-            if (is_int($id) && $id > 0) {
-                $ids[] = $id;
+            if ($id < 1) {
+                throw new LogicException(
+                    'Agent handoff consumption received an invalid handoff id.',
+                );
             }
+
+            if (in_array($id, $ids, true)) {
+                throw new LogicException(
+                    'Agent handoff consumption received duplicate handoff ids.',
+                );
+            }
+
+            $ids[] = $id;
         }
 
-        $ids = array_values(array_unique($ids));
         sort($ids, SORT_NUMERIC);
 
         return $ids;
