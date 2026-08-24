@@ -165,17 +165,14 @@ class CreateAgentHandoff
     /**
      * Prove source-run project, task, role, and completed-execution scope.
      *
+     * AgentRun project scope is mandatory at the database level. Optional Task scope
+     * is independently checked because task_id does not enforce project consistency.
+     *
      * @return array{0: Project, 1: Task|null, 2: AgentRole}
      */
     private function validatedSourceScope(
         AgentRun $run,
     ): array {
-        if ($run->project_id === null) {
-            throw new LogicException(
-                'Agent handoffs require a provable project-scoped source AgentRun.',
-            );
-        }
-
         $project = Project::query()->find(
             (int) $run->project_id,
         );
