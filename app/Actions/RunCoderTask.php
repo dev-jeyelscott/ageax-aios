@@ -130,7 +130,10 @@ class RunCoderTask
             return $this->blockMisconfiguredAgent($task, $exception);
         }
 
-        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
+        $recoveryInstruction = $preflight['mode'] === 'recovery'
+            ? 'AIOS has verified that the current working-tree changes are task-owned recovery state tied to the supplied prior attempt. Inspect and continue from them; do not stop solely because the worktree is dirty. Do not stage or commit; AIOS independently validates and commits only verified task files. '
+            : '';
+        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. {$recoveryInstruction}Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
         $attempt = TaskAttempt::create([
             'task_id' => $task->id,
             'number' => $task->attempts()->max('number') + 1,

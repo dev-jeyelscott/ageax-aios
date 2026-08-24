@@ -8,7 +8,9 @@ use App\Actions\RunReviewerTask;
 use App\Actions\RunTicketTriage;
 use App\AgentHarness as AgentHarnessIdentifier;
 use App\AgentRole;
+use App\AgentRunStatus;
 use App\Models\Agent;
+use App\Models\AgentRun;
 use App\Models\AgentWorker;
 use App\Models\Project;
 use App\Models\Roadmap;
@@ -24,6 +26,7 @@ use App\Services\AssembledAgentContext;
 use App\Services\ContextBudgetGuard;
 use App\Services\HarnessCapabilities;
 use App\Services\NormalizedExecutionResult;
+use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskContractGuard;
 use App\Services\TicketContextCapsuleFactory;
 use App\Services\TicketTriagePolicy;
@@ -372,6 +375,52 @@ test('Coder contract survives both harness selections and self-reported completi
     expect($attempt->validation_results['task_contract']['schema_version'])
         ->toBe(TaskContractGuard::SchemaVersion)
         ->and($task->refresh()->status)->not->toBe(TaskStatus::Done);
+})->with('prompt contract harnesses');
+
+test('Coder recovery prompts identify AIOS-authorized task-owned working-tree changes', function (AgentHarnessIdentifier $identifier) {
+    $project = promptContractProject('Prompt Contract Coder Recovery');
+    $agent = promptContractBind($project, AgentRole::Coder, $identifier);
+    $harness = promptContractHarness($identifier, new NormalizedExecutionResult(
+        exitCode: 1,
+        output: '',
+        errorOutput: 'Prompt captured.',
+    ));
+    $task = promptContractTask($project, TaskStatus::Coding);
+    $baseSha = trim(Process::path($project->path)->run(['git', 'rev-parse', 'HEAD'])->output());
+    File::put($project->path.'/tests/Feature/RecoveredTaskTest.php', '<?php');
+    $context = app(TaskContextCapsuleFactory::class)->make($task, AgentRole::Coder);
+    $contract = app(TaskContractGuard::class)->evidence($task, $context);
+    $interruptedAttempt = TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'base_sha' => $baseSha,
+        'status' => 'interrupted',
+        'validation_results' => ['task_contract' => $contract],
+        'started_at' => now()->subMinute(),
+        'finished_at' => now()->subSeconds(30),
+    ]);
+    $assembled = app(AgentContextAssembler::class)->assemble($agent, AgentRole::Coder, $context);
+    AgentRun::create([
+        'project_id' => $project->id,
+        'task_id' => $task->id,
+        'agent_id' => $agent->id,
+        'role' => AgentRole::Coder,
+        'status' => AgentRunStatus::Interrupted,
+        'attempt_number' => $interruptedAttempt->number,
+        'prompt_hash' => hash('sha256', 'recovery-prompt'),
+        'configuration_snapshot' => $assembled->configurationSnapshot(),
+        'context_schema_version' => $assembled->contextSchemaVersion,
+        'started_at' => now()->subMinute(),
+        'finished_at' => now()->subSeconds(30),
+    ]);
+
+    app(RunCoderTask::class)->handle($task);
+
+    expectPromptClauses($harness->prompts[0], [
+        'AIOS has verified that the current working-tree changes are task-owned recovery state',
+        'do not stop solely because the worktree is dirty',
+        'Do not stage or commit',
+    ]);
 })->with('prompt contract harnesses');
 
 test('Reviewer contract survives both harness selections', function (AgentHarnessIdentifier $identifier) {
