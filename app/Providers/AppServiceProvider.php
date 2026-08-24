@@ -6,6 +6,8 @@ use App\Services\AgentHarnessResolver;
 use App\Services\ClaudeCodeHarness;
 use App\Services\CodexHarness;
 use App\Services\RuntimeCommandContext;
+use App\Services\SpeechToText;
+use App\Services\WhisperCppSpeechToText;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
@@ -30,6 +32,11 @@ class AppServiceProvider extends ServiceProvider
                 $app->make(CodexHarness::class),
                 $app->make(ClaudeCodeHarness::class),
             ]),
+        );
+
+        $this->app->bind(
+            SpeechToText::class,
+            WhisperCppSpeechToText::class,
         );
 
         $this->app->singleton(

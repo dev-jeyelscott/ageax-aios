@@ -40,6 +40,15 @@ return [
     'knowledge_improvement_lookback_days' => (int) env('AIOS_KNOWLEDGE_IMPROVEMENT_LOOKBACK_DAYS', 180),
     'roadmap_scan_interval_hours' => (int) env('AIOS_ROADMAP_SCAN_INTERVAL_HOURS', 24),
 
+    // Local-first speech-to-text adapter. This capability is disabled until an operator explicitly
+    // configures an absolute local whisper.cpp binary and model path. Audio remains non-durable.
+    'voice_stt_enabled' => (bool) env('AIOS_VOICE_STT_ENABLED', false),
+    'voice_stt_binary_path' => env('AIOS_VOICE_STT_BINARY_PATH'),
+    'voice_stt_model_path' => env('AIOS_VOICE_STT_MODEL_PATH'),
+    'voice_stt_timeout_seconds' => (int) env('AIOS_VOICE_STT_TIMEOUT_SECONDS', 120),
+    'voice_stt_max_audio_bytes' => (int) env('AIOS_VOICE_STT_MAX_AUDIO_BYTES', 10485760),
+    'voice_stt_max_duration_seconds' => (int) env('AIOS_VOICE_STT_MAX_DURATION_SECONDS', 60),
+
     // Global Orchestrator bootstrap defaults. These values provision only the configurable
     // advisory Agent identity. They do not schedule, invoke, route, or mutate anything.
     'orchestrator_harness' => env('AIOS_ORCHESTRATOR_HARNESS', 'claude_code'),
