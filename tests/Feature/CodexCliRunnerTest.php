@@ -86,3 +86,21 @@ test('converts an execution timeout into a normalized failure result instead of 
         @unlink($binary);
     }
 });
+
+test('converts an externally signaled process into a normalized failure result instead of throwing', function () {
+    $binary = tempnam(sys_get_temp_dir(), 'aios-codex-signaled-');
+    expect($binary)->not->toBeFalse();
+    file_put_contents($binary, "#!/bin/sh\necho partial-output\nkill -TERM \$\$\nsleep 5\n");
+    chmod($binary, 0700);
+
+    try {
+        config()->set('aios.codex_binary', $binary);
+
+        $result = app(CodexCliRunner::class)->runAtPath(base_path(), 'Implement the task.');
+
+        expect($result['exit_code'])->not->toBe(0)
+            ->and($result['output'])->toContain('partial-output');
+    } finally {
+        @unlink($binary);
+    }
+});

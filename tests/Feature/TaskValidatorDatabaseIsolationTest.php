@@ -182,6 +182,44 @@ test('task validator rejects destructive artisan verification commands without e
     'docker db wipe' => ['docker compose exec -T app php artisan db:wipe', 'db:wipe'],
 ]);
 
+test('task validator reports a signaled verification process as a failed check instead of throwing', function () {
+    $path = sys_get_temp_dir().'/aios-task-validator-'.fake()->uuid();
+    File::ensureDirectoryExists($path);
+    Process::path($path)->run('git init -q');
+    Process::path($path)->run('git -c user.email=test@example.com -c user.name=Test commit -q --allow-empty -m init');
+
+    $script = tempnam(sys_get_temp_dir(), 'aios-task-validator-signaled-').'.php';
+    file_put_contents($script, "<?php\nposix_kill(posix_getpid(), SIGTERM);\nsleep(5);\n");
+
+    $project = Project::create([
+        'name' => 'Task Validator Signal',
+        'path' => $path,
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+    $task = Task::create([
+        'project_id' => $project->id,
+        'key' => 'TASK-001',
+        'position' => 1,
+        'title' => 'Validate safely',
+        'objective' => 'Verify the managed project without leaking AIOS environment state.',
+        'acceptance_criteria' => ['Validation is isolated.'],
+        'verification_commands' => ["php {$script}"],
+        'implementation_prompt' => 'Implement it.',
+        'context_capsule' => [],
+        'status' => TaskStatus::Reviewing,
+    ]);
+
+    try {
+        $validation = app(TaskValidator::class)->validate($task, fn (): bool => true, function (): void {});
+
+        expect($validation['passed'])->toBeFalse()
+            ->and($validation['checks']['task_verification'])->toBeFalse();
+    } finally {
+        @unlink($script);
+    }
+});
+
 test('task validator still executes approved non-destructive verification commands', function (string $verificationCommand, array $expectedTail) {
     $task = taskValidatorSecurityTask([$verificationCommand]);
     Process::fake(['*' => Process::sequence()

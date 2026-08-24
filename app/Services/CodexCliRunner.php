@@ -8,7 +8,9 @@ use App\Models\Project;
 use Closure;
 use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Process\Exceptions\ProcessTimedOutException;
+use Illuminate\Process\ProcessResult as ConcreteProcessResult;
 use Illuminate\Support\Facades\Process;
+use Symfony\Component\Process\Exception\ProcessSignaledException;
 
 class CodexCliRunner
 {
@@ -114,6 +116,8 @@ class CodexCliRunner
                 self::TimeoutExitCode,
                 'Codex execution exceeded the configured AIOS execution timeout.',
             );
+        } catch (ProcessSignaledException $exception) {
+            return $this->result(new ConcreteProcessResult($exception->getProcess()));
         }
     }
 

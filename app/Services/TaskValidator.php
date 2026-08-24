@@ -5,9 +5,11 @@ namespace App\Services;
 use App\Models\Task;
 use Closure;
 use Illuminate\Contracts\Process\ProcessResult;
+use Illuminate\Process\ProcessResult as ConcreteProcessResult;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use JsonException;
+use Symfony\Component\Process\Exception\ProcessSignaledException;
 
 class TaskValidator
 {
@@ -134,29 +136,37 @@ class TaskValidator
             $pending = $pending->timeout($timeout);
         }
 
-        if ($onHeartbeat === null && $onProcessStarted === null) {
-            return $pending->run($this->environment->wrap($command));
-        }
-
-        $process = $pending->start($this->environment->wrap($command));
-        $processId = $process->id();
-
-        if (is_int($processId) && $onProcessStarted !== null) {
-            $onProcessStarted($processId, $command);
-        }
-        $interval = max(1, (int) config('aios.worker_heartbeat_interval_seconds'));
-        $nextHeartbeatAt = now();
-
-        while ($process->running()) {
-            if ($onHeartbeat !== null && now()->gte($nextHeartbeatAt)) {
-                $onHeartbeat();
-                $nextHeartbeatAt = now()->addSeconds($interval);
+        try {
+            if ($onHeartbeat === null && $onProcessStarted === null) {
+                return $pending->run($this->environment->wrap($command));
             }
 
-            usleep(250000);
-        }
+            $process = $pending->start($this->environment->wrap($command));
+            $processId = $process->id();
 
-        return $process->wait();
+            if (is_int($processId) && $onProcessStarted !== null) {
+                $onProcessStarted($processId, $command);
+            }
+            $interval = max(1, (int) config('aios.worker_heartbeat_interval_seconds'));
+            $nextHeartbeatAt = now();
+
+            while ($process->running()) {
+                if ($onHeartbeat !== null && now()->gte($nextHeartbeatAt)) {
+                    $onHeartbeat();
+                    $nextHeartbeatAt = now()->addSeconds($interval);
+                }
+
+                usleep(250000);
+            }
+
+            return $process->wait();
+        } catch (ProcessSignaledException $exception) {
+            // A validation subprocess (e.g. the full CI gate) can be terminated by an external
+            // signal (OS memory pressure, host shutdown) with no defect in the command itself.
+            // Report it as a failed check using the process's own captured output instead of
+            // letting the exception escape and discard an otherwise-successful Coder attempt.
+            return new ConcreteProcessResult($exception->getProcess());
+        }
     }
 
     /** @return array{name: string, passed: bool, verification_identifier: string, exit_code: ?int, summary: ?string} */
