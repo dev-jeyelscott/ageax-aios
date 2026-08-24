@@ -22,6 +22,7 @@ use App\Services\CodexCliRunner;
 use App\Services\DatabaseProtectionGuard;
 use App\Services\NoProgressRetryGuard;
 use App\Services\ProjectGitState;
+use App\Services\StaleWorkerRecovery;
 use App\Services\TaskCommitter;
 use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskContractGuard;
@@ -63,6 +64,7 @@ class RunCoderTask
         private ProjectGitState $git,
         private DatabaseProtectionGuard $databaseProtection,
         private WorkflowBoundaryHandoffRecorder $boundaryHandoffs,
+        private StaleWorkerRecovery $staleRecovery,
     ) {}
 
     /**
@@ -77,6 +79,13 @@ class RunCoderTask
             $projectPath = $this->paths->assertProjectPath($task->project->path);
         } catch (UnsafeProjectPath $exception) {
             return $this->blockUnsafeProjectPath($task, $exception);
+        }
+
+        if ($this->staleRecovery->recoverAbandonedCoderFinalization($task)) {
+            return $task->attempts()
+                ->where('status', 'interrupted')
+                ->latest('number')
+                ->firstOrFail();
         }
 
         // This is intentionally before repository/harness work: unsafe PM-authored contract

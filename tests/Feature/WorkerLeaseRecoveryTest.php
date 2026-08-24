@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\ClaimTask;
+use App\Actions\RunCoderTask;
 use App\AgentRole;
 use App\AgentRunStatus;
 use App\Models\AgentRun;
@@ -13,6 +14,7 @@ use App\Services\CodexCliRunner;
 use App\Services\StaleWorkerRecovery;
 use App\Services\WorkerHeartbeat;
 use App\TaskStatus;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 
 function leasedWorker(Project $project, AgentRole $role = AgentRole::Coder): AgentWorker
@@ -124,6 +126,26 @@ test('a task whose harness finished but was never finalized is recovered even wi
         ->and($task->refresh()->status)->toBe(TaskStatus::Failed)
         ->and($attempt->refresh()->status)->toBe('interrupted')
         ->and($run->refresh()->status)->toBe(AgentRunStatus::Completed)
+        ->and($project->auditEvents()->where('event_type', 'task.recovered')->where('payload->reason', 'abandoned_finalization')->exists())->toBeTrue();
+});
+
+test('a re-entered Coder task recovers an abandoned finalization before dirty-worktree preflight', function () {
+    $path = '/tmp/reentered-coder-'.fake()->uuid();
+    File::ensureDirectoryExists($path);
+    $project = Project::create(['name' => 'Re-entered Coder', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'dirty']);
+    $worker = leasedWorker($project);
+    $task = leasedTask($project, status: TaskStatus::Coding);
+    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'running', 'started_at' => now()->subMinute()]);
+    AgentRun::create(['project_id' => $project->id, 'task_id' => $task->id, 'task_attempt_id' => $attempt->id, 'agent_worker_id' => $worker->id, 'role' => AgentRole::Coder, 'status' => AgentRunStatus::Completed, 'exit_code' => 0, 'prompt_hash' => hash('sha256', 're-entered'), 'started_at' => now()->subMinute(), 'finished_at' => now()->subSeconds(30)]);
+    TaskAttempt::create(['task_id' => $task->id, 'number' => 2, 'status' => 'blocked', 'started_at' => now()->subSeconds(20), 'finished_at' => now()->subSeconds(20)]);
+
+    $recoveredAttempt = app(RunCoderTask::class)->handle($task);
+
+    expect($recoveredAttempt->id)->toBe($attempt->id)
+        ->and($recoveredAttempt->refresh()->status)->toBe('interrupted')
+        ->and($task->refresh()->status)->toBe(TaskStatus::Failed)
+        ->and($task->attempts()->count())->toBe(2)
+        ->and($project->auditEvents()->where('event_type', 'task.blocked_dirty_repository')->exists())->toBeFalse()
         ->and($project->auditEvents()->where('event_type', 'task.recovered')->where('payload->reason', 'abandoned_finalization')->exists())->toBeTrue();
 });
 

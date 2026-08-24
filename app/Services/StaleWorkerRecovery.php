@@ -86,6 +86,15 @@ class StaleWorkerRecovery
     }
 
     /**
+     * Recover one Coder attempt whose harness result was persisted but whose orchestration
+     * finalization did not complete before a later worker reclaimed the task.
+     */
+    public function recoverAbandonedCoderFinalization(Task $task): bool
+    {
+        return $this->recoverAbandonedFinalization($task, AgentRole::Coder);
+    }
+
+    /**
      * Catches executions abandoned by a crashed worker process without going through
      * takeoverExpired(): once a lease expires, the durable aios:work loop's own acquire()
      * (every few seconds) can silently reclaim-and-release that worker slot on its next idle
@@ -303,7 +312,13 @@ class StaleWorkerRecovery
                 return false;
             }
 
-            $attempt = $lockedTask->attempts()->latest('number')->first();
+            $attempt = $lockedTask->attempts()
+                ->when(
+                    $role === AgentRole::Coder,
+                    fn ($query) => $query->where('status', 'running'),
+                )
+                ->latest('number')
+                ->first();
             if ($attempt === null) {
                 return false;
             }
