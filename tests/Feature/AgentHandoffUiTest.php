@@ -32,16 +32,17 @@ function p8004Project(string $name): Project
 }
 
 /**
- * Create one Task whose durable handoff evidence will be inspected.
+ * Create one Task whose durable handoff evidence will be inspected at an explicit project position.
  */
 function p8004Task(
     Project $project,
     string $key,
+    int $position,
 ): Task {
     return Task::create([
         'project_id' => $project->id,
         'key' => $key,
-        'position' => 1,
+        'position' => $position,
         'title' => 'Observe durable Agent handoffs',
         'objective' => 'Expose typed Agent collaboration as workflow evidence.',
         'acceptance_criteria' => [
@@ -145,7 +146,11 @@ test('task detail exposes deterministic project-scoped durable handoff evidence'
     $user = User::factory()->create();
 
     $project = p8004Project('P8-004 Evidence');
-    $task = p8004Task($project, 'P8004-001');
+    $task = p8004Task(
+        $project,
+        'P8004-001',
+        1,
+    );
 
     $coderRun = p8004Run(
         $project,
@@ -183,6 +188,7 @@ test('task detail exposes deterministic project-scoped durable handoff evidence'
         $otherTask = p8004Task(
             $project,
             'P8004-OTHER',
+            2,
         );
 
         p8004ImplementationHandoff(
@@ -202,6 +208,7 @@ test('task detail exposes deterministic project-scoped durable handoff evidence'
         $otherProjectTask = p8004Task(
             $otherProject,
             'P8004-FOREIGN',
+            1,
         );
 
         $otherProjectRun = p8004Run(
