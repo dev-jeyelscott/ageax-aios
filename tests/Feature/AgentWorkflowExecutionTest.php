@@ -531,7 +531,7 @@ test('a coder execution that makes no changes because the task is already implem
         ->and($attempt->validation_results['evidence']['task_commit']['summary'])->toContain('already satisfies this task');
 });
 
-test('a successful Coder run enters validation before deterministic checks execute', function () {
+test('a successful Coder run goes straight to Review with no deterministic validation step', function () {
     $path = '/tmp/aios-validation-state-'.fake()->uuid();
     File::ensureDirectoryExists($path);
     Process::path($path)->run(['git', 'init']);
@@ -547,7 +547,7 @@ test('a successful Coder run enters validation before deterministic checks execu
         'position' => 2,
         'title' => 'Validation state task',
         'objective' => 'Show the deterministic validation state.',
-        'acceptance_criteria' => ['The task enters validation before checks run.'],
+        'acceptance_criteria' => ['The task skips straight to Review.'],
         'implementation_prompt' => 'Validate the existing implementation.',
         'context_capsule' => [],
         'status' => TaskStatus::Coding,
@@ -556,15 +556,7 @@ test('a successful Coder run enters validation before deterministic checks execu
         ->shouldReceive('run')
         ->once()
         ->andReturn(['exit_code' => 0, 'output' => '{"summary":"The feature already exists."}', 'error_output' => '']);
-    mock(TaskValidator::class)
-        ->shouldReceive('validate')
-        ->once()
-        ->withArgs(fn (Task $validatingTask, ?Closure $heartbeat, Closure $onProcessStarted): bool => $validatingTask->refresh()->status === TaskStatus::Validating)
-        ->andReturn([
-            'passed' => true,
-            'checks' => [],
-            'evidence' => [],
-        ]);
+    mock(TaskValidator::class)->shouldNotReceive('validate');
 
     app(RunCoderTask::class)->handle($task);
 

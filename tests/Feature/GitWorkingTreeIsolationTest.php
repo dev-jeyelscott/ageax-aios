@@ -11,7 +11,6 @@ use App\Services\CoderRepositoryGuard;
 use App\Services\CodexCliRunner;
 use App\Services\ProjectGitState;
 use App\Services\TaskCommitter;
-use App\Services\TaskValidator;
 use App\TaskStatus;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
@@ -122,10 +121,6 @@ test('a clean coder attempt stores its base and commits exactly its own files', 
     $task = gitIsolationTask($project);
     $baseSha = $project->git_head_sha;
 
-    mock(TaskValidator::class)
-        ->shouldReceive('validate')
-        ->once()
-        ->andReturn(['passed' => true, 'checks' => ['deterministic_validation' => true]]);
     mock(CodexCliRunner::class)
         ->shouldReceive('run')
         ->once()

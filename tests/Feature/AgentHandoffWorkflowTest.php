@@ -349,26 +349,19 @@ test('failed Coder execution creates no implementation handoff', function (): vo
         ->toBe(0);
 });
 
-test('failed deterministic Coder validation creates no implementation handoff', function (): void {
+test('a failed Coder execution creates no implementation handoff', function (): void {
     $path = p8002GitRepository();
-    $project = p8002Project('P8-002 failed validation', $path);
+    $project = p8002Project('P8-002 failed execution', $path);
     $task = p8002Task($project, TaskStatus::Coding);
 
     mock(CodexCliRunner::class)
         ->shouldReceive('run')
         ->once()
-        ->andReturnUsing(function () use ($path): array {
-            File::put(
-                $path.'/.env.local',
-                "APP_KEY=should-not-land\n",
-            );
-
-            return [
-                'exit_code' => 0,
-                'output' => '{"summary":"Attempted implementation."}',
-                'error_output' => '',
-            ];
-        });
+        ->andReturn([
+            'exit_code' => 1,
+            'output' => '',
+            'error_output' => 'Codex execution failed.',
+        ]);
 
     $attempt = app(RunCoderTask::class)->handle($task);
 

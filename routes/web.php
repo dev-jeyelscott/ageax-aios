@@ -11,12 +11,19 @@ use App\Http\Controllers\SkillController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketEscalationDecisionController;
 use App\Http\Controllers\TicketOperationsController;
+use App\Http\Controllers\VoiceTranscriptionController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'welcome')->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
+
+    Route::post(
+        'voice/transcriptions',
+        VoiceTranscriptionController::class,
+    )->name('voice.transcriptions.store');
+
     Route::resource('projects', ProjectController::class)->only([
         'index',
         'store',

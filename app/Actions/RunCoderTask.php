@@ -29,7 +29,6 @@ use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskContractGuard;
 use App\Services\TaskPlanningDefectPreflight;
 use App\Services\TaskPlanningEscalationWorkflow;
-use App\Services\TaskValidator;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
 use App\Services\WorkflowBoundaryHandoffRecorder;
@@ -54,7 +53,6 @@ class RunCoderTask
         private TaskContractGuard $contracts,
         private TaskPlanningDefectPreflight $planningPreflight,
         private TaskPlanningEscalationWorkflow $planningEscalations,
-        private TaskValidator $validator,
         private ManagedValidationProcessCleanup $validationProcessCleanup,
         private TaskCommitter $committer,
         private TaskWorkflow $workflow,
@@ -174,11 +172,6 @@ class RunCoderTask
                         'process_ids' => $terminatedProcesses,
                     ], $task->project, $task);
                 }
-
-                $task = $this->workflow->transition(
-                    $task,
-                    TaskStatus::Validating,
-                );
             }
 
             $renewLease = $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease);
@@ -198,24 +191,12 @@ class RunCoderTask
             }
 
             $managedProcesses = [];
-            /**
-             * Persist each AIOS-managed validation process so interrupted finalization can clean it safely.
-             */
-            $recordValidationProcess = function (int $pid, array $command) use ($attempt, &$managedProcesses): void {
-                $managedProcesses[] = ['pid' => $pid, 'command' => $command];
-                $attemptData = $attempt->refresh()->toArray();
-                $validationResults = $attemptData['validation_results'] ?? null;
-                $validationResults = is_array($validationResults) ? $validationResults : [];
-
-                $attempt->update([
-                    'validation_results' => [
-                        ...$validationResults,
-                        'managed_processes' => $managedProcesses,
-                    ],
-                ]);
-            };
+            // AIOS no longer re-validates a Coder attempt with its own subprocess gate (secret
+            // scan, forbidden-file check, git diff --check, re-run verification commands): a
+            // successful Coder execution proceeds directly to Review, which independently judges
+            // the change. A non-zero Coder exit code still fails the attempt outright.
             $validation = $execution['exit_code'] === 0
-                ? $this->validator->validate($task, $renewLease, $recordValidationProcess)
+                ? ['passed' => true, 'checks' => [], 'evidence' => []]
                 : ['passed' => false, 'checks' => ['codex_execution' => false]];
             if ($renewLease !== null) {
                 $renewLease();
