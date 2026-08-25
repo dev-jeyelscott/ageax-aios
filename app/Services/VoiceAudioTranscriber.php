@@ -103,7 +103,11 @@ final class VoiceAudioTranscriber
             $mimeType = null;
         }
 
-        if (! self::supportsMimeType($mimeType)) {
+        $extension = is_string($mimeType)
+            ? (self::MIME_EXTENSIONS[$mimeType] ?? null)
+            : null;
+
+        if ($extension === null) {
             throw new RuntimeException(
                 'The uploaded audio sample type is not supported.',
             );
@@ -126,7 +130,7 @@ final class VoiceAudioTranscriber
 
         return [
             'path' => $resolvedSourcePath,
-            'extension' => self::MIME_EXTENSIONS[$mimeType],
+            'extension' => $extension,
         ];
     }
 
