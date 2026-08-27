@@ -6,6 +6,7 @@ import {
     Bot,
     CheckCircle2,
     CircleDot,
+    ClipboardCheck,
     Clock,
     Cpu,
     FileUp,
@@ -20,6 +21,7 @@ import { lazy, Suspense, useState, useSyncExternalStore } from 'react';
 import {
     index,
     requeueRoadmap,
+    requestReconciliation,
     show as showProject,
     showAgentRun,
     showTask,
@@ -122,6 +124,29 @@ type TokenObservation = {
     warning_threshold: number;
 };
 
+type ReconciliationRun = {
+    id: number;
+    status: string;
+    trigger: string;
+    baseline_sha: string | null;
+    evaluated_head_sha: string | null;
+    working_tree_dirty: boolean;
+    started_at: string | null;
+    finished_at: string | null;
+    failure_reason: string | null;
+    summary_counts: {
+        new_functionality: number;
+        changed_functionality: number;
+        removed_functionality: number;
+        documentation_drift: number;
+    } | null;
+};
+
+type Reconciliation = {
+    latest: ReconciliationRun | null;
+    active: boolean;
+};
+
 type Project = {
     id: number;
     name: string;
@@ -142,6 +167,7 @@ type Project = {
     token_observability: Record<string, TokenObservation>;
     harness_usage: Record<string, HarnessUsage>;
     git_evidence: GitEvidence | null;
+    reconciliation: Reconciliation;
     recent_agent_runs: AgentRun[];
     audit_events: {
         id: number;
@@ -906,6 +932,120 @@ function GitValidationOverviewCard({ project }: { project: Project }) {
     );
 }
 
+function ReconciliationOverviewCard({ project }: { project: Project }) {
+    const reconciliation = project.reconciliation;
+    const latest = reconciliation.latest;
+    const status = latest?.status ?? null;
+    const summary = latest?.summary_counts;
+
+    const toneClass: Record<string, string> = {
+        completed: 'border-success/25 bg-success/5 text-success-foreground',
+        skipped_no_change: 'border-primary/20 bg-primary/5 text-primary',
+        failed: 'border-destructive/25 bg-destructive/10 text-destructive-foreground',
+        running: 'border-warning/25 bg-warning/5 text-warning-foreground',
+        queued: 'border-warning/25 bg-warning/5 text-warning-foreground',
+    };
+
+    return (
+        <OverviewCard
+            title="Reconciliation audit"
+            eyebrow="Durable status review"
+            icon={<ClipboardCheck className="size-4" />}
+        >
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <p className="font-mono text-2xs text-muted-foreground uppercase">
+                        Latest run
+                    </p>
+                    <p className="mt-1 truncate text-xs text-foreground">
+                        {latest
+                            ? `${humanize(latest.trigger)} · ${shortSha(latest.evaluated_head_sha)}`
+                            : 'No reconciliation run yet.'}
+                    </p>
+                    {latest && (
+                        <p className="mt-0.5 truncate text-2xs text-muted-foreground">
+                            {latest.finished_at
+                                ? new Date(latest.finished_at).toLocaleString()
+                                : latest.started_at
+                                  ? new Date(latest.started_at).toLocaleString()
+                                  : 'Queued'}
+                        </p>
+                    )}
+                </div>
+                <Badge
+                    variant="outline"
+                    className={`shrink-0 font-mono text-2xs ${
+                        toneClass[status ?? ''] ??
+                        'border-border bg-card text-muted-foreground'
+                    }`}
+                >
+                    {status ? humanize(status) : 'Never run'}
+                </Badge>
+            </div>
+
+            {status === 'failed' && latest?.failure_reason && (
+                <p
+                    className="mt-2 truncate text-2xs text-destructive-foreground"
+                    title={latest.failure_reason}
+                >
+                    {latest.failure_reason}
+                </p>
+            )}
+
+            {summary && (
+                <dl className="mt-3 grid grid-cols-2 gap-2">
+                    {(
+                        [
+                            ['New', summary.new_functionality],
+                            ['Changed', summary.changed_functionality],
+                            ['Removed', summary.removed_functionality],
+                            ['Doc drift', summary.documentation_drift],
+                        ] as const
+                    ).map(([label, value]) => (
+                        <div
+                            key={label}
+                            className="min-w-0 rounded-lg border border-border-subtle bg-foreground/2 px-2 py-2"
+                        >
+                            <dt className="font-mono text-2xs text-muted-foreground uppercase">
+                                {label}
+                            </dt>
+                            <dd className="mt-1 text-xs text-foreground">
+                                {value}
+                            </dd>
+                        </div>
+                    ))}
+                </dl>
+            )}
+
+            {latest?.working_tree_dirty && (
+                <p className="mt-3 text-2xs text-warning-foreground">
+                    Working tree was dirty at evaluation time; uncommitted
+                    changes were excluded from this evidence.
+                </p>
+            )}
+
+            <div className="mt-3">
+                <Form {...requestReconciliation.form(project.id)}>
+                    {({ processing }) => (
+                        <Button
+                            size="sm"
+                            type="submit"
+                            variant="outline"
+                            disabled={processing || reconciliation.active}
+                            className="h-8 border-primary/20 bg-primary/5 text-xs text-primary"
+                        >
+                            <ClipboardCheck className="size-3.5" />
+                            {reconciliation.active
+                                ? 'Reviewing…'
+                                : 'Review project'}
+                        </Button>
+                    )}
+                </Form>
+            </div>
+        </OverviewCard>
+    );
+}
+
 function HarnessUsageOverviewCard({ project }: { project: Project }) {
     const entries = ['claude_code', 'codex']
         .map((harness) => ({
@@ -1304,6 +1444,7 @@ function OverviewDashboard({
                     <CurrentOperationOverviewCard project={project} />
                     <TaskFlowCard project={project} />
                     <GitValidationOverviewCard project={project} />
+                    <ReconciliationOverviewCard project={project} />
                     <HarnessUsageOverviewCard project={project} />
                     <WorkerStateCard project={project} />
                     <RecentSignalsCard project={project} />

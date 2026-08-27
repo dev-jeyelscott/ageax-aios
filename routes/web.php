@@ -108,6 +108,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         [ProjectController::class, 'requeueRoadmap'],
     )->scopeBindings()->name('projects.roadmaps.requeue');
 
+    Route::post(
+        'projects/{project}/reconciliation-runs',
+        [ProjectController::class, 'requestReconciliation'],
+    )->name('projects.reconciliation-runs.store');
+
     Route::get(
         'projects/{project}/tickets',
         [TicketController::class, 'index'],

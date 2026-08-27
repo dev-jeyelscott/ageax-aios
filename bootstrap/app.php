@@ -40,6 +40,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // harness, changes workflow state, or mutates Skills without a later explicit decision.
         $schedule->command('aios:knowledge-improvements:scan')->hourly()->withoutOverlapping();
 
+        // Daily deterministic-first project reconciliation audit. RequestProjectReconciliation
+        // coalesces onto any already-active run per project, so overlap here is a no-op rather
+        // than a duplicate run, and the manual "Review Project" button enters the same path.
+        $schedule->command('aios:reconciliation:scan')->daily()->withoutOverlapping();
+
         // Independent disaster-recovery backup, deliberately unconditional and not gated on any
         // AIOS agent execution: DatabaseProtectionGuard only creates a backup immediately before a
         // protected AIOS-orchestrated execution, so a destructive action taken outside AIOS's own

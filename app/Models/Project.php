@@ -100,4 +100,10 @@ class Project extends Model
     {
         return $this->hasMany(ProjectManagerMessage::class);
     }
+
+    /** @return HasMany<ProjectReconciliationRun, $this> */
+    public function reconciliationRuns(): HasMany
+    {
+        return $this->hasMany(ProjectReconciliationRun::class);
+    }
 }

@@ -7,6 +7,7 @@ use App\Actions\DeleteProject;
 use App\Actions\ProvisionDefaultProjectAgents;
 use App\Actions\RecordProjectManagerMessage;
 use App\Actions\RecordTaskOperatorMessage;
+use App\Actions\RequestProjectReconciliation;
 use App\Actions\RequeueBlockedRoadmap;
 use App\Actions\RequeueBlockedTask;
 use App\Actions\SetProjectStatus;
@@ -23,10 +24,13 @@ use App\Http\Requests\UpdateProjectStatusRequest;
 use App\Models\AgentRun;
 use App\Models\AgentWorker;
 use App\Models\Project;
+use App\Models\ProjectReconciliationRun;
 use App\Models\Roadmap;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use App\Models\User;
+use App\ProjectReconciliationStatus;
+use App\ProjectReconciliationTrigger;
 use App\ProjectStatus;
 use App\Services\AgentHarnessResolver;
 use App\Services\AgentRunRecorder;
@@ -186,6 +190,10 @@ class ProjectController extends Controller
             $this->gitEvidence($project),
         );
         $project->setAttribute(
+            'reconciliation',
+            $this->reconciliationPayload($project),
+        );
+        $project->setAttribute(
             'harness_usage',
             $usage['harnesses'],
         );
@@ -301,6 +309,56 @@ class ProjectController extends Controller
             'validation_results' => is_array($validationResults)
                 ? $validationResults
                 : null,
+        ];
+    }
+
+    /**
+     * @return array{
+     *     latest: array{
+     *         id: int,
+     *         status: string,
+     *         trigger: string,
+     *         baseline_sha: ?string,
+     *         evaluated_head_sha: ?string,
+     *         working_tree_dirty: bool,
+     *         started_at: ?string,
+     *         finished_at: ?string,
+     *         failure_reason: ?string,
+     *         summary_counts: ?array<string, int>
+     *     }|null,
+     *     active: bool
+     * }
+     */
+    private function reconciliationPayload(Project $project): array
+    {
+        $run = $project->reconciliationRuns()->latest('id')->first();
+
+        if ($run === null) {
+            return ['latest' => null, 'active' => false];
+        }
+
+        $status = (string) $run->getRawOriginal('status');
+        $result = $run->getAttribute('result');
+
+        return [
+            'latest' => [
+                'id' => $run->id,
+                'status' => $status,
+                'trigger' => (string) $run->getRawOriginal('trigger'),
+                'baseline_sha' => $run->baseline_sha,
+                'evaluated_head_sha' => $run->evaluated_head_sha,
+                'working_tree_dirty' => (bool) $run->working_tree_dirty,
+                'started_at' => $this->serializeDateAttribute($run, 'started_at'),
+                'finished_at' => $this->serializeDateAttribute($run, 'finished_at'),
+                'failure_reason' => $run->failure_reason,
+                'summary_counts' => is_array($result) ? [
+                    'new_functionality' => count($result['new_functionality'] ?? []),
+                    'changed_functionality' => count($result['changed_functionality'] ?? []),
+                    'removed_functionality' => count($result['removed_functionality'] ?? []),
+                    'documentation_drift' => count($result['documentation_drift'] ?? []),
+                ] : null,
+            ],
+            'active' => in_array($status, [ProjectReconciliationStatus::Queued->value, ProjectReconciliationStatus::Running->value], true),
         ];
     }
 
@@ -780,7 +838,7 @@ class ProjectController extends Controller
      * Resolve one Eloquent date cast through a dynamic attribute boundary with an explicit runtime type.
      */
     private function dateAttribute(
-        AgentRun|AgentWorker|Task $model,
+        AgentRun|AgentWorker|ProjectReconciliationRun|Task $model,
         string $attribute,
     ): ?CarbonInterface {
         $value = $model->getAttribute($attribute);
@@ -792,7 +850,7 @@ class ProjectController extends Controller
      * Serialize one cast date attribute for the Inertia project payload.
      */
     private function serializeDateAttribute(
-        AgentRun|AgentWorker|Task $model,
+        AgentRun|AgentWorker|ProjectReconciliationRun|Task $model,
         string $attribute,
     ): ?string {
         return $this->dateAttribute($model, $attribute)?->toISOString();
@@ -1101,6 +1159,19 @@ class ProjectController extends Controller
         abort_unless($roadmap->project_id === $project->id, 404);
 
         $requeueBlockedRoadmap->handle($roadmap);
+
+        return to_route('projects.show', $project);
+    }
+
+    public function requestReconciliation(
+        Request $request,
+        Project $project,
+        RequestProjectReconciliation $reconciliation,
+    ): RedirectResponse {
+        /** @var User $user */
+        $user = $request->user();
+
+        $reconciliation->handle($project, ProjectReconciliationTrigger::Manual, $user);
 
         return to_route('projects.show', $project);
     }
