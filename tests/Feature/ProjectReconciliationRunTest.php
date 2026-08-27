@@ -90,6 +90,27 @@ test('a first reconciliation run establishes the baseline and persists a complet
         ->and($agentRun->project_id)->toBe($project->id);
 });
 
+test('a reconciliation run persists mechanical topology evidence and resynchronizes its manifest', function (): void {
+    $project = reconciliationGitProject();
+    $vault = sys_get_temp_dir().'/ageax-aios-reconciliation-vault-'.fake()->uuid();
+    File::ensureDirectoryExists($vault.'/Projects/reconciliation/Roadmaps');
+    File::put($vault.'/Projects/reconciliation/Roadmaps/Latest Upload.md', '# Roadmap');
+    config()->set('aios.obsidian_vault_path', $vault);
+    bindReconciliationHarness(['exit_code' => 0, 'output' => json_encode(validReconciliationOutput(), JSON_THROW_ON_ERROR), 'error_output' => '']);
+
+    $run = reconciliationQueuedRun($project);
+    app(RunProjectReconciliation::class)->handle($run);
+    $run->refresh();
+
+    $topologyAudit = $project->auditEvents()->where('event_type', 'reconciliation.topology_synchronized')->first();
+
+    expect($run->mechanical_result['created'])->toContain('index.md', 'Roadmaps/index.md')
+        ->and($project->knowledgeSourceManifests()->where('source_reference', 'index.md')->exists())->toBeTrue()
+        ->and($topologyAudit?->payload['created'])->toContain('index.md', 'Roadmaps/index.md');
+
+    File::deleteDirectory($vault);
+});
+
 test('a second run with nothing changed is skipped without invoking the harness again', function () {
     $project = reconciliationGitProject();
     bindReconciliationHarness(['exit_code' => 0, 'output' => json_encode(validReconciliationOutput(), JSON_THROW_ON_ERROR), 'error_output' => '']);

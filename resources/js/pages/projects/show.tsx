@@ -140,6 +140,11 @@ type ReconciliationRun = {
         removed_functionality: number;
         documentation_drift: number;
     } | null;
+    mechanical_result: {
+        created: string[];
+        changed: { path: string; sections: string[] }[];
+        unchanged: string[];
+    } | null;
 };
 
 type Reconciliation = {
@@ -937,6 +942,10 @@ function ReconciliationOverviewCard({ project }: { project: Project }) {
     const latest = reconciliation.latest;
     const status = latest?.status ?? null;
     const summary = latest?.summary_counts;
+    const topologyChanges = latest?.mechanical_result
+        ? latest.mechanical_result.created.length +
+          latest.mechanical_result.changed.length
+        : null;
 
     const toneClass: Record<string, string> = {
         completed: 'border-success/25 bg-success/5 text-success-foreground',
@@ -1015,6 +1024,13 @@ function ReconciliationOverviewCard({ project }: { project: Project }) {
                         </div>
                     ))}
                 </dl>
+            )}
+
+            {topologyChanges !== null && (
+                <p className="mt-3 text-2xs text-muted-foreground">
+                    Obsidian navigation: {topologyChanges} file
+                    {topologyChanges === 1 ? '' : 's'} created or updated.
+                </p>
             )}
 
             {latest?.working_tree_dirty && (

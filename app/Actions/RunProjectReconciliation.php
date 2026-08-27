@@ -16,6 +16,7 @@ use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use App\Services\CodexCliRunner;
 use App\Services\DatabaseProtectionGuard;
+use App\Services\ObsidianKnowledgeTopologySynchronizer;
 use App\Services\ProjectReconciliationSnapshotBuilder;
 use App\Services\StructuredResultParser;
 use App\Services\WorkspacePathResolver;
@@ -36,6 +37,7 @@ class RunProjectReconciliation
         private StructuredResultParser $parser,
         private RecordProjectReconciliationResult $results,
         private ProjectReconciliationSnapshotBuilder $snapshots,
+        private ObsidianKnowledgeTopologySynchronizer $topology,
         private WorkspacePathResolver $paths,
         private Filesystem $files,
         private DatabaseProtectionGuard $databaseProtection,
@@ -52,6 +54,22 @@ class RunProjectReconciliation
 
         $project = $run->project;
         $this->paths->assertProjectPath($project->path);
+
+        try {
+            $mechanicalResult = $this->topology->sync($project);
+            $run->update(['mechanical_result' => $mechanicalResult]);
+            $this->audit->record('reconciliation.topology_synchronized', [
+                'reconciliation_run_id' => $run->id,
+                'created_count' => count($mechanicalResult['created']),
+                'changed_count' => count($mechanicalResult['changed']),
+                'created' => $mechanicalResult['created'],
+                'changed' => $mechanicalResult['changed'],
+            ], $project);
+        } catch (Throwable $throwable) {
+            $this->fail($run, 'Obsidian topology synchronization failed: '.$throwable->getMessage());
+
+            return;
+        }
 
         $baselineRun = ProjectReconciliationRun::query()
             ->whereBelongsTo($project)

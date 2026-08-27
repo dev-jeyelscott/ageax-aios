@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['project_id', 'requested_by_user_id', 'agent_run_id', 'trigger', 'status', 'baseline_sha', 'evaluated_head_sha', 'snapshot_hash', 'working_tree_dirty', 'result', 'failure_reason', 'started_at', 'finished_at'])]
+#[Fillable(['project_id', 'requested_by_user_id', 'agent_run_id', 'trigger', 'status', 'baseline_sha', 'evaluated_head_sha', 'snapshot_hash', 'working_tree_dirty', 'result', 'mechanical_result', 'failure_reason', 'started_at', 'finished_at'])]
 /**
  * @property ProjectReconciliationTrigger $trigger
  * @property ProjectReconciliationStatus $status
@@ -26,7 +26,7 @@ class ProjectReconciliationRun extends Model
 
     protected function casts(): array
     {
-        return ['trigger' => ProjectReconciliationTrigger::class, 'status' => ProjectReconciliationStatus::class, 'working_tree_dirty' => 'boolean', 'result' => 'array', 'started_at' => 'immutable_datetime', 'finished_at' => 'immutable_datetime'];
+        return ['trigger' => ProjectReconciliationTrigger::class, 'status' => ProjectReconciliationStatus::class, 'working_tree_dirty' => 'boolean', 'result' => 'array', 'mechanical_result' => 'array', 'started_at' => 'immutable_datetime', 'finished_at' => 'immutable_datetime'];
     }
 
     /** @return BelongsTo<Project, $this> */

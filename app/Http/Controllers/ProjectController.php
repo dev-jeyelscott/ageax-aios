@@ -339,6 +339,7 @@ class ProjectController extends Controller
 
         $status = (string) $run->getRawOriginal('status');
         $result = $run->getAttribute('result');
+        $mechanicalResult = $run->getAttribute('mechanical_result');
 
         return [
             'latest' => [
@@ -351,6 +352,7 @@ class ProjectController extends Controller
                 'started_at' => $this->serializeDateAttribute($run, 'started_at'),
                 'finished_at' => $this->serializeDateAttribute($run, 'finished_at'),
                 'failure_reason' => $run->failure_reason,
+                'mechanical_result' => is_array($mechanicalResult) ? $mechanicalResult : null,
                 'summary_counts' => is_array($result) ? [
                     'new_functionality' => count($result['new_functionality'] ?? []),
                     'changed_functionality' => count($result['changed_functionality'] ?? []),
