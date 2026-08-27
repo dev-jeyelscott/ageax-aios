@@ -42,10 +42,27 @@ test('the project page exposes the latest completed reconciliation run with summ
         'result' => [
             'project_status' => 'Healthy',
             'functionality_summary' => 'Everything works.',
-            'new_functionality' => ['Feature A'],
-            'changed_functionality' => [],
-            'removed_functionality' => [],
-            'documentation_drift' => ['README is stale.'],
+            'functionality_delta' => [
+                'unchanged' => [],
+                'added' => [['summary' => 'Feature A', 'evidence_paths' => [], 'evidence_shas' => []]],
+                'changed' => [],
+                'removed' => [],
+                'uncertain' => [],
+            ],
+            'documentation_findings' => [[
+                'target_source' => 'README.md',
+                'target_category' => 'documentation',
+                'evidence_paths' => ['app/Example.php'],
+                'evidence_shas' => ['abc123'],
+                'observed_implementation' => 'Current behavior.',
+                'documented_claim' => 'Old behavior.',
+                'reason_for_drift' => 'The implementation changed.',
+                'proposed_alignment' => 'Update the document.',
+                'confidence' => 1,
+                'deterministic' => true,
+                'requires_knowledge_architect_analysis' => false,
+            ]],
+            'resolved_drift' => [],
             'obsidian_findings' => [],
             'risks' => [],
             'recommended_actions' => [],
@@ -60,7 +77,7 @@ test('the project page exposes the latest completed reconciliation run with summ
             ->component('projects/show')
             ->where('project.reconciliation.latest.status', 'completed')
             ->where('project.reconciliation.latest.evaluated_head_sha', 'abc123')
-            ->where('project.reconciliation.latest.summary_counts.new_functionality', 1)
+            ->where('project.reconciliation.latest.summary_counts.added_functionality', 1)
             ->where('project.reconciliation.latest.summary_counts.documentation_drift', 1)
             ->where('project.reconciliation.active', false)
         );

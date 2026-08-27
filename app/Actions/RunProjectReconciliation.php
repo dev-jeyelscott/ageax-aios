@@ -217,10 +217,9 @@ class RunProjectReconciliation
         $schema = [
             'project_status' => 'concise non-empty string',
             'functionality_summary' => 'concise non-empty string',
-            'new_functionality' => ['string, one item per new functionality unit'],
-            'changed_functionality' => ['string, one item per changed functionality unit'],
-            'removed_functionality' => ['string, one item per removed functionality unit'],
-            'documentation_drift' => ['string, one item per stale/incorrect documentation finding'],
+            'functionality_delta' => ['unchanged|added|changed|removed|uncertain' => [['summary' => 'string', 'evidence_paths' => ['string'], 'evidence_shas' => ['string']]]],
+            'documentation_findings' => [['target_source' => 'string', 'target_category' => 'documentation|rule|regression_test', 'evidence_paths' => ['string'], 'evidence_shas' => ['string'], 'observed_implementation' => 'string', 'documented_claim' => 'string', 'reason_for_drift' => 'string', 'proposed_alignment' => 'string', 'confidence' => '0..1', 'deterministic' => 'boolean', 'requires_knowledge_architect_analysis' => 'boolean']],
+            'resolved_drift' => ['string, a previously observed drift identifier resolved by current evidence'],
             'obsidian_findings' => ['string, one item per relevant Obsidian project-note finding'],
             'risks' => ['string, one item per identified risk'],
             'recommended_actions' => ['string, one item per recommended next action'],

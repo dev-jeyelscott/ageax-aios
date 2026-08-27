@@ -3,12 +3,15 @@
 use App\Actions\RunProjectReconciliation;
 use App\AgentRole;
 use App\Models\AgentRun;
+use App\Models\KnowledgeImprovementCandidate;
 use App\Models\Project;
 use App\Models\ProjectReconciliationRun;
 use App\ProjectReconciliationStatus;
 use App\ProjectReconciliationTrigger;
 use App\ProjectStatus;
 use App\Services\CodexCliRunner;
+use App\Services\DocumentationDriftCandidateRecorder;
+use App\Services\ProjectReconciliationSnapshotBuilder;
 use Closure;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
@@ -59,10 +62,15 @@ function validReconciliationOutput(): array
     return [
         'project_status' => 'Healthy',
         'functionality_summary' => 'Everything works.',
-        'new_functionality' => ['Feature A'],
-        'changed_functionality' => [],
-        'removed_functionality' => [],
-        'documentation_drift' => [],
+        'functionality_delta' => [
+            'unchanged' => [],
+            'added' => [['summary' => 'Feature A', 'evidence_paths' => ['baseline.txt'], 'evidence_shas' => []]],
+            'changed' => [],
+            'removed' => [],
+            'uncertain' => [],
+        ],
+        'documentation_findings' => [],
+        'resolved_drift' => [],
         'obsidian_findings' => [],
         'risks' => [],
         'recommended_actions' => [],
@@ -195,4 +203,62 @@ test('a schema-invalid structured result fails the run without persisting a part
 
     expect($run->status)->toBe(ProjectReconciliationStatus::Failed)
         ->and($run->result)->toBeNull();
+});
+
+test('the reconciliation inventory is bounded, attributes clean-head repository manifests, and classifies committed changes', function (): void {
+    $project = reconciliationGitProject();
+    File::put($project->path.'/AGENTS.md', '# Governance');
+    File::ensureDirectoryExists($project->path.'/docs');
+    File::put($project->path.'/docs/Architecture.md', '# Architecture');
+    File::put($project->path.'/ignored.md', '# Ignored');
+    Process::path($project->path)->run(['git', 'add', 'AGENTS.md', 'docs/Architecture.md', 'ignored.md']);
+    Process::path($project->path)->run(['git', 'commit', '-m', 'Add project documentation']);
+    $baseline = trim(Process::path($project->path)->run(['git', 'rev-parse', 'HEAD'])->output());
+
+    File::put($project->path.'/docs/Architecture.md', '# Updated architecture');
+    File::put($project->path.'/docs/New.md', '# New');
+    Process::path($project->path)->run(['git', 'rm', 'AGENTS.md']);
+    Process::path($project->path)->run(['git', 'add', 'docs']);
+    Process::path($project->path)->run(['git', 'commit', '-m', 'Update project documentation']);
+
+    $snapshot = app(ProjectReconciliationSnapshotBuilder::class)->build($project, $baseline)['snapshot'];
+    $paths = collect($snapshot['repository_documentation_inventory'])->pluck('path')->all();
+    $changes = $snapshot['committed_changes_since_baseline']['changes'];
+
+    expect($paths)->toContain('docs/Architecture.md', 'docs/New.md')
+        ->not->toContain('ignored.md')
+        ->and($changes)->toContain(['classification' => 'changed', 'path' => 'docs/Architecture.md'])
+        ->toContain(['classification' => 'added', 'path' => 'docs/New.md'])
+        ->toContain(['classification' => 'removed', 'path' => 'AGENTS.md'])
+        ->and($project->knowledgeSourceManifests()->where('source_type', 'repository')->where('source_reference', 'docs/Architecture.md')->value('git_sha'))
+        ->toBe($snapshot['git']['head_sha']);
+});
+
+test('documentation drift candidates deduplicate and preserve an operator decision', function (): void {
+    $project = reconciliationGitProject();
+    $finding = [
+        'target_source' => 'AGENTS.md',
+        'target_category' => 'rule',
+        'evidence_paths' => ['app/Services/Example.php'],
+        'evidence_shas' => ['abc123'],
+        'observed_implementation' => 'The service does the current behavior.',
+        'documented_claim' => 'The rule describes old behavior.',
+        'reason_for_drift' => 'Committed implementation evidence conflicts with the rule.',
+        'proposed_alignment' => 'Create an approved task to align the rule.',
+        'confidence' => 1,
+        'deterministic' => true,
+        'requires_knowledge_architect_analysis' => false,
+    ];
+
+    $recorder = app(DocumentationDriftCandidateRecorder::class);
+    expect($recorder->record($project, [$finding]))->toBe(1)
+        ->and($recorder->record($project, [$finding]))->toBe(0);
+
+    $candidate = KnowledgeImprovementCandidate::query()->whereBelongsTo($project)->sole();
+    $candidate->update(['status' => 'approved']);
+    $finding['proposed_alignment'] = 'Use the normal Task, Coder, Git, and Reviewer lifecycle.';
+    $recorder->record($project, [$finding]);
+
+    expect($candidate->refresh()->getRawOriginal('status'))->toBe('approved')
+        ->and(KnowledgeImprovementCandidate::query()->whereBelongsTo($project)->count())->toBe(1);
 });

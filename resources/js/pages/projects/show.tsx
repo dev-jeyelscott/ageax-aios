@@ -41,6 +41,7 @@ import type {
 import { SkillsPanel } from '@/pages/projects/skills-panel';
 import type { Skill } from '@/pages/projects/skills-panel';
 import { TasksPanel as ProjectTasksPanel } from '@/pages/projects/tasks-panel';
+import { index as knowledgeImprovements } from '@/routes/projects/knowledge-improvements';
 import { store as storeRoadmap } from '@/routes/projects/roadmaps';
 import './project-workflow.css';
 
@@ -135,10 +136,12 @@ type ReconciliationRun = {
     finished_at: string | null;
     failure_reason: string | null;
     summary_counts: {
-        new_functionality: number;
+        unchanged_functionality: number;
+        added_functionality: number;
         changed_functionality: number;
         removed_functionality: number;
         documentation_drift: number;
+        resolved_drift: number;
     } | null;
     mechanical_result: {
         created: string[];
@@ -1005,10 +1008,11 @@ function ReconciliationOverviewCard({ project }: { project: Project }) {
                 <dl className="mt-3 grid grid-cols-2 gap-2">
                     {(
                         [
-                            ['New', summary.new_functionality],
+                            ['Added', summary.added_functionality],
                             ['Changed', summary.changed_functionality],
                             ['Removed', summary.removed_functionality],
                             ['Doc drift', summary.documentation_drift],
+                            ['Resolved', summary.resolved_drift],
                         ] as const
                     ).map(([label, value]) => (
                         <div
@@ -1038,6 +1042,15 @@ function ReconciliationOverviewCard({ project }: { project: Project }) {
                     Working tree was dirty at evaluation time; uncommitted
                     changes were excluded from this evidence.
                 </p>
+            )}
+
+            {summary && (
+                <Link
+                    href={knowledgeImprovements(project.id)}
+                    className="mt-3 inline-flex text-2xs text-primary underline-offset-4 hover:underline"
+                >
+                    Open Knowledge Improvement Queue evidence
+                </Link>
             )}
 
             <div className="mt-3">

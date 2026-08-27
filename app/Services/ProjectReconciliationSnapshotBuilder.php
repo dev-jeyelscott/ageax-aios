@@ -22,6 +22,7 @@ class ProjectReconciliationSnapshotBuilder
         private ProjectGitState $git,
         private ProjectRuntimeCapabilityDetector $runtime,
         private KnowledgeSourceManifestSynchronizer $manifests,
+        private RepositoryDocumentationInventory $documentation,
         private KnowledgeGapDetector $gaps,
         private ObsidianProjectNotes $notes,
         private WorkspacePathResolver $paths,
@@ -49,6 +50,8 @@ class ProjectReconciliationSnapshotBuilder
         $workingTreeDirty = ! $state['inspectable'] || ! $state['clean'];
 
         $this->manifests->sync($project);
+        $committedChanges = $this->committedEvidenceSince($projectPath, $baselineSha, $headSha);
+        $documentationSources = $this->documentation->synchronize($project, $committedChanges['changes']);
 
         $roadmapScannedAt = $project->getAttribute('roadmap_scanned_at');
 
@@ -63,7 +66,8 @@ class ProjectReconciliationSnapshotBuilder
                 'clean' => $state['clean'],
                 'head_sha' => $headSha,
             ],
-            'committed_changes_since_baseline' => $this->committedEvidenceSince($projectPath, $baselineSha, $headSha),
+            'committed_changes_since_baseline' => $committedChanges,
+            'repository_documentation_inventory' => $documentationSources,
             'task_counts_by_status' => $project->tasks()->selectRaw('status, count(*) as aggregate')->groupBy('status')->pluck('aggregate', 'status')->all(),
             'phase_count' => $project->phases()->count(),
             'roadmap_scanned_at' => $roadmapScannedAt instanceof CarbonInterface ? $roadmapScannedAt->toIso8601String() : null,
@@ -82,28 +86,38 @@ class ProjectReconciliationSnapshotBuilder
     }
 
     /**
-     * @return array{changed_files: list<string>, commits: list<array{sha: string, subject: string}>}
+     * @return array{changed_files: list<string>, changes: list<array{classification: string, path: string}>, commits: list<array{sha: string, subject: string}>}
      */
     private function committedEvidenceSince(string $projectPath, ?string $baselineSha, ?string $headSha): array
     {
         if ($baselineSha === null || $headSha === null || $baselineSha === $headSha) {
-            return ['changed_files' => [], 'commits' => []];
+            return ['changed_files' => [], 'changes' => [], 'commits' => []];
         }
 
         $range = $baselineSha.'..'.$headSha;
 
-        $filesResult = $this->process($projectPath, ['git', 'diff', '--name-only', '--no-renames', '-z', $range, '--']);
+        $filesResult = $this->process($projectPath, ['git', 'diff', '--name-status', '--no-renames', '-z', $range, '--']);
         $logResult = $this->process($projectPath, ['git', 'log', '--pretty=format:%H%x1f%s', $range]);
 
-        $files = [];
+        $changes = [];
 
         if ($filesResult['successful']) {
-            $files = array_values(array_unique(array_filter(
-                explode("\0", $filesResult['output']),
-                fn (string $file): bool => $file !== '',
-            )));
-            sort($files, SORT_STRING);
-            $files = array_slice($files, 0, self::MaxCommittedFiles);
+            $parts = array_values(array_filter(explode("\0", $filesResult['output']), fn (string $part): bool => $part !== ''));
+
+            for ($index = 0; $index + 1 < count($parts); $index += 2) {
+                $status = $parts[$index];
+                $changes[] = [
+                    'classification' => match ($status[0] ?? '') {
+                        'A' => 'added',
+                        'D' => 'removed',
+                        default => 'changed',
+                    },
+                    'path' => $parts[$index + 1],
+                ];
+            }
+
+            usort($changes, fn (array $left, array $right): int => [$left['path'], $left['classification']] <=> [$right['path'], $right['classification']]);
+            $changes = array_slice($changes, 0, self::MaxCommittedFiles);
         }
 
         $commits = [];
@@ -115,7 +129,7 @@ class ProjectReconciliationSnapshotBuilder
             }
         }
 
-        return ['changed_files' => $files, 'commits' => $commits];
+        return ['changed_files' => array_column($changes, 'path'), 'changes' => $changes, 'commits' => $commits];
     }
 
     /**

@@ -8,6 +8,7 @@ use App\Models\AgentRun;
 use App\Models\ProjectReconciliationRun;
 use App\ProjectReconciliationStatus;
 use App\Services\AuditLogger;
+use App\Services\DocumentationDriftCandidateRecorder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use LogicException;
@@ -17,16 +18,15 @@ class RecordProjectReconciliationResult
     private const array AllowedFields = [
         'project_status',
         'functionality_summary',
-        'new_functionality',
-        'changed_functionality',
-        'removed_functionality',
-        'documentation_drift',
+        'functionality_delta',
+        'documentation_findings',
+        'resolved_drift',
         'obsidian_findings',
         'risks',
         'recommended_actions',
     ];
 
-    public function __construct(private AuditLogger $audit) {}
+    public function __construct(private AuditLogger $audit, private DocumentationDriftCandidateRecorder $candidates) {}
 
     /**
      * Validate and normalize one Project Manager reconciliation advisory response before durable
@@ -37,10 +37,9 @@ class RecordProjectReconciliationResult
      * @return array{
      *     project_status: string,
      *     functionality_summary: string,
-     *     new_functionality: list<string>,
-     *     changed_functionality: list<string>,
-     *     removed_functionality: list<string>,
-     *     documentation_drift: list<string>,
+     *     functionality_delta: array<string, list<array<string, mixed>>>,
+     *     documentation_findings: list<array<string, mixed>>,
+     *     resolved_drift: list<string>,
      *     obsidian_findings: list<string>,
      *     risks: list<string>,
      *     recommended_actions: list<string>
@@ -59,7 +58,7 @@ class RecordProjectReconciliationResult
             'functionality_summary' => ['required', 'string', 'max:8000'],
         ];
 
-        foreach (array_slice(self::AllowedFields, 2) as $listField) {
+        foreach (['obsidian_findings', 'risks', 'recommended_actions', 'resolved_drift'] as $listField) {
             // An empty list is a valid, common answer (e.g. no removed functionality), but
             // Laravel's "required" rule treats an empty array as absent; "present" only demands
             // the key exist, so a genuinely empty list still passes.
@@ -67,15 +66,39 @@ class RecordProjectReconciliationResult
             $rules[$listField.'.*'] = ['required', 'string', 'max:2000'];
         }
 
+        foreach (['unchanged', 'added', 'changed', 'removed', 'uncertain'] as $classification) {
+            $rules['functionality_delta.'.$classification] = ['present', 'array'];
+            $rules['functionality_delta.'.$classification.'.*'] = ['required', 'array:summary,evidence_paths,evidence_shas'];
+            $rules['functionality_delta.'.$classification.'.*.summary'] = ['required', 'string', 'max:2000'];
+            $rules['functionality_delta.'.$classification.'.*.evidence_paths'] = ['present', 'array', 'max:20'];
+            $rules['functionality_delta.'.$classification.'.*.evidence_paths.*'] = ['string', 'max:500'];
+            $rules['functionality_delta.'.$classification.'.*.evidence_shas'] = ['present', 'array', 'max:20'];
+            $rules['functionality_delta.'.$classification.'.*.evidence_shas.*'] = ['string', 'max:64'];
+        }
+
+        $rules['documentation_findings'] = ['present', 'array', 'max:50'];
+        $rules['documentation_findings.*'] = ['required', 'array:target_source,target_category,evidence_paths,evidence_shas,observed_implementation,documented_claim,reason_for_drift,proposed_alignment,confidence,deterministic,requires_knowledge_architect_analysis'];
+        $rules['documentation_findings.*.target_source'] = ['required', 'string', 'max:500'];
+        $rules['documentation_findings.*.target_category'] = ['required', 'in:documentation,rule,regression_test'];
+        foreach (['evidence_paths', 'evidence_shas'] as $field) {
+            $rules['documentation_findings.*.'.$field] = ['present', 'array', 'max:20'];
+            $rules['documentation_findings.*.'.$field.'.*'] = ['string', 'max:500'];
+        }
+        foreach (['observed_implementation', 'documented_claim', 'reason_for_drift', 'proposed_alignment'] as $field) {
+            $rules['documentation_findings.*.'.$field] = ['required', 'string', 'max:4000'];
+        }
+        $rules['documentation_findings.*.confidence'] = ['required', 'numeric', 'min:0', 'max:1'];
+        $rules['documentation_findings.*.deterministic'] = ['required', 'boolean'];
+        $rules['documentation_findings.*.requires_knowledge_architect_analysis'] = ['required', 'boolean'];
+
         $validated = Validator::make($structuredResult, $rules)->validate();
 
         return [
             'project_status' => (string) $validated['project_status'],
             'functionality_summary' => (string) $validated['functionality_summary'],
-            'new_functionality' => array_values($validated['new_functionality']),
-            'changed_functionality' => array_values($validated['changed_functionality']),
-            'removed_functionality' => array_values($validated['removed_functionality']),
-            'documentation_drift' => array_values($validated['documentation_drift']),
+            'functionality_delta' => $validated['functionality_delta'],
+            'documentation_findings' => $validated['documentation_findings'],
+            'resolved_drift' => array_values($validated['resolved_drift']),
             'obsidian_findings' => array_values($validated['obsidian_findings']),
             'risks' => array_values($validated['risks']),
             'recommended_actions' => array_values($validated['recommended_actions']),
@@ -96,6 +119,7 @@ class RecordProjectReconciliationResult
             $lockedAgentRun = AgentRun::query()->whereKey($agentRun->id)->lockForUpdate()->firstOrFail();
 
             $this->assertEligibleRun($lockedRun, $lockedAgentRun);
+            $candidateCount = $this->candidates->record($lockedRun->project, $validated['documentation_findings']);
 
             $lockedRun->update([
                 'result' => $validated,
@@ -107,6 +131,8 @@ class RecordProjectReconciliationResult
             $this->audit->record('reconciliation.completed', [
                 'reconciliation_run_id' => $lockedRun->id,
                 'agent_run_id' => $lockedAgentRun->id,
+                'documentation_candidate_count' => $candidateCount,
+                'resolved_drift_count' => count($validated['resolved_drift']),
             ], $lockedRun->project);
 
             return $lockedRun->refresh();
