@@ -43,10 +43,13 @@ test('allows the Knowledge Architect to run in its AIOS-created non-Git advisory
         'role' => AgentRole::KnowledgeArchitect,
     ]);
 
+    $sandbox = sys_get_temp_dir().'/aios-non-git-sandbox-'.uniqid();
+    mkdir($sandbox, recursive: true);
+
     Process::fake(['*' => Process::result(output: 'completed')]);
 
     app(CodexCliRunner::class)->runAtPath(
-        sys_get_temp_dir(),
+        $sandbox,
         'Analyze the supplied advisory evidence.',
         agent: $agent,
     );
@@ -55,6 +58,51 @@ test('allows the Knowledge Architect to run in its AIOS-created non-Git advisory
         $command = (new ReflectionProperty($process, 'command'))->getValue($process);
 
         return in_array('--skip-git-repo-check', $command, true);
+    });
+});
+
+test('allows a Project Manager reconciliation advisory to run in its AIOS-created non-Git sandbox', function () {
+    $agent = Agent::factory()->make([
+        'project_id' => null,
+        'role' => AgentRole::ProjectManager,
+    ]);
+
+    $sandbox = sys_get_temp_dir().'/aios-non-git-sandbox-'.uniqid();
+    mkdir($sandbox, recursive: true);
+
+    Process::fake(['*' => Process::result(output: 'completed')]);
+
+    app(CodexCliRunner::class)->runAtPath(
+        $sandbox,
+        'Produce a read-only reconciliation advisory.',
+        agent: $agent,
+    );
+
+    Process::assertRan(function (PendingProcess $process): bool {
+        $command = (new ReflectionProperty($process, 'command'))->getValue($process);
+
+        return in_array('--skip-git-repo-check', $command, true);
+    });
+});
+
+test('does not skip the Git repo check for a real managed project repository', function () {
+    $agent = Agent::factory()->make([
+        'project_id' => null,
+        'role' => AgentRole::Coder,
+    ]);
+
+    Process::fake(['*' => Process::result(output: 'completed')]);
+
+    app(CodexCliRunner::class)->runAtPath(
+        base_path(),
+        'Implement the task.',
+        agent: $agent,
+    );
+
+    Process::assertRan(function (PendingProcess $process): bool {
+        $command = (new ReflectionProperty($process, 'command'))->getValue($process);
+
+        return ! in_array('--skip-git-repo-check', $command, true);
     });
 });
 

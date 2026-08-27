@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\AgentRole;
 use App\Models\Agent;
 use App\Models\Project;
 use Closure;
@@ -79,14 +78,14 @@ class CodexCliRunner
             if ($onHeartbeat === null) {
                 return $this->result(
                     $pending->run(
-                        $this->command($agent),
+                        $this->command($agent, $path),
                         $onOutput,
                     ),
                 );
             }
 
             $process = $pending->start(
-                $this->command($agent),
+                $this->command($agent, $path),
                 $onOutput,
             );
 
@@ -134,7 +133,7 @@ class CodexCliRunner
      *
      * @return list<string>
      */
-    private function command(?Agent $agent = null): array
+    private function command(?Agent $agent = null, ?string $path = null): array
     {
         $command = [
             (string) config('aios.codex_binary'),
@@ -144,13 +143,13 @@ class CodexCliRunner
             '--approve-for-me',
         ];
 
-        // Knowledge Architect advisories execute in an AIOS-created empty directory so the
-        // provider cannot inspect or mutate a managed project repository. Codex otherwise
-        // rejects that intentional non-Git workspace before it can process the advisory.
-        if (
-            $agent !== null
-            && $agent->getAttribute('role') === AgentRole::KnowledgeArchitect
-        ) {
+        // Advisory-only execution (e.g. Knowledge Architect advisories, Project Manager
+        // reconciliation) runs in an AIOS-created disposable directory so the provider cannot
+        // inspect or mutate a managed project repository. Codex otherwise rejects that
+        // intentional non-Git workspace before it can process the advisory. Deriving this from
+        // the actual directory rather than a fixed Agent role means every present and future
+        // isolated-sandbox execution is covered, not just one role.
+        if ($path !== null && ! is_dir($path.'/.git')) {
             $command[] = '--skip-git-repo-check';
         }
 
