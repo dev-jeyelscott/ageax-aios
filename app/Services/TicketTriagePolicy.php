@@ -121,6 +121,7 @@ class TicketTriagePolicy
 
         return Task::query()
             ->where('project_id', $ticket->project_id)
+            ->notCleared()
             ->whereNotIn('status', [
                 TaskStatus::Done->value,
                 TaskStatus::Cancelled->value,
@@ -152,7 +153,7 @@ class TicketTriagePolicy
             ->where('project_id', $ticket->project_id)
             ->whereHas(
                 'tasks',
-                fn ($query) => $query->whereNotIn('status', [
+                fn ($query) => $query->notCleared()->whereNotIn('status', [
                     TaskStatus::Done->value,
                     TaskStatus::Cancelled->value,
                 ]),
@@ -196,7 +197,7 @@ class TicketTriagePolicy
         foreach ($dependencies as $dependency) {
             $status = TaskStatus::from((string) $dependency->getRawOriginal('status'));
 
-            if ($status === TaskStatus::Cancelled) {
+            if ($dependency->is_cleared || $status === TaskStatus::Cancelled) {
                 return true;
             }
 

@@ -54,6 +54,7 @@ class WorkflowRecoveryScanner
     {
         Task::query()
             ->whereBelongsTo($project)
+            ->notCleared()
             ->where('status', TaskStatus::Blocked)
             ->whereHas('planningEscalations', fn ($query) => $query->where('status', 'blocked'))
             ->get()
@@ -122,6 +123,7 @@ class WorkflowRecoveryScanner
     {
         Task::query()
             ->whereBelongsTo($project)
+            ->notCleared()
             ->where('status', TaskStatus::Blocked)
             ->get()
             ->each(function (Task $task) use ($project): void {
@@ -201,6 +203,7 @@ class WorkflowRecoveryScanner
 
         Task::query()
             ->whereBelongsTo($project)
+            ->notCleared()
             ->whereIn('status', self::TerminalStuckStatuses)
             ->where('updated_at', '<=', now()->subSeconds($staleFloor))
             ->get()

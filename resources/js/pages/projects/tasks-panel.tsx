@@ -12,10 +12,12 @@ import {
     ShieldAlert,
     Sparkles,
     TimerReset,
+    Trash2,
     Workflow,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
+    clearTasks,
     requeueTask,
     showTask,
 } from '@/actions/App/Http/Controllers/ProjectController';
@@ -28,6 +30,15 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import {
+    Dialog,
+    DialogClose,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogTitle,
+    DialogTrigger,
+} from '@/components/ui/dialog';
 
 export type ProjectTaskSummary = {
     id: number;
@@ -207,6 +218,79 @@ function iconForGroup(group: FilterGroup) {
         default:
             return CircleDashed;
     }
+}
+
+function ClearTasksDialog({
+    projectId,
+    taskCount,
+}: {
+    projectId: number;
+    taskCount: number;
+}) {
+    const [open, setOpen] = useState(false);
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button
+                    type="button"
+                    variant="outline"
+                    disabled={taskCount === 0}
+                    className="border-destructive/30 bg-destructive/5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                >
+                    <Trash2 className="size-4" aria-hidden="true" />
+                    Clear tasks
+                </Button>
+            </DialogTrigger>
+
+            <DialogContent className="border-destructive/30 bg-card/95 shadow-panel-lifted sm:max-w-lg">
+                <DialogTitle>Clear all project tasks?</DialogTitle>
+                <DialogDescription>
+                    All {taskCount} current project task
+                    {taskCount === 1 ? '' : 's'} will be removed from active
+                    queues, widgets, and counts. Their statuses and complete
+                    history will remain retained.
+                </DialogDescription>
+
+                <Form
+                    action={clearTasks.url(projectId)}
+                    method="post"
+                    onError={() => setOpen(true)}
+                    onSuccess={() => setOpen(false)}
+                >
+                    {({ errors, processing }) => (
+                        <DialogFooter className="mt-6">
+                            <DialogClose asChild>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={processing}
+                                >
+                                    Cancel
+                                </Button>
+                            </DialogClose>
+                            <Button
+                                type="submit"
+                                variant="destructive"
+                                disabled={processing}
+                            >
+                                <Trash2 className="size-4" aria-hidden="true" />
+                                {processing ? 'Clearing tasks…' : 'Clear tasks'}
+                            </Button>
+                            {errors.tasks && (
+                                <p
+                                    className="w-full text-sm text-destructive"
+                                    role="alert"
+                                >
+                                    {errors.tasks}
+                                </p>
+                            )}
+                        </DialogFooter>
+                    )}
+                </Form>
+            </DialogContent>
+        </Dialog>
+    );
 }
 
 export function TasksPanel({
@@ -441,68 +525,86 @@ export function TasksPanel({
                             </CardDescription>
                         </div>
 
-                        <div className="grid gap-2 md:grid-cols-[minmax(0,1.3fr)_repeat(2,minmax(0,0.7fr))] xl:w-[52rem]">
-                            <label className="panel-recessed flex items-center gap-2 px-3 py-2">
-                                <span className="sr-only">Search tasks</span>
-                                <Search className="size-4 text-muted-foreground" />
-                                <input
-                                    value={query}
-                                    onChange={(event) =>
-                                        setQuery(event.target.value)
-                                    }
-                                    placeholder="Search by task key, title, or status…"
-                                    className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                        <div className="flex flex-col gap-2 xl:w-[52rem]">
+                            <div className="flex justify-end">
+                                <ClearTasksDialog
+                                    projectId={projectId}
+                                    taskCount={tasks.length}
                                 />
-                            </label>
+                            </div>
+                            <div className="grid gap-2 md:grid-cols-[minmax(0,1.3fr)_repeat(2,minmax(0,0.7fr))]">
+                                <label className="panel-recessed flex items-center gap-2 px-3 py-2">
+                                    <span className="sr-only">
+                                        Search tasks
+                                    </span>
+                                    <Search className="size-4 text-muted-foreground" />
+                                    <input
+                                        value={query}
+                                        onChange={(event) =>
+                                            setQuery(event.target.value)
+                                        }
+                                        placeholder="Search by task key, title, or status…"
+                                        className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                                    />
+                                </label>
 
-                            <label className="panel-recessed flex items-center gap-2 px-3 py-2">
-                                <span className="sr-only">
-                                    Filter tasks by workflow state
-                                </span>
-                                <ListFilter className="size-4 text-muted-foreground" />
-                                <select
-                                    value={groupFilter}
-                                    onChange={(event) =>
-                                        setGroupFilter(
-                                            event.target.value as FilterGroup,
-                                        )
-                                    }
-                                    className="w-full bg-transparent text-sm text-foreground outline-none"
-                                >
-                                    <option value="all">All states</option>
-                                    <option value="queued">Queued</option>
-                                    <option value="active">In progress</option>
-                                    <option value="review">Review</option>
-                                    <option value="attention">
-                                        Needs attention
-                                    </option>
-                                    <option value="done">Completed</option>
-                                    <option value="closed">Cancelled</option>
-                                </select>
-                            </label>
+                                <label className="panel-recessed flex items-center gap-2 px-3 py-2">
+                                    <span className="sr-only">
+                                        Filter tasks by workflow state
+                                    </span>
+                                    <ListFilter className="size-4 text-muted-foreground" />
+                                    <select
+                                        value={groupFilter}
+                                        onChange={(event) =>
+                                            setGroupFilter(
+                                                event.target
+                                                    .value as FilterGroup,
+                                            )
+                                        }
+                                        className="w-full bg-transparent text-sm text-foreground outline-none"
+                                    >
+                                        <option value="all">All states</option>
+                                        <option value="queued">Queued</option>
+                                        <option value="active">
+                                            In progress
+                                        </option>
+                                        <option value="review">Review</option>
+                                        <option value="attention">
+                                            Needs attention
+                                        </option>
+                                        <option value="done">Completed</option>
+                                        <option value="closed">
+                                            Cancelled
+                                        </option>
+                                    </select>
+                                </label>
 
-                            <label className="panel-recessed flex items-center gap-2 px-3 py-2">
-                                <span className="sr-only">
-                                    Filter tasks by workflow lane
-                                </span>
-                                <TimerReset className="size-4 text-muted-foreground" />
-                                <select
-                                    value={ownerFilter}
-                                    onChange={(event) =>
-                                        setOwnerFilter(
-                                            event.target.value as OwnerFilter,
-                                        )
-                                    }
-                                    className="w-full bg-transparent text-sm text-foreground outline-none"
-                                >
-                                    <option value="all">All lanes</option>
-                                    <option value="aios">AIOS queue</option>
-                                    <option value="coder">Coder lane</option>
-                                    <option value="reviewer">
-                                        Reviewer lane
-                                    </option>
-                                </select>
-                            </label>
+                                <label className="panel-recessed flex items-center gap-2 px-3 py-2">
+                                    <span className="sr-only">
+                                        Filter tasks by workflow lane
+                                    </span>
+                                    <TimerReset className="size-4 text-muted-foreground" />
+                                    <select
+                                        value={ownerFilter}
+                                        onChange={(event) =>
+                                            setOwnerFilter(
+                                                event.target
+                                                    .value as OwnerFilter,
+                                            )
+                                        }
+                                        className="w-full bg-transparent text-sm text-foreground outline-none"
+                                    >
+                                        <option value="all">All lanes</option>
+                                        <option value="aios">AIOS queue</option>
+                                        <option value="coder">
+                                            Coder lane
+                                        </option>
+                                        <option value="reviewer">
+                                            Reviewer lane
+                                        </option>
+                                    </select>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </CardHeader>

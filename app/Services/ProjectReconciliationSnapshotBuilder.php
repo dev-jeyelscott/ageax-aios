@@ -68,7 +68,7 @@ class ProjectReconciliationSnapshotBuilder
             ],
             'committed_changes_since_baseline' => $committedChanges,
             'repository_documentation_inventory' => $documentationSources,
-            'task_counts_by_status' => $project->tasks()->selectRaw('status, count(*) as aggregate')->groupBy('status')->pluck('aggregate', 'status')->all(),
+            'task_counts_by_status' => $project->tasks()->notCleared()->selectRaw('status, count(*) as aggregate')->groupBy('status')->pluck('aggregate', 'status')->all(),
             'phase_count' => $project->phases()->count(),
             'roadmap_scanned_at' => $roadmapScannedAt instanceof CarbonInterface ? $roadmapScannedAt->toIso8601String() : null,
             'runtime_capabilities' => $this->runtime->detect($project),

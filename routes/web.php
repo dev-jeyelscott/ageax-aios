@@ -94,6 +94,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
     )->scopeBindings()->name('projects.tasks.requeue');
 
     Route::post(
+        'projects/{project}/tasks/clear',
+        [ProjectController::class, 'clearTasks'],
+    )->name('projects.tasks.clear');
+
+    Route::post(
         'projects/{project}/tasks/{task}/skip',
         [ProjectController::class, 'skipTask'],
     )->scopeBindings()->name('projects.tasks.skip');

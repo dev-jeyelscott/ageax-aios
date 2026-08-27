@@ -465,7 +465,7 @@ class TicketContextCapsuleFactory
         $currentPhase = $project->phases()
             ->whereHas(
                 'tasks',
-                fn ($query) => $query->whereNotIn(
+                fn ($query) => $query->notCleared()->whereNotIn(
                     'status',
                     $terminal,
                 ),
@@ -485,6 +485,7 @@ class TicketContextCapsuleFactory
                 ->first();
 
         $activeTask = $project->tasks()
+            ->notCleared()
             ->whereNotIn('status', $terminal)
             ->orderBy('position')
             ->first();
@@ -492,6 +493,7 @@ class TicketContextCapsuleFactory
         $nextTask = $activeTask === null
             ? null
             : $project->tasks()
+                ->notCleared()
                 ->where(
                     'position',
                     '>',
@@ -521,7 +523,7 @@ class TicketContextCapsuleFactory
             return null;
         }
 
-        $query = $phase->tasks()->orderBy('position');
+        $query = $phase->tasks()->notCleared()->orderBy('position');
         $total = (clone $query)->count();
         $tasks = [];
 

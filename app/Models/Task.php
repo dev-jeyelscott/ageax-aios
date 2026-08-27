@@ -8,6 +8,8 @@ use App\TaskWorkType;
 use Carbon\CarbonImmutable;
 use Database\Factories\TaskFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\Scope;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -15,9 +17,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
-#[Fillable(['project_id', 'knowledge_improvement_candidate_id', 'phase_id', 'key', 'position', 'title', 'objective', 'work_type', 'complexity', 'acceptance_criteria', 'scope', 'constraints', 'relevant_paths', 'verification_commands', 'implementation_prompt', 'context_capsule', 'stewardship_provenance', 'status', 'claimed_at', 'completed_at'])]
+#[Fillable(['project_id', 'knowledge_improvement_candidate_id', 'phase_id', 'key', 'position', 'title', 'objective', 'work_type', 'complexity', 'acceptance_criteria', 'scope', 'constraints', 'relevant_paths', 'verification_commands', 'implementation_prompt', 'context_capsule', 'stewardship_provenance', 'status', 'is_cleared', 'claimed_at', 'completed_at'])]
 /**
  * @property TaskStatus $status
+ * @property bool $is_cleared
  * @property ?TaskWorkType $work_type
  * @property ?TaskComplexity $complexity
  * @property array<int, string> $acceptance_criteria
@@ -32,9 +35,19 @@ class Task extends Model
     /** @use HasFactory<TaskFactory> */
     use HasFactory;
 
+    protected $attributes = [
+        'is_cleared' => false,
+    ];
+
     protected function casts(): array
     {
-        return ['status' => TaskStatus::class, 'work_type' => TaskWorkType::class, 'complexity' => TaskComplexity::class, 'acceptance_criteria' => 'array', 'scope' => 'array', 'constraints' => 'array', 'relevant_paths' => 'array', 'verification_commands' => 'array', 'context_capsule' => 'array', 'stewardship_provenance' => 'array', 'claimed_at' => 'immutable_datetime', 'completed_at' => 'immutable_datetime'];
+        return ['status' => TaskStatus::class, 'is_cleared' => 'boolean', 'work_type' => TaskWorkType::class, 'complexity' => TaskComplexity::class, 'acceptance_criteria' => 'array', 'scope' => 'array', 'constraints' => 'array', 'relevant_paths' => 'array', 'verification_commands' => 'array', 'context_capsule' => 'array', 'stewardship_provenance' => 'array', 'claimed_at' => 'immutable_datetime', 'completed_at' => 'immutable_datetime'];
+    }
+
+    #[Scope]
+    protected function notCleared(Builder $query): void
+    {
+        $query->where('is_cleared', false);
     }
 
     /** @return BelongsTo<Project, $this> */

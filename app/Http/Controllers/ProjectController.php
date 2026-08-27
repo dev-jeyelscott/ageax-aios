@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\ClearProjectTasks;
 use App\Actions\CreateProject;
 use App\Actions\DeleteProject;
 use App\Actions\ProvisionDefaultProjectAgents;
@@ -121,6 +122,7 @@ class ProjectController extends Controller
         $project->load([
             'roadmaps' => fn ($query) => $query->latest(),
             'tasks' => fn ($query) => $query
+                ->notCleared()
                 ->orderBy('position')
                 ->with([
                     'attempts' => fn ($attempts) => $attempts
@@ -198,7 +200,7 @@ class ProjectController extends Controller
         $stewardshipPolicy = is_array($stewardshipPolicy) ? $stewardshipPolicy : [];
         $project->setAttribute('stewardship', [
             'automatic_task_creation' => (bool) ($stewardshipPolicy['automatic_task_creation'] ?? false),
-            'maintenance_task_count' => $project->tasks()->whereNotNull('knowledge_improvement_candidate_id')->count(),
+            'maintenance_task_count' => $project->tasks()->notCleared()->whereNotNull('knowledge_improvement_candidate_id')->count(),
         ]);
         $project->setAttribute(
             'harness_usage',
@@ -887,6 +889,13 @@ class ProjectController extends Controller
                 $request->validated('status'),
             ),
         );
+
+        return to_route('projects.show', $project);
+    }
+
+    public function clearTasks(Project $project, ClearProjectTasks $clearProjectTasks): RedirectResponse
+    {
+        $clearProjectTasks->handle($project);
 
         return to_route('projects.show', $project);
     }

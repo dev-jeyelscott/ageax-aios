@@ -54,6 +54,7 @@ class DashboardController extends Controller
                 ->where('status', ProjectStatus::Running->value)
                 ->count(),
             'open_tasks' => Task::query()
+                ->notCleared()
                 ->whereNotIn('status', [
                     TaskStatus::Done->value,
                     TaskStatus::Cancelled->value,
@@ -103,10 +104,12 @@ class DashboardController extends Controller
                 'updated_at',
             ])
             ->withCount([
-                'tasks as task_count',
+                'tasks as task_count' => fn ($query) => $query->notCleared(),
                 'tasks as done_task_count' => fn ($query) => $query
+                    ->notCleared()
                     ->where('status', TaskStatus::Done->value),
                 'tasks as open_task_count' => fn ($query) => $query
+                    ->notCleared()
                     ->whereNotIn('status', [
                         TaskStatus::Done->value,
                         TaskStatus::Cancelled->value,
@@ -123,6 +126,7 @@ class DashboardController extends Controller
                     ->orderBy('position')
                     ->with([
                         'tasks' => fn ($tasks) => $tasks
+                            ->notCleared()
                             ->select([
                                 'id',
                                 'phase_id',
@@ -215,6 +219,7 @@ class DashboardController extends Controller
     private function workflow(): array
     {
         $counts = Task::query()
+            ->notCleared()
             ->selectRaw('status, COUNT(*) AS aggregate')
             ->groupBy('status')
             ->pluck('aggregate', 'status');

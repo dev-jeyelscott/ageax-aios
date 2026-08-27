@@ -183,6 +183,7 @@ class KnowledgeGapDetector
 
         $task = Task::query()
             ->whereBelongsTo($project)
+            ->notCleared()
             ->whereNotIn('status', [
                 TaskStatus::Done->value,
                 TaskStatus::Cancelled->value,

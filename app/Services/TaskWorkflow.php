@@ -79,6 +79,7 @@ class TaskWorkflow
             : [TaskStatus::Reviewing];
 
         return $project->tasks()
+            ->notCleared()
             ->whereIn('status', $statuses)
             ->orderBy('position')
             ->first();
@@ -441,6 +442,7 @@ class TaskWorkflow
 
         $query = Task::query()
             ->whereBelongsTo($project)
+            ->notCleared()
             ->whereIn('status', TaskStatus::coderClaimableValues())
             ->whereDoesntHave(
                 'planningEscalations',
@@ -468,6 +470,7 @@ class TaskWorkflow
         if ($phase === null) {
             return Task::query()
                 ->whereBelongsTo($project)
+                ->notCleared()
                 ->whereIn('status', TaskStatus::reviewerClaimableValues())
                 ->orderBy('position')
                 ->lockForUpdate()
@@ -476,6 +479,7 @@ class TaskWorkflow
 
         $phaseTasks = Task::query()
             ->whereBelongsTo($project)
+            ->notCleared()
             ->where('phase_id', $phase->id)
             ->orderBy('position')
             ->lockForUpdate()
@@ -498,7 +502,7 @@ class TaskWorkflow
             ->whereBelongsTo($project)
             ->whereHas(
                 'tasks',
-                fn ($tasks) => $tasks->whereNotIn('status', TaskStatus::phaseCompletionSatisfiedValues()),
+                fn ($tasks) => $tasks->notCleared()->whereNotIn('status', TaskStatus::phaseCompletionSatisfiedValues()),
             )
             ->orderBy('position')
             ->lockForUpdate()
