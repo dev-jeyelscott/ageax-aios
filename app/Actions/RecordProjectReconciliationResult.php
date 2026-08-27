@@ -51,6 +51,8 @@ class RecordProjectReconciliationResult
      */
     public function validate(array $structuredResult): array
     {
+        $structuredResult = $this->normalizeEmptyFunctionalityDeltaClassifications($structuredResult);
+        $structuredResult = $this->normalizeDocumentationFindingBooleans($structuredResult);
         $unexpected = array_values(array_diff(array_keys($structuredResult), self::AllowedFields));
 
         if ($unexpected !== []) {
@@ -107,6 +109,68 @@ class RecordProjectReconciliationResult
             'risks' => array_values($validated['risks']),
             'recommended_actions' => array_values($validated['recommended_actions']),
         ];
+    }
+
+    /**
+     * A Project Manager must always identify the functionality-delta envelope, but an empty
+     * classification carries no semantic evidence. Normalize omitted empty classifications at
+     * the AIOS boundary so a successful advisory is not marked failed solely for being concise.
+     *
+     * @param  array<string, mixed>  $structuredResult
+     * @return array<string, mixed>
+     */
+    private function normalizeEmptyFunctionalityDeltaClassifications(array $structuredResult): array
+    {
+        if (! isset($structuredResult['functionality_delta']) || ! is_array($structuredResult['functionality_delta'])) {
+            return $structuredResult;
+        }
+
+        foreach (['unchanged', 'added', 'changed', 'removed', 'uncertain'] as $classification) {
+            $structuredResult['functionality_delta'][$classification] ??= [];
+        }
+
+        return $structuredResult;
+    }
+
+    /**
+     * JSON-schema constrained harnesses occasionally serialize an explicit JSON boolean as its
+     * unambiguous string representation. AIOS, rather than an Agent, canonicalizes only those
+     * exact values before applying the strict Boolean validation rule.
+     *
+     * @param  array<string, mixed>  $structuredResult
+     * @return array<string, mixed>
+     */
+    private function normalizeDocumentationFindingBooleans(array $structuredResult): array
+    {
+        if (! isset($structuredResult['documentation_findings']) || ! is_array($structuredResult['documentation_findings'])) {
+            return $structuredResult;
+        }
+
+        foreach ($structuredResult['documentation_findings'] as $index => $finding) {
+            if (! is_array($finding)) {
+                continue;
+            }
+
+            foreach (['deterministic', 'requires_knowledge_architect_analysis'] as $field) {
+                if (! isset($finding[$field]) || ! is_string($finding[$field])) {
+                    continue;
+                }
+
+                $normalized = strtolower(trim($finding[$field]));
+
+                if ($normalized === 'true') {
+                    $finding[$field] = true;
+                }
+
+                if ($normalized === 'false') {
+                    $finding[$field] = false;
+                }
+            }
+
+            $structuredResult['documentation_findings'][$index] = $finding;
+        }
+
+        return $structuredResult;
     }
 
     /**

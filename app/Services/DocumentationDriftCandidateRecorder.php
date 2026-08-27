@@ -65,7 +65,7 @@ class DocumentationDriftCandidateRecorder
                 // Deliberately preserve every operator decision. New evidence never reopens an approved,
                 // rejected, or dismissed proposal without the existing queue's explicit policy.
                 $candidate->update([
-                    'source_reconciliation_run_id' => $run?->id ?? $candidate->source_reconciliation_run_id,
+                    'source_reconciliation_run_id' => $run->id ?? $candidate->source_reconciliation_run_id,
                     'evidence_summary' => $finding['reason_for_drift'],
                     'proposed_change' => $finding['proposed_alignment'],
                     'evidence' => $evidence,

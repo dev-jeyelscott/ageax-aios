@@ -99,6 +99,53 @@ test('a first reconciliation run establishes the baseline and persists a complet
         ->and($agentRun->project_id)->toBe($project->id);
 });
 
+test('a concise Project Manager result normalizes omitted empty functionality classifications', function (): void {
+    $project = reconciliationGitProject();
+    $output = validReconciliationOutput();
+    $output['functionality_delta'] = [
+        'added' => $output['functionality_delta']['added'],
+    ];
+    bindReconciliationHarness(['exit_code' => 0, 'output' => json_encode($output, JSON_THROW_ON_ERROR), 'error_output' => '']);
+
+    $run = reconciliationQueuedRun($project);
+    app(RunProjectReconciliation::class)->handle($run);
+    $run->refresh();
+
+    expect($run->status)->toBe(ProjectReconciliationStatus::Completed)
+        ->and($run->result['functionality_delta']['unchanged'])->toBe([])
+        ->and($run->result['functionality_delta']['added'])->toBe($output['functionality_delta']['added'])
+        ->and($run->result['functionality_delta']['changed'])->toBe([])
+        ->and($run->result['functionality_delta']['removed'])->toBe([])
+        ->and($run->result['functionality_delta']['uncertain'])->toBe([]);
+});
+
+test('a Project Manager result normalizes explicit Boolean strings in documentation findings', function (): void {
+    $project = reconciliationGitProject();
+    $output = validReconciliationOutput();
+    $output['documentation_findings'] = [[
+        'target_source' => 'AGENTS.md',
+        'target_category' => 'documentation',
+        'evidence_paths' => ['app/Services/Example.php'],
+        'evidence_shas' => [],
+        'observed_implementation' => 'The implementation uses the current behavior.',
+        'documented_claim' => 'The documentation describes the old behavior.',
+        'reason_for_drift' => 'Committed evidence conflicts with the documented claim.',
+        'proposed_alignment' => 'Use the governed Task workflow to align the documentation.',
+        'confidence' => '0.99',
+        'deterministic' => 'true',
+        'requires_knowledge_architect_analysis' => 'false',
+    ]];
+    bindReconciliationHarness(['exit_code' => 0, 'output' => json_encode($output, JSON_THROW_ON_ERROR), 'error_output' => '']);
+
+    $run = reconciliationQueuedRun($project);
+    app(RunProjectReconciliation::class)->handle($run);
+    $run->refresh();
+
+    expect($run->status)->toBe(ProjectReconciliationStatus::Completed)
+        ->and($run->result['documentation_findings'][0]['deterministic'])->toBeTrue()
+        ->and($run->result['documentation_findings'][0]['requires_knowledge_architect_analysis'])->toBeFalse();
+});
+
 test('a reconciliation run persists mechanical topology evidence and resynchronizes its manifest', function (): void {
     $project = reconciliationGitProject();
     $vault = sys_get_temp_dir().'/ageax-aios-reconciliation-vault-'.fake()->uuid();
