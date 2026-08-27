@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\ConvertApprovedKnowledgeCandidateToTask;
 use App\Actions\RunProjectReconciliation;
 use App\AgentRole;
 use App\Models\AgentRun;
@@ -261,4 +262,34 @@ test('documentation drift candidates deduplicate and preserve an operator decisi
 
     expect($candidate->refresh()->getRawOriginal('status'))->toBe('approved')
         ->and(KnowledgeImprovementCandidate::query()->whereBelongsTo($project)->count())->toBe(1);
+});
+
+test('an opted-in project creates one provenance-linked maintenance Task only after operator approval', function (): void {
+    $project = reconciliationGitProject();
+    $head = trim(Process::path($project->path)->run(['git', 'rev-parse', 'HEAD'])->output());
+    $run = ProjectReconciliationRun::create([
+        'project_id' => $project->id,
+        'trigger' => ProjectReconciliationTrigger::Manual,
+        'status' => ProjectReconciliationStatus::Completed,
+        'evaluated_head_sha' => $head,
+        'finished_at' => now(),
+    ]);
+    $candidate = KnowledgeImprovementCandidate::factory()->create([
+        'project_id' => $project->id,
+        'source_reconciliation_run_id' => $run->id,
+        'status' => 'approved',
+        'target_type' => 'documentation',
+        'affected_area' => 'AGENTS.md',
+        'proposed_change' => 'Align the documented workflow with the committed implementation.',
+        'evidence' => [['evidence_paths' => ['AGENTS.md']]],
+        'evidence_hash' => str_repeat('a', 64),
+    ]);
+    $project->update(['stewardship_policy' => ['version' => 1, 'automatic_task_creation' => true]]);
+
+    $task = app(ConvertApprovedKnowledgeCandidateToTask::class)->handle($run);
+
+    expect($task)->not->toBeNull()
+        ->and($task?->knowledge_improvement_candidate_id)->toBe($candidate->id)
+        ->and($task?->stewardship_provenance['reviewed_head_sha'])->toBe($head)
+        ->and(app(ConvertApprovedKnowledgeCandidateToTask::class)->handle($run))->toBeNull();
 });

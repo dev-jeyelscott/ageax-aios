@@ -6,6 +6,7 @@ use App\KnowledgeImprovementCandidateStatus;
 use App\KnowledgeImprovementTarget;
 use App\Models\KnowledgeImprovementCandidate;
 use App\Models\Project;
+use App\Models\ProjectReconciliationRun;
 use Illuminate\Support\Facades\DB;
 
 /** Persist validated reconciliation findings through the existing operator-reviewed queue. */
@@ -14,7 +15,7 @@ class DocumentationDriftCandidateRecorder
     public function __construct(private AuditLogger $audit) {}
 
     /** @param list<array<string, mixed>> $findings */
-    public function record(Project $project, array $findings): int
+    public function record(Project $project, array $findings, ?ProjectReconciliationRun $run = null): int
     {
         $changed = 0;
 
@@ -30,11 +31,12 @@ class DocumentationDriftCandidateRecorder
             ]];
             $evidenceHash = hash('sha256', json_encode($evidence, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
 
-            $didChange = DB::transaction(function () use ($project, $finding, $fingerprint, $evidence, $evidenceHash): bool {
+            $didChange = DB::transaction(function () use ($project, $finding, $fingerprint, $evidence, $evidenceHash, $run): bool {
                 $candidate = KnowledgeImprovementCandidate::query()->firstOrCreate(
                     ['project_id' => $project->id, 'fingerprint' => $fingerprint],
                     [
                         'source_kind' => 'documentation_drift',
+                        'source_reconciliation_run_id' => $run?->id,
                         'failure_code' => 'documentation_drift:'.$finding['target_category'],
                         'affected_role' => 'project_manager',
                         'affected_area' => $finding['target_source'],
@@ -63,6 +65,7 @@ class DocumentationDriftCandidateRecorder
                 // Deliberately preserve every operator decision. New evidence never reopens an approved,
                 // rejected, or dismissed proposal without the existing queue's explicit policy.
                 $candidate->update([
+                    'source_reconciliation_run_id' => $run?->id ?? $candidate->source_reconciliation_run_id,
                     'evidence_summary' => $finding['reason_for_drift'],
                     'proposed_change' => $finding['proposed_alignment'],
                     'evidence' => $evidence,

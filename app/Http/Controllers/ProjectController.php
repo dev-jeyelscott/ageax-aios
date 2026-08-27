@@ -21,6 +21,7 @@ use App\Http\Requests\StoreProjectRequest;
 use App\Http\Requests\StoreRoadmapRequest;
 use App\Http\Requests\StoreTaskOperatorMessageRequest;
 use App\Http\Requests\UpdateProjectStatusRequest;
+use App\Http\Requests\UpdateProjectStewardshipPolicyRequest;
 use App\Models\AgentRun;
 use App\Models\AgentWorker;
 use App\Models\Project;
@@ -193,6 +194,12 @@ class ProjectController extends Controller
             'reconciliation',
             $this->reconciliationPayload($project),
         );
+        $stewardshipPolicy = $project->getAttribute('stewardship_policy');
+        $stewardshipPolicy = is_array($stewardshipPolicy) ? $stewardshipPolicy : [];
+        $project->setAttribute('stewardship', [
+            'automatic_task_creation' => (bool) ($stewardshipPolicy['automatic_task_creation'] ?? false),
+            'maintenance_task_count' => $project->tasks()->whereNotNull('knowledge_improvement_candidate_id')->count(),
+        ]);
         $project->setAttribute(
             'harness_usage',
             $usage['harnesses'],
@@ -1176,6 +1183,19 @@ class ProjectController extends Controller
         $user = $request->user();
 
         $reconciliation->handle($project, ProjectReconciliationTrigger::Manual, $user);
+
+        return to_route('projects.show', $project);
+    }
+
+    /** Persist the explicit operator opt-in/out for governed documentation Task creation. */
+    public function updateStewardshipPolicy(UpdateProjectStewardshipPolicyRequest $request, Project $project, AuditLogger $audit): RedirectResponse
+    {
+        $storedPolicy = $project->getAttribute('stewardship_policy');
+        $policy = is_array($storedPolicy) ? $storedPolicy : [];
+        $policy['version'] = 1;
+        $policy['automatic_task_creation'] = $request->boolean('automatic_task_creation');
+        $project->update(['stewardship_policy' => $policy]);
+        $audit->record('stewardship.policy_updated', ['automatic_task_creation' => $policy['automatic_task_creation']], $project);
 
         return to_route('projects.show', $project);
     }

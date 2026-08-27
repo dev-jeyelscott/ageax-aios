@@ -270,5 +270,31 @@ class RunProjectReconciliation
             'reconciliation_run_id' => $run->id,
             'reason' => $reason,
         ], $run->project);
+
+        $fingerprint = hash('sha256', $reason);
+        $failures = ProjectReconciliationRun::query()
+            ->where('project_id', $run->project_id)
+            ->where('status', ProjectReconciliationStatus::Failed->value)
+            ->latest('id')
+            ->limit(3)
+            ->get()
+            ->filter(fn (ProjectReconciliationRun $failed): bool => hash_equals($fingerprint, hash('sha256', (string) $failed->failure_reason)))
+            ->count();
+
+        if ($failures < 3) {
+            return;
+        }
+
+        $project = $run->project->fresh();
+        if ($project === null) {
+            return;
+        }
+
+        $policy = $project->getAttribute('stewardship_policy');
+        $policy = is_array($policy) ? $policy : [];
+        $policy['version'] = 1;
+        $policy['circuit'] = ['fingerprint' => $fingerprint, 'failures' => $failures, 'opened_at' => now()->toIso8601String(), 'reason' => 'Repeated reconciliation failure with no new evidence.'];
+        $project->update(['stewardship_policy' => $policy]);
+        $this->audit->record('stewardship.circuit_opened', ['fingerprint' => $fingerprint, 'failures' => $failures], $project);
     }
 }

@@ -155,6 +155,11 @@ type Reconciliation = {
     active: boolean;
 };
 
+type Stewardship = {
+    automatic_task_creation: boolean;
+    maintenance_task_count: number;
+};
+
 type Project = {
     id: number;
     name: string;
@@ -176,6 +181,7 @@ type Project = {
     harness_usage: Record<string, HarnessUsage>;
     git_evidence: GitEvidence | null;
     reconciliation: Reconciliation;
+    stewardship: Stewardship;
     recent_agent_runs: AgentRun[];
     audit_events: {
         id: number;
@@ -1044,6 +1050,15 @@ function ReconciliationOverviewCard({ project }: { project: Project }) {
                 </p>
             )}
 
+            <p className="mt-3 text-2xs text-muted-foreground">
+                Stewardship Task creation:{' '}
+                {project.stewardship.automatic_task_creation
+                    ? 'enabled'
+                    : 'operator opt-in required'}{' '}
+                · {project.stewardship.maintenance_task_count} maintenance task
+                {project.stewardship.maintenance_task_count === 1 ? '' : 's'}.
+            </p>
+
             {summary && (
                 <Link
                     href={knowledgeImprovements(project.id)}
@@ -1066,7 +1081,7 @@ function ReconciliationOverviewCard({ project }: { project: Project }) {
                             <ClipboardCheck className="size-3.5" />
                             {reconciliation.active
                                 ? 'Reviewing…'
-                                : 'Review project'}
+                                : 'Review & Sync Project'}
                         </Button>
                     )}
                 </Form>

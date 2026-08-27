@@ -26,7 +26,11 @@ class RecordProjectReconciliationResult
         'recommended_actions',
     ];
 
-    public function __construct(private AuditLogger $audit, private DocumentationDriftCandidateRecorder $candidates) {}
+    public function __construct(
+        private AuditLogger $audit,
+        private DocumentationDriftCandidateRecorder $candidates,
+        private ConvertApprovedKnowledgeCandidateToTask $stewardship,
+    ) {}
 
     /**
      * Validate and normalize one Project Manager reconciliation advisory response before durable
@@ -119,7 +123,7 @@ class RecordProjectReconciliationResult
             $lockedAgentRun = AgentRun::query()->whereKey($agentRun->id)->lockForUpdate()->firstOrFail();
 
             $this->assertEligibleRun($lockedRun, $lockedAgentRun);
-            $candidateCount = $this->candidates->record($lockedRun->project, $validated['documentation_findings']);
+            $candidateCount = $this->candidates->record($lockedRun->project, $validated['documentation_findings'], $lockedRun);
 
             $lockedRun->update([
                 'result' => $validated,
@@ -134,6 +138,8 @@ class RecordProjectReconciliationResult
                 'documentation_candidate_count' => $candidateCount,
                 'resolved_drift_count' => count($validated['resolved_drift']),
             ], $lockedRun->project);
+
+            $this->stewardship->handle($lockedRun);
 
             return $lockedRun->refresh();
         }, attempts: 3);

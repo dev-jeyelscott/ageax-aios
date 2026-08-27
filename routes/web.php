@@ -113,6 +113,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
         [ProjectController::class, 'requestReconciliation'],
     )->name('projects.reconciliation-runs.store');
 
+    Route::patch('projects/{project}/stewardship-policy', [ProjectController::class, 'updateStewardshipPolicy'])
+        ->name('projects.stewardship-policy.update');
+
     Route::get(
         'projects/{project}/tickets',
         [TicketController::class, 'index'],

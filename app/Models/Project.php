@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['name', 'path', 'status', 'git_status', 'git_head_sha', 'obsidian_path', 'paused_at', 'roadmap_scanned_at'])]
+#[Fillable(['name', 'path', 'status', 'git_status', 'git_head_sha', 'obsidian_path', 'paused_at', 'roadmap_scanned_at', 'stewardship_policy'])]
 /**
  * @property ProjectStatus $status
  * @property CarbonImmutable|null $roadmap_scanned_at
@@ -22,7 +22,7 @@ class Project extends Model
 
     protected function casts(): array
     {
-        return ['status' => ProjectStatus::class, 'paused_at' => 'immutable_datetime', 'roadmap_scanned_at' => 'immutable_datetime'];
+        return ['status' => ProjectStatus::class, 'paused_at' => 'immutable_datetime', 'roadmap_scanned_at' => 'immutable_datetime', 'stewardship_policy' => 'array'];
     }
 
     /** @return HasMany<Roadmap, $this> */

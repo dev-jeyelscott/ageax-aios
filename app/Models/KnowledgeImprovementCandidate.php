@@ -10,9 +10,11 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
     'project_id',
+    'source_reconciliation_run_id',
     'target_skill_id',
     'decided_by_user_id',
     'fingerprint',
@@ -111,5 +113,11 @@ class KnowledgeImprovementCandidate extends Model
             AgentRun::class,
             'knowledge_architect_agent_run_id',
         );
+    }
+
+    /** @return HasOne<Task, $this> */
+    public function stewardshipTask(): HasOne
+    {
+        return $this->hasOne(Task::class, 'knowledge_improvement_candidate_id');
     }
 }
