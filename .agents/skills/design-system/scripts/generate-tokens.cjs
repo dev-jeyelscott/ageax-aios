@@ -145,6 +145,7 @@ function generateTailwind(tokens) {
 
   // Extract colors for Tailwind
   const colors = {};
+
   for (const [key, value] of Object.entries(semantic)) {
     if (key.includes('color')) {
       const name = key.replace('--color-', '').replace(/-/g, '.');
@@ -185,6 +186,7 @@ function main() {
 
   // Generate output
   let output;
+
   if (options.format === 'tailwind') {
     output = generateTailwind(tokens);
   } else {

@@ -9,9 +9,9 @@
  *   node sync-brand-to-tokens.cjs --dry-run
  */
 
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
 
 // Paths
 const BRAND_GUIDELINES = 'docs/brand-guidelines.md';
@@ -40,22 +40,35 @@ function extractColorsFromMarkdown(content) {
     secondary: /Secondary Color\s*\|\s*#([A-Fa-f0-9]{6})/i,
     accent: /Accent Color\s*\|\s*#([A-Fa-f0-9]{6})/i
   };
+
   for (const key of Object.keys(quickRef)) {
     const m = content.match(quickRef[key]);
-    if (m) colors[key].base = `#${m[1]}`;
+
+    if (m) {
+colors[key].base = `#${m[1]}`;
+}
   }
 
   // 2) Dedicated "### <Role> Colors" tables — assign base/dark/light by the
   //    row label keyword.
   const assignFromSection = (heading, target) => {
     const section = content.match(new RegExp(`### ${heading}[\\s\\S]*?(?=\\n###|$)`, 'i'));
-    if (!section) return;
+
+    if (!section) {
+return;
+}
+
     for (const m of section[0].matchAll(rowRe)) {
       const label = m[1].trim().toLowerCase();
       const hex = `#${m[2]}`;
-      if (label.includes('dark')) target.dark = hex;
-      else if (label.includes('light')) target.light = hex;
-      else if (!target.base) target.base = hex;
+
+      if (label.includes('dark')) {
+target.dark = hex;
+} else if (label.includes('light')) {
+target.light = hex;
+} else if (!target.base) {
+target.base = hex;
+}
     }
   };
   assignFromSection('Primary Colors', colors.primary);
@@ -99,11 +112,15 @@ function generateColorScale(baseHex, darkHex, lightHex) {
  * Adjust hex color brightness
  */
 function adjustBrightness(hex, percent) {
-  if (typeof hex !== 'string') return '#000000';
+  if (typeof hex !== 'string') {
+return '#000000';
+}
+
   const num = parseInt(hex.replace('#', ''), 16);
   const r = Math.min(255, Math.max(0, (num >> 16) + Math.round(255 * percent)));
   const g = Math.min(255, Math.max(0, ((num >> 8) & 0x00FF) + Math.round(255 * percent)));
   const b = Math.min(255, Math.max(0, (num & 0x0000FF) + Math.round(255 * percent)));
+
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0').toUpperCase()}`;
 }
 
@@ -128,10 +145,12 @@ function updateDesignTokens(tokens, colors) {
   // on an unexpected guidelines format.
   for (const role of ['primary', 'secondary', 'accent']) {
     const c = colors[role];
+
     if (!c.base) {
       console.warn(`⚠️  No base hex found for ${role} color — skipping its token scale.`);
       continue;
     }
+
     primitiveColors[c.name] = generateColorScale(c.base, c.dark, c.light);
   }
 
@@ -194,10 +213,12 @@ function main() {
 
   // Read brand guidelines
   const guidelinesPath = path.resolve(process.cwd(), BRAND_GUIDELINES);
+
   if (!fs.existsSync(guidelinesPath)) {
     console.error(`❌ Brand guidelines not found: ${guidelinesPath}`);
     process.exit(1);
   }
+
   const guidelinesContent = fs.readFileSync(guidelinesPath, 'utf-8');
 
   // Extract colors
@@ -210,6 +231,7 @@ function main() {
   // Read existing tokens
   const tokensPath = path.resolve(process.cwd(), DESIGN_TOKENS_JSON);
   let tokens = {};
+
   if (fs.existsSync(tokensPath)) {
     tokens = JSON.parse(fs.readFileSync(tokensPath, 'utf-8'));
   }
@@ -221,6 +243,7 @@ function main() {
     console.log('📋 Would update design-tokens.json:');
     console.log(JSON.stringify(tokens.primitive.color, null, 2).slice(0, 500) + '...');
     console.log('\n⏭️  Dry run - no files changed');
+
     return;
   }
 
@@ -230,6 +253,7 @@ function main() {
 
   // Regenerate CSS
   const generateScript = path.resolve(process.cwd(), GENERATE_TOKENS_SCRIPT);
+
   if (fs.existsSync(generateScript)) {
     try {
       execFileSync('node', [generateScript, '--config', DESIGN_TOKENS_JSON, '-o', DESIGN_TOKENS_CSS], {

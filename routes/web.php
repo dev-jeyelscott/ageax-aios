@@ -5,6 +5,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GlobalAgentController;
 use App\Http\Controllers\HarnessScorecardController;
 use App\Http\Controllers\KnowledgeImprovementController;
+use App\Http\Controllers\OrchestratorRecommendationController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectWorkflowController;
 use App\Http\Controllers\SkillController;
@@ -48,6 +49,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
         'agents/{agent}/runs/{run}',
         [GlobalAgentController::class, 'showRun'],
     )->scopeBindings()->name('agents.runs.show');
+
+    Route::get(
+        'orchestrator/recommendations',
+        [OrchestratorRecommendationController::class, 'index'],
+    )->name('orchestrator.recommendations.index');
+
+    Route::patch(
+        'orchestrator/recommendations/{recommendation}/status',
+        [OrchestratorRecommendationController::class, 'updateStatus'],
+    )->name('orchestrator.recommendations.status.update');
 
     Route::get(
         'ticket-operations',
@@ -118,8 +129,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
         [ProjectController::class, 'requestReconciliation'],
     )->name('projects.reconciliation-runs.store');
 
-    Route::patch('projects/{project}/stewardship-policy', [ProjectController::class, 'updateStewardshipPolicy'])
-        ->name('projects.stewardship-policy.update');
+    Route::patch(
+        'projects/{project}/stewardship-policy',
+        [ProjectController::class, 'updateStewardshipPolicy'],
+    )->name('projects.stewardship-policy.update');
 
     Route::get(
         'projects/{project}/tickets',

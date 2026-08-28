@@ -31,11 +31,24 @@ use LogicException;
  * @property string $evidence_hash
  * @property string $confidence
  * @property array<string, mixed> $structured_recommendation
+ * @property ?int $status_changed_by_user_id
+ * @property CarbonImmutable|null $status_changed_at
  * @property CarbonImmutable $created_at
  */
 class OrchestrationRecommendation extends Model
 {
     public const UPDATED_AT = null;
+
+    /**
+     * Lifecycle metadata may change without rewriting historical recommendation evidence.
+     *
+     * @var list<string>
+     */
+    private const array MutableLifecycleAttributes = [
+        'status',
+        'status_changed_by_user_id',
+        'status_changed_at',
+    ];
 
     /** @var array<string, mixed> */
     protected $attributes = [
@@ -43,21 +56,35 @@ class OrchestrationRecommendation extends Model
     ];
 
     /**
-     * Prevent recommendation evidence from being rewritten or deleted through Eloquent.
+     * Enforce immutable recommendation evidence and one-way terminal lifecycle transitions.
      */
     protected static function booted(): void
     {
-        static::updating(function (OrchestrationRecommendation $recommendation): void {
-            throw new LogicException('Orchestration recommendation evidence is immutable.');
+        static::creating(function (OrchestrationRecommendation $recommendation): void {
+            $recommendation->assertInitialLifecycleStateIsValid();
         });
 
-        static::deleting(function (OrchestrationRecommendation $recommendation): void {
-            throw new LogicException('Orchestration recommendation evidence cannot be deleted directly.');
+        static::updating(function (OrchestrationRecommendation $recommendation): void {
+            foreach (array_keys($recommendation->getDirty()) as $attribute) {
+                if (! in_array($attribute, self::MutableLifecycleAttributes, true)) {
+                    throw new LogicException(
+                        'Orchestration recommendation evidence is immutable.',
+                    );
+                }
+            }
+
+            $recommendation->assertLifecycleTransitionIsValid();
+        });
+
+        static::deleting(function (): void {
+            throw new LogicException(
+                'Orchestration recommendation evidence cannot be deleted directly.',
+            );
         });
     }
 
     /**
-     * Cast persisted recommendation evidence to bounded domain types.
+     * Cast persisted recommendation evidence and lifecycle metadata to bounded domain types.
      */
     protected function casts(): array
     {
@@ -67,6 +94,8 @@ class OrchestrationRecommendation extends Model
             'confidence' => 'decimal:4',
             'structured_recommendation' => 'array',
             'status' => OrchestrationRecommendationStatus::class,
+            'status_changed_by_user_id' => 'integer',
+            'status_changed_at' => 'immutable_datetime',
             'created_at' => 'immutable_datetime',
         ];
     }
@@ -109,5 +138,76 @@ class OrchestrationRecommendation extends Model
     public function agentRun(): BelongsTo
     {
         return $this->belongsTo(AgentRun::class);
+    }
+
+    /**
+     * Return the operator who made the terminal recommendation lifecycle decision.
+     *
+     * @return BelongsTo<User, $this>
+     */
+    public function statusChangedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'status_changed_by_user_id');
+    }
+
+    /**
+     * Ensure every newly persisted recommendation begins as active without operator lifecycle metadata.
+     */
+    private function assertInitialLifecycleStateIsValid(): void
+    {
+        $status = $this->getAttribute('status');
+
+        if (
+            ! $status instanceof OrchestrationRecommendationStatus
+            || $status !== OrchestrationRecommendationStatus::Active
+            || $this->getAttribute('status_changed_by_user_id') !== null
+            || $this->getAttribute('status_changed_at') !== null
+        ) {
+            throw new LogicException(
+                'New orchestration recommendations must begin in the active advisory state.',
+            );
+        }
+    }
+
+    /**
+     * Allow exactly one active-to-terminal lifecycle decision with durable operator attribution.
+     */
+    private function assertLifecycleTransitionIsValid(): void
+    {
+        $previousStatusValue = $this->getRawOriginal('status');
+        $previousStatus = is_string($previousStatusValue)
+            ? OrchestrationRecommendationStatus::tryFrom($previousStatusValue)
+            : null;
+        $currentStatus = $this->getAttribute('status');
+
+        if (
+            $previousStatus !== OrchestrationRecommendationStatus::Active
+            || ! $currentStatus instanceof OrchestrationRecommendationStatus
+            || ! in_array(
+                $currentStatus,
+                [
+                    OrchestrationRecommendationStatus::Dismissed,
+                    OrchestrationRecommendationStatus::Superseded,
+                ],
+                true,
+            )
+        ) {
+            throw new LogicException(
+                'A finalized orchestration recommendation lifecycle state cannot be changed.',
+            );
+        }
+
+        $operatorId = $this->getAttribute('status_changed_by_user_id');
+        $changedAt = $this->getAttribute('status_changed_at');
+
+        if (
+            ! is_int($operatorId)
+            || $operatorId < 1
+            || ! $changedAt instanceof CarbonImmutable
+        ) {
+            throw new LogicException(
+                'Recommendation lifecycle changes require durable operator attribution.',
+            );
+        }
     }
 }

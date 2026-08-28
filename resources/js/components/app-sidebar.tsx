@@ -1,6 +1,7 @@
 import { Link } from '@inertiajs/react';
 import {
     Bot,
+    BrainCircuit,
     FolderKanban,
     Gauge,
     LayoutGrid,
@@ -8,6 +9,7 @@ import {
 } from 'lucide-react';
 import { index as agentsIndex } from '@/actions/App/Http/Controllers/GlobalAgentController';
 import { index as harnessScorecardsIndex } from '@/actions/App/Http/Controllers/HarnessScorecardController';
+import { index as orchestratorRecommendationsIndex } from '@/actions/App/Http/Controllers/OrchestratorRecommendationController';
 import { index as projectsIndex } from '@/actions/App/Http/Controllers/ProjectController';
 import { index as ticketOperationsIndex } from '@/actions/App/Http/Controllers/TicketOperationsController';
 import AppLogo from '@/components/app-logo';
@@ -47,12 +49,20 @@ const mainNavItems: NavItem[] = [
         icon: Gauge,
     },
     {
+        title: 'Orchestrator',
+        href: orchestratorRecommendationsIndex(),
+        icon: BrainCircuit,
+    },
+    {
         title: 'Agents',
         href: agentsIndex(),
         icon: Bot,
     },
 ];
 
+/**
+ * Render the authenticated AGEAX application navigation using the existing shared sidebar shell.
+ */
 export function AppSidebar() {
     return (
         <Sidebar collapsible="icon" variant="inset">

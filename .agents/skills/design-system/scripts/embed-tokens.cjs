@@ -16,16 +16,20 @@ const path = require('path');
 // Find project root (look for assets/design-tokens.css)
 function findProjectRoot(startDir) {
   let dir = startDir;
+
   while (dir !== '/') {
     if (fs.existsSync(path.join(dir, 'assets', 'design-tokens.css'))) {
       return dir;
     }
+
     dir = path.dirname(dir);
   }
+
   return null;
 }
 
 const projectRoot = findProjectRoot(process.cwd());
+
 if (!projectRoot) {
   console.error('Error: Could not find assets/design-tokens.css');
   process.exit(1);
@@ -57,9 +61,13 @@ const MINIMAL_TOKENS = [
 function extractTokens(css, minimal = false) {
   // Extract :root block
   const rootMatch = css.match(/:root\s*\{([^}]+)\}/g);
-  if (!rootMatch) return '';
+
+  if (!rootMatch) {
+return '';
+}
 
   let allVars = [];
+
   for (const block of rootMatch) {
     const vars = block.match(/--[\w-]+:\s*[^;]+;/g) || [];
     allVars = allVars.concat(vars);

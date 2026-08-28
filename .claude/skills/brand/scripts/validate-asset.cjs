@@ -83,6 +83,7 @@ function validateFilename(filename) {
 
   // Parse and check components
   const parsed = parseFilename(filename);
+
   if (parsed) {
     // Check timestamp format
     if (!/^\d{8}$/.test(parsed.timestamp)) {
@@ -108,6 +109,7 @@ function validateFilename(filename) {
       "icon",
       "photo",
     ];
+
     if (!validTypes.includes(parsed.type)) {
       suggestions.push(`Consider using type: ${validTypes.join(", ")}`);
     }
@@ -127,6 +129,7 @@ function validateFileSize(filepath, extension) {
   const size = stats.size;
 
   let limits;
+
   if (RULES.formats.video.includes(extension)) {
     limits = RULES.fileSize.video;
   } else if (extension === "svg") {
@@ -168,15 +171,20 @@ function validateFormat(extension) {
 
   if (!allFormats.includes(extension)) {
     issues.push(`Unsupported file format: .${extension}`);
+
     return { valid: false, issues, info };
   }
 
   // Determine category
-  if (RULES.formats.image.includes(extension)) info.category = "image";
-  else if (RULES.formats.vector.includes(extension)) info.category = "vector";
-  else if (RULES.formats.video.includes(extension)) info.category = "video";
-  else if (RULES.formats.document.includes(extension))
-    info.category = "document";
+  if (RULES.formats.image.includes(extension)) {
+info.category = "image";
+} else if (RULES.formats.vector.includes(extension)) {
+info.category = "vector";
+} else if (RULES.formats.video.includes(extension)) {
+info.category = "video";
+} else if (RULES.formats.document.includes(extension)) {
+info.category = "document";
+}
 
   return { valid: true, issues, info };
 }
@@ -212,7 +220,9 @@ function checkManifest(filepath) {
  * Generate suggested filename
  */
 function suggestFilename(original, parsed) {
-  if (!parsed) return null;
+  if (!parsed) {
+return null;
+}
 
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const type = parsed.type || "asset";
@@ -227,10 +237,14 @@ function suggestFilename(original, parsed) {
  * Format bytes to human readable
  */
 function formatBytes(bytes) {
-  if (bytes === 0) return "0 Bytes";
+  if (bytes === 0) {
+return "0 Bytes";
+}
+
   const k = 1024;
   const sizes = ["Bytes", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
+
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
@@ -252,6 +266,7 @@ function validateAsset(assetPath) {
   if (!fs.existsSync(assetPath)) {
     results.valid = false;
     results.issues.push(`File not found: ${assetPath}`);
+
     return results;
   }
 
@@ -261,6 +276,7 @@ function validateAsset(assetPath) {
   // 1. Validate filename
   const filenameResult = validateFilename(filename);
   results.checks.filename = filenameResult;
+
   if (!filenameResult.valid) {
     results.issues.push(...filenameResult.issues);
     results.suggestions.push(...filenameResult.suggestions);
@@ -269,6 +285,7 @@ function validateAsset(assetPath) {
   // 2. Validate format
   const formatResult = validateFormat(extension);
   results.checks.format = formatResult;
+
   if (!formatResult.valid) {
     results.issues.push(...formatResult.issues);
   }
@@ -276,14 +293,17 @@ function validateAsset(assetPath) {
   // 3. Validate file size
   const sizeResult = validateFileSize(assetPath, extension);
   results.checks.fileSize = sizeResult;
+
   if (!sizeResult.valid) {
     results.issues.push(...sizeResult.issues);
   }
+
   results.warnings.push(...sizeResult.warnings);
 
   // 4. Check manifest registration
   const manifestResult = checkManifest(assetPath);
   results.checks.manifest = manifestResult;
+
   if (!manifestResult.registered) {
     results.warnings.push("Asset not registered in manifest.json");
     results.suggestions.push(
@@ -294,6 +314,7 @@ function validateAsset(assetPath) {
   // 5. Suggest corrected filename if needed
   if (!filenameResult.valid && filenameResult.parsed) {
     const suggested = suggestFilename(filename, filenameResult.parsed);
+
     if (suggested) {
       results.suggestions.push(`Suggested filename: ${suggested}`);
     }
