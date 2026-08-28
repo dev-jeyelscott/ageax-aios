@@ -16,6 +16,7 @@ use App\Models\TicketTriageAttempt;
 use App\TaskStatus;
 use App\TicketStatus;
 use App\WorkerLease;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
@@ -24,6 +25,8 @@ use Throwable;
 
 class StaleWorkerRecovery
 {
+    private const int PrimaryWorkerSlot = 1;
+
     public function __construct(
         private TaskWorkflow $workflow,
         private TicketWorkflow $ticketWorkflow,
@@ -33,7 +36,7 @@ class StaleWorkerRecovery
     ) {}
 
     /**
-     * Recover stale project worker executions and durable workflow attempts.
+     * Recover stale project worker executions and durable workflow attempts across supported slots.
      */
     public function recover(
         Project $project,
@@ -46,16 +49,33 @@ class StaleWorkerRecovery
         $recoveryInstanceId = (string) Str::uuid();
         $recovered = 0;
 
-        foreach ([
-            AgentRole::Coder,
-            AgentRole::Reviewer,
-            AgentRole::KnowledgeArchitect,
-        ] as $role) {
+        $workers = AgentWorker::query()
+            ->whereBelongsTo($project)
+            ->where(function ($query): void {
+                $query->where('role', AgentRole::Coder)
+                    ->orWhere(function ($query): void {
+                        $query->whereIn('role', [
+                            AgentRole::Reviewer,
+                            AgentRole::KnowledgeArchitect,
+                        ])->where('slot', self::PrimaryWorkerSlot);
+                    });
+            })
+            ->orderBy('role')
+            ->orderBy('slot')
+            ->get(['id', 'role', 'slot']);
+
+        foreach ($workers as $worker) {
+            $role = AgentRole::from(
+                (string) $worker->getRawOriginal('role'),
+            );
+            $slot = (int) $worker->slot;
+
             $lease = $this->heartbeat->takeoverExpired(
                 $project,
                 $role,
                 $recoveryInstanceId,
                 $staleAfterSeconds,
+                slot: $slot,
             );
 
             if ($lease === null) {
@@ -63,7 +83,12 @@ class StaleWorkerRecovery
             }
 
             try {
-                $this->recoverWorker($project, $role, $lease);
+                $this->recoverWorker(
+                    $project,
+                    $role,
+                    $lease,
+                    $slot,
+                );
                 $recovered++;
             } finally {
                 $this->heartbeat->release($lease, 'interrupted');
@@ -91,18 +116,14 @@ class StaleWorkerRecovery
      */
     public function recoverAbandonedCoderFinalization(Task $task): bool
     {
-        return $this->recoverAbandonedFinalization($task, AgentRole::Coder);
+        return $this->recoverAbandonedFinalization(
+            $task,
+            AgentRole::Coder,
+        );
     }
 
     /**
-     * Catches executions abandoned by a crashed worker process without going through
-     * takeoverExpired(): once a lease expires, the durable aios:work loop's own acquire()
-     * (every few seconds) can silently reclaim-and-release that worker slot on its next idle
-     * cycle, long before this five-minute scan runs, resetting last_heartbeat_at and clearing
-     * lease_id. That leaves the AgentWorker row looking healthy while the specific AgentRun (and
-     * its Task) the crashed process was executing stays stuck at status Running/Coding forever.
-     * This scan is keyed on the run's own age and its lease no longer matching the worker's
-     * current lease, so it is immune to that race.
+     * Recover old running AgentRuns whose original lease no longer exists.
      */
     private function recoverOrphanedRuns(
         Project $project,
@@ -133,7 +154,7 @@ class StaleWorkerRecovery
     }
 
     /**
-     * Recover one orphaned running AgentRun when its original worker lease is gone.
+     * Recover one orphaned running AgentRun when its exact originating worker lease is gone.
      */
     private function recoverOrphanedRun(AgentRun $run): bool
     {
@@ -155,10 +176,7 @@ class StaleWorkerRecovery
                 (string) $lockedRun->getRawOriginal('role'),
             );
 
-            $worker = AgentWorker::query()
-                ->whereBelongsTo($lockedRun->project)
-                ->where('role', $role)
-                ->first();
+            $worker = $this->workerForRun($lockedRun, $role);
 
             if (
                 $worker !== null
@@ -239,6 +257,7 @@ class StaleWorkerRecovery
                 'role' => $role->value,
                 'reason' => 'orphaned_agent_run',
                 'agent_run_id' => $lockedRun->id,
+                'agent_worker_id' => $lockedRun->agent_worker_id,
                 'evidence' => $evidence,
             ], $lockedRun->project, $task);
 
@@ -247,19 +266,7 @@ class StaleWorkerRecovery
     }
 
     /**
-     * Catches a task left claimed (Coding/Validating/Reviewing) whose harness execution already
-     * finished (or never started) without AIOS ever finalizing it: no `AgentRun` is currently
-     * `Running` for that task/role, yet the task is still sitting in a claimed status past the
-     * stale floor. This differs from recoverOrphanedRuns(), which requires an `AgentRun` still
-     * marked `Running`: it exists for a worker process that crashed *during* harness execution.
-     * This method exists for the harness finishing normally (or a lease-holding process crashing
-     * before ever recording a run) but the surrounding orchestration code never reaching its own
-     * validate/commit/transition step afterward (e.g. the host process was killed between
-     * AgentRunRecorder::complete() and RunCoderTask's subsequent validation). A task in that
-     * state is invisible to both recoverOrphanedRuns() (its AgentRun is not Running) and
-     * WorkflowRecoveryScanner::detectStuckTasks() (Coding/Reviewing are not tracked terminal-stuck
-     * statuses), so without this it would block the role's single-task-in-flight claim (and, for
-     * Coder, any current-phase Reviewer review) indefinitely.
+     * Recover claimed tasks whose execution ended without final workflow finalization.
      */
     private function recoverAbandonedFinalizations(
         Project $project,
@@ -275,10 +282,22 @@ class StaleWorkerRecovery
             Task::query()
                 ->whereBelongsTo($project)
                 ->whereIn('status', $statuses)
-                ->where('updated_at', '<=', now()->subSeconds($staleAfterSeconds))
+                ->where(
+                    'updated_at',
+                    '<=',
+                    now()->subSeconds($staleAfterSeconds),
+                )
                 ->get()
-                ->each(function (Task $task) use ($role, &$recovered): void {
-                    if ($this->recoverAbandonedFinalization($task, $role)) {
+                ->each(function (Task $task) use (
+                    $role,
+                    &$recovered,
+                ): void {
+                    if (
+                        $this->recoverAbandonedFinalization(
+                            $task,
+                            $role,
+                        )
+                    ) {
                         $recovered++;
                     }
                 });
@@ -290,8 +309,10 @@ class StaleWorkerRecovery
     /**
      * Recover one claimed task whose recorded execution ended without finalizing workflow state.
      */
-    private function recoverAbandonedFinalization(Task $task, AgentRole $role): bool
-    {
+    private function recoverAbandonedFinalization(
+        Task $task,
+        AgentRole $role,
+    ): bool {
         return DB::transaction(function () use ($task, $role): bool {
             $lockedTask = Task::query()
                 ->lockForUpdate()
@@ -304,7 +325,9 @@ class StaleWorkerRecovery
             if (
                 $lockedTask === null
                 || ! in_array(
-                    TaskStatus::from($lockedTask->getRawOriginal('status')),
+                    TaskStatus::from(
+                        $lockedTask->getRawOriginal('status'),
+                    ),
                     $expectedStatuses,
                     true,
                 )
@@ -319,14 +342,11 @@ class StaleWorkerRecovery
                 )
                 ->latest('number')
                 ->first();
+
             if ($attempt === null) {
                 return false;
             }
 
-            // Elapsed time alone is never sufficient evidence (see class docblock): require a
-            // persisted AgentRun for this task, role, and current attempt to prove this exact
-            // execution genuinely happened. A completed run from an earlier attempt must not
-            // turn a fresh reviewer claim into an abandoned finalization.
             $runs = AgentRun::query()
                 ->whereBelongsTo($lockedTask)
                 ->where('role', $role)
@@ -334,23 +354,33 @@ class StaleWorkerRecovery
                     $query->where('attempt_number', $attempt->number)
                         ->orWhere(function ($query) use ($attempt): void {
                             $query->whereNull('attempt_number')
-                                ->where('started_at', '>=', $attempt->started_at);
+                                ->where(
+                                    'started_at',
+                                    '>=',
+                                    $attempt->started_at,
+                                );
                         });
                 })
                 ->get();
 
-            if ($runs->isEmpty() || $runs->contains(fn (AgentRun $run): bool => AgentRunStatus::from($run->getRawOriginal('status')) === AgentRunStatus::Running)) {
+            if (
+                $runs->isEmpty()
+                || $runs->contains(
+                    fn (AgentRun $run): bool => AgentRunStatus::from(
+                        $run->getRawOriginal('status'),
+                    ) === AgentRunStatus::Running,
+                )
+            ) {
                 return false;
             }
 
-            $worker = AgentWorker::query()
-                ->whereBelongsTo($lockedTask->project)
-                ->where('role', $role)
-                ->whereNotNull('lease_id')
-                ->where('lease_expires_at', '>', now())
-                ->first();
-
-            if ($worker !== null && $runs->contains(fn (AgentRun $run): bool => $run->worker_lease_id === $worker->lease_id)) {
+            if (
+                $this->hasActiveMatchingWorkerLease(
+                    $lockedTask->project,
+                    $role,
+                    $runs,
+                )
+            ) {
                 return false;
             }
 
@@ -365,8 +395,16 @@ class StaleWorkerRecovery
                         'finished_at' => now(),
                     ]);
 
-                $this->workflow->transition($lockedTask, TaskStatus::Failed);
-            } elseif ($this->workflow->reconcileExistingReviewerDecision($lockedTask, $attempt) === null) {
+                $this->workflow->transition(
+                    $lockedTask,
+                    TaskStatus::Failed,
+                );
+            } elseif (
+                $this->workflow->reconcileExistingReviewerDecision(
+                    $lockedTask,
+                    $attempt,
+                ) === null
+            ) {
                 $this->workflow->recordReviewerOperationalFailure(
                     $lockedTask,
                     $attempt,
@@ -388,12 +426,13 @@ class StaleWorkerRecovery
     }
 
     /**
-     * Recover durable state owned by an expired project worker lease.
+     * Recover durable state proven to belong to one expired project worker slot lease.
      */
     private function recoverWorker(
         Project $project,
         AgentRole $role,
         WorkerLease $lease,
+        int $slot,
     ): void {
         $this->interruptRuns($project, $role, $lease);
 
@@ -413,7 +452,9 @@ class StaleWorkerRecovery
 
         if ($statuses === []) {
             $this->audit->record('worker.recovered', [
+                'agent_worker_id' => $lease->workerId,
                 'role' => $role->value,
+                'slot' => $slot,
                 'worker_instance_id' => $lease->workerInstanceId,
                 'lease_id' => $lease->leaseId,
             ], $project);
@@ -422,13 +463,32 @@ class StaleWorkerRecovery
         }
 
         $recoveredTasks = [];
+        $taskIds = $this->taskIdsOwnedByExpiredLease(
+            $project,
+            $role,
+            $lease,
+        );
+
+        if (
+            $taskIds === []
+            && $this->roleHasSingleWorker($project, $role)
+        ) {
+            $taskIds = $project->tasks()
+                ->whereIn('status', $statuses)
+                ->pluck('id')
+                ->map(fn ($id): int => (int) $id)
+                ->all();
+        }
 
         $project->tasks()
+            ->whereIn('id', $taskIds)
             ->whereIn('status', $statuses)
             ->get()
             ->each(function (Task $task) use (
                 $role,
                 $project,
+                $lease,
+                $slot,
                 &$recoveredTasks,
             ): void {
                 $evidence = $this->recoveryEvidence($task);
@@ -460,7 +520,9 @@ class StaleWorkerRecovery
                 }
 
                 $this->audit->record('task.recovered', [
+                    'agent_worker_id' => $lease->workerId,
                     'role' => $role->value,
+                    'slot' => $slot,
                     'evidence' => $evidence,
                 ], $project, $task);
 
@@ -471,7 +533,9 @@ class StaleWorkerRecovery
             });
 
         $this->audit->record('worker.recovered', [
+            'agent_worker_id' => $lease->workerId,
             'role' => $role->value,
+            'slot' => $slot,
             'worker_instance_id' => $lease->workerInstanceId,
             'lease_id' => $lease->leaseId,
             'tasks' => $recoveredTasks,
@@ -479,7 +543,7 @@ class StaleWorkerRecovery
     }
 
     /**
-     * Recover stale roadmap processing attempts owned by the Project Manager lane.
+     * Recover stale roadmap processing attempts owned by Project Manager slot 1.
      */
     private function recoverStaleRoadmaps(
         Project $project,
@@ -507,6 +571,7 @@ class StaleWorkerRecovery
 
         $worker = $project->workers()
             ->where('role', AgentRole::ProjectManager)
+            ->where('slot', self::PrimaryWorkerSlot)
             ->first();
 
         $lease = $worker === null
@@ -516,6 +581,7 @@ class StaleWorkerRecovery
                 AgentRole::ProjectManager,
                 $recoveryInstanceId,
                 $staleAfterSeconds,
+                slot: self::PrimaryWorkerSlot,
             );
 
         if ($worker !== null && $lease === null) {
@@ -623,7 +689,7 @@ class StaleWorkerRecovery
     }
 
     /**
-     * Recover stale Ticket triage attempts owned by the Project Manager lane.
+     * Recover stale Ticket triage attempts owned by Project Manager slot 1.
      */
     private function recoverStaleTicketTriage(
         Project $project,
@@ -656,6 +722,7 @@ class StaleWorkerRecovery
 
         $worker = $project->workers()
             ->where('role', AgentRole::ProjectManager)
+            ->where('slot', self::PrimaryWorkerSlot)
             ->first();
 
         $lease = $worker === null
@@ -665,6 +732,7 @@ class StaleWorkerRecovery
                 AgentRole::ProjectManager,
                 $recoveryInstanceId,
                 $staleAfterSeconds,
+                slot: self::PrimaryWorkerSlot,
             );
 
         if ($worker !== null && $lease === null) {
@@ -692,6 +760,7 @@ class StaleWorkerRecovery
                             'role',
                             AgentRole::ProjectManager,
                         )
+                        ->where('slot', self::PrimaryWorkerSlot)
                         ->lockForUpdate()
                         ->first();
 
@@ -823,33 +892,156 @@ class StaleWorkerRecovery
     }
 
     /**
-     * Interrupt running AgentRun records associated with an expired worker lease.
+     * Interrupt only running AgentRun records associated with the exact expired worker lease.
      */
     private function interruptRuns(
         Project $project,
         AgentRole $role,
         WorkerLease $lease,
     ): void {
-        AgentRun::query()
+        $query = AgentRun::query()
             ->whereBelongsTo($project)
             ->where('role', $role)
-            ->where('status', AgentRunStatus::Running)
-            ->where(function ($query) use ($lease): void {
-                if ($lease->previousLeaseId !== null) {
-                    $query->where(
-                        'worker_lease_id',
-                        $lease->previousLeaseId,
+            ->where('status', AgentRunStatus::Running);
+
+        if ($lease->previousLeaseId !== null) {
+            $query->where(
+                'worker_lease_id',
+                $lease->previousLeaseId,
+            )->where(function ($query) use ($lease): void {
+                $query->where('agent_worker_id', $lease->workerId)
+                    ->orWhereNull('agent_worker_id');
+            });
+        } else {
+            $query->where('agent_worker_id', $lease->workerId)
+                ->whereNull('worker_lease_id');
+
+            if ($this->roleHasSingleWorker($project, $role)) {
+                $query->orWhere(function ($query) use (
+                    $project,
+                    $role,
+                ): void {
+                    $query->whereBelongsTo($project)
+                        ->where('role', $role)
+                        ->where('status', AgentRunStatus::Running)
+                        ->whereNull('agent_worker_id')
+                        ->whereNull('worker_lease_id');
+                });
+            }
+        }
+
+        $query->update([
+            'status' => AgentRunStatus::Interrupted,
+            'finished_at' => now(),
+        ]);
+    }
+
+    /**
+     * Resolve task IDs that durable AgentRun evidence ties to the expired worker lease.
+     *
+     * @return list<int>
+     */
+    private function taskIdsOwnedByExpiredLease(
+        Project $project,
+        AgentRole $role,
+        WorkerLease $lease,
+    ): array {
+        $query = AgentRun::query()
+            ->whereBelongsTo($project)
+            ->where('role', $role)
+            ->whereNotNull('task_id');
+
+        if ($lease->previousLeaseId !== null) {
+            $query->where(
+                'worker_lease_id',
+                $lease->previousLeaseId,
+            )->where(function ($query) use ($lease): void {
+                $query->where('agent_worker_id', $lease->workerId)
+                    ->orWhereNull('agent_worker_id');
+            });
+        } else {
+            $query->where('agent_worker_id', $lease->workerId)
+                ->whereNull('worker_lease_id');
+        }
+
+        return $query->pluck('task_id')
+            ->map(fn ($taskId): int => (int) $taskId)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Resolve the worker row that owns an AgentRun without collapsing multiple role slots to first().
+     */
+    private function workerForRun(
+        AgentRun $run,
+        AgentRole $role,
+    ): ?AgentWorker {
+        if ($run->agent_worker_id !== null) {
+            return AgentWorker::query()
+                ->whereKey($run->agent_worker_id)
+                ->whereBelongsTo($run->project)
+                ->where('role', $role)
+                ->first();
+        }
+
+        $workers = AgentWorker::query()
+            ->whereBelongsTo($run->project)
+            ->where('role', $role)
+            ->limit(2)
+            ->get();
+
+        return $workers->count() === 1
+            ? $workers->first()
+            : null;
+    }
+
+    /**
+     * Determine whether any active worker lease exactly matches the current attempt run evidence.
+     *
+     * @param  EloquentCollection<int, AgentRun>  $runs
+     */
+    private function hasActiveMatchingWorkerLease(
+        Project $project,
+        AgentRole $role,
+        EloquentCollection $runs,
+    ): bool {
+        $workers = AgentWorker::query()
+            ->whereBelongsTo($project)
+            ->where('role', $role)
+            ->whereNotNull('lease_id')
+            ->where('lease_expires_at', '>', now())
+            ->get(['id', 'lease_id']);
+
+        return $runs->contains(function (AgentRun $run) use (
+            $workers,
+        ): bool {
+            return $workers->contains(function (
+                AgentWorker $worker,
+            ) use ($run): bool {
+                return $run->worker_lease_id === $worker->lease_id
+                    && (
+                        $run->agent_worker_id === null
+                        || (int) $run->agent_worker_id
+                            === (int) $worker->id
                     );
+            });
+        });
+    }
 
-                    return;
-                }
-
-                $query->whereNull('worker_lease_id');
-            })
-            ->update([
-                'status' => AgentRunStatus::Interrupted,
-                'finished_at' => now(),
-            ]);
+    /**
+     * Determine whether a role still has the legacy unambiguous single-worker topology.
+     */
+    private function roleHasSingleWorker(
+        Project $project,
+        AgentRole $role,
+    ): bool {
+        return AgentWorker::query()
+            ->whereBelongsTo($project)
+            ->where('role', $role)
+            ->limit(2)
+            ->count() === 1;
     }
 
     /**

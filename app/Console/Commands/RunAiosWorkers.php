@@ -22,6 +22,7 @@ use App\Services\TaskPlanningEscalationWorkflow;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
 use App\TicketStatus;
+use App\WorkerLease;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
@@ -33,8 +34,10 @@ use Throwable;
 #[Description('Run durable AIOS workers until stopped, or one cycle with --once')]
 class RunAiosWorkers extends Command
 {
+    private const int PrimaryWorkerSlot = 1;
+
     /**
-     * Execute the console command.
+     * Execute the durable AIOS worker loop using only primary slot 1 until parallel claiming is separately enabled.
      */
     public function handle(
         ClaimTask $claimTask,
@@ -53,49 +56,43 @@ class RunAiosWorkers extends Command
         $workerInstanceId = (string) Str::uuid();
 
         do {
-            foreach (Project::query()->whereIn('status', [ProjectStatus::Running, ProjectStatus::Stopping])->get() as $project) {
+            foreach (
+                Project::query()
+                    ->whereIn('status', [
+                        ProjectStatus::Running,
+                        ProjectStatus::Stopping,
+                    ])
+                    ->get() as $project
+            ) {
                 if ($this->stopRequested($project, $setProjectStatus)) {
                     continue;
                 }
 
-                // A completed PM triage decision may have been persisted immediately before the
-                // worker process died. Resume that same durable conversion before allowing new PM
-                // work so a crash cannot strand a conversion-eligible Ticket in triaging.
                 try {
                     $this->recoverPendingTicketConversion(
                         $project,
                         $convertTicketToTask,
                     );
                 } catch (Throwable $throwable) {
-                    // An uncaught exception here must never kill the persistent loop for every
-                    // other project (see TaskContractGuard regex crash incident). Report and let
-                    // the next cycle retry; the stale-worker/workflow recovery scan covers any
-                    // resulting stranded state.
                     report($throwable);
 
                     continue;
                 }
 
-                // Stale worker/lease and workflow-failure recovery is owned by the Workflow
-                // Recovery Engineer's five-minute scheduled scan (aios:recover-workflows), not
-                // this loop; see App\Services\WorkflowRecoveryScanner/WorkflowRecoveryEngine.
-                //
-                // An already-claimed Ticket triage attempt is also durable PM work. Do not start
-                // roadmap analysis over it even if its worker process died; recovery must first
-                // resolve that same attempt.
                 $activeTicketTriage = $this->hasActiveTicketTriage($project);
 
                 $dueRoadmap = $activeTicketTriage
                     ? null
                     : Roadmap::query()
                         ->whereBelongsTo($project)
-                        ->whereIn('status', ['uploaded', 'failed', 'in_progress'])
+                        ->whereIn('status', [
+                            'uploaded',
+                            'failed',
+                            'in_progress',
+                        ])
                         ->oldest()
                         ->first();
 
-                // 'in_progress' roadmaps are mid multi-batch decomposition (see
-                // ApplyRoadmapPlan's per-batch phase cap): the cooldown throttles new/retry PM
-                // invocations, not a continuation AIOS has already committed to completing.
                 $roadmapOnCooldown = $dueRoadmap !== null
                     && $dueRoadmap->getRawOriginal('status') !== 'in_progress'
                     && $this->onRoadmapCooldown($project);
@@ -107,24 +104,18 @@ class RunAiosWorkers extends Command
                         $project,
                         AgentRole::ProjectManager,
                         $workerInstanceId,
+                        slot: self::PrimaryWorkerSlot,
                     );
 
                     if ($lease !== null) {
                         try {
                             $runProjectManager->handle($roadmap, $lease);
                         } catch (Throwable $throwable) {
-                            // See the recoverPendingTicketConversion catch above: an uncaught
-                            // exception anywhere in a role handler must not take down the
-                            // persistent worker loop for every project.
                             report($throwable);
                         } finally {
+                            $this->markTaskCompleted($lease);
                             $heartbeat->release($lease);
                         }
-
-                        AgentWorker::query()
-                            ->whereBelongsTo($project)
-                            ->where('role', AgentRole::ProjectManager)
-                            ->update(['task_completed_at' => now()]);
                     }
 
                     if ($this->stopRequested($project, $setProjectStatus)) {
@@ -132,16 +123,27 @@ class RunAiosWorkers extends Command
                     }
                 }
 
-                // Planning revisions are PM work, serialized by the same lease and ordered
-                // after roadmap analysis but before Ticket intake.
                 if (! $this->hasPendingRoadmapWork($project)) {
-                    $lease = $heartbeat->acquire($project, AgentRole::ProjectManager, $workerInstanceId);
+                    $lease = $heartbeat->acquire(
+                        $project,
+                        AgentRole::ProjectManager,
+                        $workerInstanceId,
+                        slot: self::PrimaryWorkerSlot,
+                    );
+
                     if ($lease !== null) {
                         try {
-                            $revisionAttempt = $planningEscalations->claim($project);
+                            $revisionAttempt = $planningEscalations->claim(
+                                $project,
+                            );
+
                             if ($revisionAttempt !== null) {
-                                $runTaskPlanningRevision->handle($revisionAttempt, $lease);
-                                AgentWorker::query()->whereBelongsTo($project)->where('role', AgentRole::ProjectManager)->update(['task_completed_at' => now()]);
+                                $runTaskPlanningRevision->handle(
+                                    $revisionAttempt,
+                                    $lease,
+                                );
+
+                                $this->markTaskCompleted($lease);
                             }
                         } catch (Throwable $throwable) {
                             report($throwable);
@@ -161,6 +163,7 @@ class RunAiosWorkers extends Command
                         $project,
                         AgentRole::ProjectManager,
                         $workerInstanceId,
+                        slot: self::PrimaryWorkerSlot,
                     );
 
                     if ($lease !== null) {
@@ -196,14 +199,20 @@ class RunAiosWorkers extends Command
                 foreach ([AgentRole::Coder, AgentRole::Reviewer] as $role) {
                     $task = $workflow->claimedTask($project, $role);
 
-                    if ($task === null && $this->onTaskCooldown($project, $role)) {
+                    if (
+                        $task === null
+                        && $this->onTaskCooldown($project, $role)
+                    ) {
                         continue;
                     }
 
+                    // P10-003 only introduces durable slot capacity. P10-004 owns concurrent task
+                    // claiming, so the normal worker loop remains explicitly pinned to slot 1.
                     $lease = $heartbeat->acquire(
                         $project,
                         $role,
                         $workerInstanceId,
+                        slot: self::PrimaryWorkerSlot,
                     );
 
                     if ($lease === null) {
@@ -213,7 +222,9 @@ class RunAiosWorkers extends Command
                     $task ??= $claimTask->handle($project, $role);
 
                     if ($task !== null) {
-                        $this->info("Processing {$task->key} for {$role->value}.");
+                        $this->info(
+                            "Processing {$task->key} for {$role->value}.",
+                        );
 
                         try {
                             if ($role === AgentRole::Coder) {
@@ -223,20 +234,25 @@ class RunAiosWorkers extends Command
                                     ->latest('number')
                                     ->firstOrFail();
 
-                                $runReviewerTask->run($task, $attempt, $lease);
+                                $runReviewerTask->run(
+                                    $task,
+                                    $attempt,
+                                    $lease,
+                                );
                             }
                         } catch (Throwable $throwable) {
                             report($throwable);
                         } finally {
+                            $this->markTaskCompleted($lease);
                             $heartbeat->release($lease);
                         }
 
-                        AgentWorker::query()
-                            ->whereBelongsTo($project)
-                            ->where('role', $role)
-                            ->update(['task_completed_at' => now()]);
-
-                        if ($this->stopRequested($project, $setProjectStatus)) {
+                        if (
+                            $this->stopRequested(
+                                $project,
+                                $setProjectStatus,
+                            )
+                        ) {
                             continue 2;
                         }
 
@@ -255,6 +271,9 @@ class RunAiosWorkers extends Command
         return self::SUCCESS;
     }
 
+    /**
+     * Resume a completed durable Ticket triage conversion before new PM work is considered.
+     */
     private function recoverPendingTicketConversion(
         Project $project,
         ConvertTicketToTask $convertTicketToTask,
@@ -287,6 +306,9 @@ class RunAiosWorkers extends Command
         }
     }
 
+    /**
+     * Determine whether roadmap work still owns Project Manager scheduling precedence.
+     */
     private function hasPendingRoadmapWork(Project $project): bool
     {
         return $project->roadmaps()
@@ -299,6 +321,9 @@ class RunAiosWorkers extends Command
             ->exists();
     }
 
+    /**
+     * Determine whether the project has an eligible Ticket ready for Project Manager triage.
+     */
     private function hasEligibleTicketTriage(Project $project): bool
     {
         return $project->tickets()
@@ -309,6 +334,9 @@ class RunAiosWorkers extends Command
             ->exists();
     }
 
+    /**
+     * Determine whether a Ticket triage attempt already owns the Project Manager lane.
+     */
     private function hasActiveTicketTriage(Project $project): bool
     {
         return $project->tickets()
@@ -316,16 +344,28 @@ class RunAiosWorkers extends Command
             ->exists();
     }
 
+    /**
+     * Determine whether a planning revision is already pending or running for the project.
+     */
     private function hasActivePlanningRevision(Project $project): bool
     {
         return TaskPlanningEscalation::query()
             ->whereIn('status', ['pending', 'running'])
-            ->whereHas('task', fn ($query) => $query->where('project_id', $project->id))
+            ->whereHas(
+                'task',
+                fn ($query) => $query
+                    ->where('project_id', $project->id),
+            )
             ->exists();
     }
 
-    private function onTaskCooldown(Project $project, AgentRole $role): bool
-    {
+    /**
+     * Determine whether primary slot 1 is still within the configured Coder or Reviewer cooldown.
+     */
+    private function onTaskCooldown(
+        Project $project,
+        AgentRole $role,
+    ): bool {
         return $this->onCooldown(
             $project,
             $role,
@@ -334,9 +374,7 @@ class RunAiosWorkers extends Command
     }
 
     /**
-     * PM roadmap retries deliberately use their own, much longer timer. RunProjectManager also
-     * enforces a bounded roadmap-attempt limit; this cooldown controls the cadence between the
-     * automatic retries that are still allowed before terminal operator intervention.
+     * Determine whether primary Project Manager slot 1 is still within roadmap retry cooldown.
      */
     private function onRoadmapCooldown(Project $project): bool
     {
@@ -347,6 +385,9 @@ class RunAiosWorkers extends Command
         );
     }
 
+    /**
+     * Evaluate the cooldown timestamp for the exact primary role slot used by the serial scheduler.
+     */
     private function onCooldown(
         Project $project,
         AgentRole $role,
@@ -361,15 +402,32 @@ class RunAiosWorkers extends Command
         $worker = AgentWorker::query()
             ->whereBelongsTo($project)
             ->where('role', $role)
+            ->where('slot', self::PrimaryWorkerSlot)
             ->first();
 
         $taskCompletedAt = $worker?->getAttribute('task_completed_at');
 
         return $taskCompletedAt instanceof CarbonImmutable
-            && $taskCompletedAt->addSeconds($cooldownSeconds)->isFuture();
+            && $taskCompletedAt
+                ->addSeconds($cooldownSeconds)
+                ->isFuture();
     }
 
     /**
+     * Persist completion timing only while the caller still owns the exact worker lease.
+     */
+    private function markTaskCompleted(WorkerLease $lease): void
+    {
+        AgentWorker::query()
+            ->whereKey($lease->workerId)
+            ->where('worker_instance_id', $lease->workerInstanceId)
+            ->where('lease_id', $lease->leaseId)
+            ->update(['task_completed_at' => now()]);
+    }
+
+    /**
+     * Complete an operator-requested project stop before any new worker lease is acquired.
+     *
      * @phpstan-impure
      */
     private function stopRequested(
