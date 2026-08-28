@@ -57,6 +57,22 @@ function p9003User(): User
     ]);
 }
 
+/**
+ * Normalize formatting-only whitespace before asserting semantic source contracts.
+ *
+ * Prettier may wrap JSX text across multiple physical source lines. Source
+ * assertions should verify the behavior contract rather than line wrapping.
+ */
+function p9003NormalizeSourceWhitespace(
+    string $source,
+): string {
+    return preg_replace(
+        '/\s+/',
+        ' ',
+        $source,
+    ) ?? $source;
+}
+
 test('task detail exposes only safe bounded voice capabilities', function (): void {
     config()->set(
         'aios.voice_stt_enabled',
@@ -149,7 +165,17 @@ test('voice transcription and operator submission remain separate browser bounda
         ),
     );
 
-    expect($taskPageSource)
+    $normalizedTaskPageSource =
+        p9003NormalizeSourceWhitespace(
+            $taskPageSource,
+        );
+
+    $normalizedComposerSource =
+        p9003NormalizeSourceWhitespace(
+            $composerSource,
+        );
+
+    expect($normalizedTaskPageSource)
         ->toContain(
             '<TaskOperatorMessageComposer',
         )
@@ -157,7 +183,7 @@ test('voice transcription and operator submission remain separate browser bounda
             'storeOperatorMessage',
         );
 
-    expect($composerSource)
+    expect($normalizedComposerSource)
         ->toContain(
             'navigator.mediaDevices.getUserMedia',
         )
@@ -317,9 +343,17 @@ test('voice route stays authenticated and verified while disabled speech keeps t
         ),
     );
 
-    expect($composerSource)
+    $normalizedComposerSource =
+        p9003NormalizeSourceWhitespace(
+            $composerSource,
+        );
+
+    expect($normalizedComposerSource)
         ->toContain(
-            'Local microphone transcription is disabled',
+            'Local microphone transcription is disabled or unavailable.',
+        )
+        ->toContain(
+            'You can still type normally.',
         )
         ->toContain(
             'name="body"',
