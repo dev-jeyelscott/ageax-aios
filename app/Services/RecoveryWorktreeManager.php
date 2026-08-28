@@ -2,42 +2,52 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
-use RuntimeException;
 
 /**
  * Creates and destroys a disposable Git worktree of the AIOS repository itself so that the
- * Workflow Recovery Engineer's harness (Codex or Claude Code) never receives Edit/Write/Bash
- * access to the live AIOS checkout or its database. The harness may modify only this isolated
- * worktree; AIOS alone (see WorkflowRecoveryEngine) inspects the exact resulting changes, applies
- * them into the live repository's working tree, and independently validates/commits them through
- * the existing RecoveryRepositoryLifecycle. The worktree is always destroyed afterward.
+ * Workflow Recovery Engineer's harness never receives edit access to the live AIOS checkout.
+ *
+ * Recovery-specific path ownership stays here while the low-level Git worktree lifecycle is
+ * shared with isolated Coder Task worktrees through IsolatedGitWorktreeManager.
  */
 class RecoveryWorktreeManager
 {
+    public function __construct(
+        private IsolatedGitWorktreeManager $worktrees,
+    ) {}
+
+    /**
+     * Create a detached Recovery Engineer worktree from the exact AIOS repository base SHA.
+     */
     public function create(string $repositoryPath, string $baseSha): string
     {
-        $worktreePath = rtrim(sys_get_temp_dir(), '/').'/aios-recovery-worktree-'.Str::uuid();
+        $worktreePath = rtrim(
+            sys_get_temp_dir(),
+            DIRECTORY_SEPARATOR,
+        )
+            .DIRECTORY_SEPARATOR
+            .'aios-recovery-worktree-'.Str::uuid();
 
-        $result = Process::path($repositoryPath)->run(['git', 'worktree', 'add', '--detach', $worktreePath, $baseSha]);
-
-        if (! $result->successful()) {
-            throw new RuntimeException('Could not create an isolated recovery worktree: '.trim($result->errorOutput() ?: $result->output()));
-        }
+        $this->worktrees->createDetached(
+            $repositoryPath,
+            $worktreePath,
+            $baseSha,
+        );
 
         return $worktreePath;
     }
 
-    public function destroy(string $repositoryPath, string $worktreePath): void
-    {
-        Process::path($repositoryPath)->run(['git', 'worktree', 'remove', '--force', $worktreePath]);
-
-        if (is_dir($worktreePath)) {
-            File::deleteDirectory($worktreePath);
-        }
-
-        Process::path($repositoryPath)->run(['git', 'worktree', 'prune']);
+    /**
+     * Remove the disposable Recovery Engineer worktree idempotently after completion or failure.
+     */
+    public function destroy(
+        string $repositoryPath,
+        string $worktreePath,
+    ): void {
+        $this->worktrees->destroy(
+            $repositoryPath,
+            $worktreePath,
+        );
     }
 }
