@@ -69,3 +69,31 @@ test('denies destructive database and filesystem commands for the Recovery Engin
             && str_contains($denied, 'Bash(rm -rf *)');
     });
 });
+
+test('stops Claude Code when its AIOS worker lease is lost', function () {
+    $binary = tempnam(sys_get_temp_dir(), 'aios-claude-lease-');
+    expect($binary)->not->toBeFalse();
+    file_put_contents($binary, "#!/bin/sh\nif [ \"\$1\" = auth ]; then exit 0; fi\nsleep 5\n");
+    chmod($binary, 0700);
+
+    try {
+        config()->set('aios.claude_code_binary', $binary);
+        $project = destructiveDenyProject();
+        $agent = Agent::factory()->for($project)->create([
+            'role' => AgentRole::Coder,
+            'harness' => AgentHarnessIdentifier::ClaudeCode,
+        ]);
+
+        $result = app(ClaudeCodeCliRunner::class)->run(
+            $project,
+            $agent,
+            'Implement the task.',
+            onHeartbeat: fn (): bool => false,
+        );
+
+        expect($result['exit_code'])->toBe(125)
+            ->and($result['failure_type'])->toBe('worker_lease_lost');
+    } finally {
+        @unlink($binary);
+    }
+});

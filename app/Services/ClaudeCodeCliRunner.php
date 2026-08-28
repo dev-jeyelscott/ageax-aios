@@ -135,11 +135,30 @@ class ClaudeCodeCliRunner
 
             while ($process->running()) {
                 if (now()->gte($nextHeartbeatAt)) {
-                    $onHeartbeat();
+                    if ($onHeartbeat() === false) {
+                        if (method_exists($process, 'stop')) {
+                            $process->stop(1);
+                        }
+
+                        return $this->failure(
+                            125,
+                            'Claude Code execution stopped because its AIOS worker lease was lost.',
+                            'worker_lease_lost',
+                        );
+                    }
+
                     $nextHeartbeatAt = now()->addSeconds($interval);
                 }
 
                 usleep(250000);
+            }
+
+            if ($onHeartbeat() === false) {
+                return $this->failure(
+                    125,
+                    'Claude Code execution completed after its AIOS worker lease was lost.',
+                    'worker_lease_lost',
+                );
             }
 
             return $this->result($process->wait());

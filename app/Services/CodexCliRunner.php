@@ -100,13 +100,30 @@ class CodexCliRunner
 
             while ($process->running()) {
                 if (now()->gte($nextHeartbeatAt)) {
-                    $onHeartbeat();
+                    if ($onHeartbeat() === false) {
+                        if (method_exists($process, 'stop')) {
+                            $process->stop(1);
+                        }
+
+                        return $this->failure(
+                            125,
+                            'Codex execution stopped because its AIOS worker lease was lost.',
+                        );
+                    }
+
                     $nextHeartbeatAt = now()->addSeconds(
                         $interval,
                     );
                 }
 
                 usleep(250000);
+            }
+
+            if ($onHeartbeat() === false) {
+                return $this->failure(
+                    125,
+                    'Codex execution completed after its AIOS worker lease was lost.',
+                );
             }
 
             return $this->result($process->wait());

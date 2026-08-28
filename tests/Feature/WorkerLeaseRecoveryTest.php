@@ -181,6 +181,33 @@ test('a task still genuinely being coded is left untouched by abandoned-finaliza
         ->and($run->refresh()->status)->toBe(AgentRunStatus::Running);
 });
 
+test('a reclaimed Coder task does not start another attempt while the original AgentRun is still running', function () {
+    $path = '/tmp/active-coder-run-'.fake()->uuid();
+    File::ensureDirectoryExists($path);
+    $project = Project::create(['name' => 'Active Coder Run', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $worker = leasedWorker($project);
+    $task = leasedTask($project, status: TaskStatus::Coding);
+    $attempt = TaskAttempt::create(['task_id' => $task->id, 'number' => 1, 'status' => 'running', 'started_at' => now()->subMinute()]);
+    AgentRun::create([
+        'project_id' => $project->id,
+        'task_id' => $task->id,
+        'task_attempt_id' => $attempt->id,
+        'agent_worker_id' => $worker->id,
+        'role' => AgentRole::Coder,
+        'status' => AgentRunStatus::Running,
+        'attempt_number' => $attempt->number,
+        'prompt_hash' => hash('sha256', 'active-coder-run'),
+        'started_at' => now()->subMinute(),
+    ]);
+
+    $returnedAttempt = app(RunCoderTask::class)->handle($task);
+
+    expect($returnedAttempt->id)->toBe($attempt->id)
+        ->and($task->attempts()->count())->toBe(1)
+        ->and($task->refresh()->status)->toBe(TaskStatus::Coding)
+        ->and(AgentRun::query()->whereBelongsTo($project)->where('role', AgentRole::Coder)->where('status', AgentRunStatus::Running)->count())->toBe(1);
+});
+
 test('a completed run with an active matching lease is left for its worker to finalize', function () {
     $project = Project::create(['name' => 'Finalizing', 'path' => '/tmp/finalizing-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $worker = leasedWorker($project);

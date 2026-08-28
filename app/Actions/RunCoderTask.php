@@ -3,6 +3,7 @@
 namespace App\Actions;
 
 use App\AgentRole;
+use App\AgentRunStatus;
 use App\Exceptions\AgentNotBoundToRole;
 use App\Exceptions\UnsafeProjectPath;
 use App\Models\Agent;
@@ -88,6 +89,12 @@ class RunCoderTask
                 ->firstOrFail();
         }
 
+        $activeAttempt = $this->activeCoderAttempt($task);
+
+        if ($activeAttempt !== null) {
+            return $activeAttempt;
+        }
+
         // This is intentionally before repository/harness work: unsafe PM-authored contract
         // metadata is a planning defect, never a failed implementation attempt.
         $planningDefect = $this->planningPreflight->evaluate($task);
@@ -133,7 +140,7 @@ class RunCoderTask
         $recoveryInstruction = $preflight['mode'] === 'recovery'
             ? 'AIOS has verified that the current working-tree changes are task-owned recovery state tied to the supplied prior attempt. Inspect and continue from them; do not stop solely because the worktree is dirty. Do not stage or commit; AIOS independently validates and commits only verified task files. '
             : '';
-        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. {$recoveryInstruction}Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
+        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Do not run git add, git commit, git reset, git stash, git checkout, git switch, git merge, git rebase, git cherry-pick, git clean, or any other Git mutation. AIOS independently validates and commits only verified task files. {$recoveryInstruction}Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
         $attempt = TaskAttempt::create([
             'task_id' => $task->id,
             'number' => $task->attempts()->max('number') + 1,
@@ -329,6 +336,46 @@ class RunCoderTask
         }
 
         return $attempt->refresh();
+    }
+
+    /**
+     * Do not permit a replacement Coder attempt while its predecessor is still executing.
+     *
+     * A lease can expire while its host process is paused; launching a new attempt in the
+     * same repository before the original AgentRun has finished creates competing writers.
+     */
+    private function activeCoderAttempt(Task $task): ?TaskAttempt
+    {
+        $run = AgentRun::query()
+            ->whereBelongsTo($task)
+            ->where('role', AgentRole::Coder)
+            ->where('status', AgentRunStatus::Running)
+            ->latest('id')
+            ->first();
+
+        if ($run === null) {
+            return null;
+        }
+
+        $attempt = TaskAttempt::query()
+            ->whereKey($run->task_attempt_id)
+            ->whereBelongsTo($task)
+            ->first();
+
+        if ($attempt !== null) {
+            return $attempt;
+        }
+
+        if ($run->attempt_number !== null) {
+            return $task->attempts()
+                ->where('number', $run->attempt_number)
+                ->first();
+        }
+
+        return $task->attempts()
+            ->where('status', 'running')
+            ->latest('number')
+            ->first();
     }
 
     /**
