@@ -13,7 +13,6 @@ import {
     ListChecks,
     MessageSquare,
     Radio,
-    Send,
     ShieldCheck,
     Sparkles,
     Terminal,
@@ -26,10 +25,10 @@ import {
     showAgentRun,
     requeueTask,
     skipTask,
-    storeOperatorMessage,
 } from '@/actions/App/Http/Controllers/ProjectController';
 import { useAppHeaderSlot } from '@/components/app-header-slot';
 import InputError from '@/components/input-error';
+import TaskOperatorMessageComposer from '@/components/task-operator-message-composer';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -1901,85 +1900,10 @@ export default function TaskShow({
                         </main>
 
                         <aside className="min-w-0 space-y-3 xl:sticky xl:top-3 xl:self-start">
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle className="flex items-center gap-2">
-                                        <Send className="size-4 text-primary" />
-                                        Message an agent
-                                    </CardTitle>
-                                    <CardDescription>
-                                        Saved for the selected role’s next fresh
-                                        execution. It cannot interrupt a
-                                        currently running session.
-                                    </CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    <Form
-                                        {...storeOperatorMessage.form({
-                                            project: project.id,
-                                            task: task.id,
-                                        })}
-                                        className="grid gap-3"
-                                    >
-                                        {({ errors, processing }) => (
-                                            <>
-                                                <div className="grid gap-2">
-                                                    <Label htmlFor="recipient_role">
-                                                        Recipient
-                                                    </Label>
-                                                    <select
-                                                        id="recipient_role"
-                                                        name="recipient_role"
-                                                        defaultValue="coder"
-                                                        className="h-9 rounded-md border border-input bg-surface-sunken px-3 text-sm text-foreground transition outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                    >
-                                                        <option value="coder">
-                                                            Coder
-                                                        </option>
-                                                        <option value="reviewer">
-                                                            Reviewer
-                                                        </option>
-                                                    </select>
-                                                    <InputError
-                                                        message={
-                                                            errors.recipient_role
-                                                        }
-                                                    />
-                                                </div>
-                                                <div className="grid gap-2">
-                                                    <Label htmlFor="body">
-                                                        Instruction
-                                                    </Label>
-                                                    <textarea
-                                                        id="body"
-                                                        name="body"
-                                                        required
-                                                        maxLength={4000}
-                                                        rows={6}
-                                                        placeholder="Add context, a correction, or a question for the next agent run."
-                                                        className="rounded-md border border-input bg-surface-sunken px-3 py-2 text-sm text-foreground transition outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                                                    />
-                                                    <InputError
-                                                        message={errors.body}
-                                                    />
-                                                </div>
-                                                <p className="text-2xs text-muted-foreground">
-                                                    Do not paste credentials or
-                                                    secrets.
-                                                </p>
-                                                <Button
-                                                    type="submit"
-                                                    disabled={processing}
-                                                    className="shadow-glow-sm"
-                                                >
-                                                    <Send className="size-4" />
-                                                    Send instruction
-                                                </Button>
-                                            </>
-                                        )}
-                                    </Form>
-                                </CardContent>
-                            </Card>
+                            <TaskOperatorMessageComposer
+                                projectId={project.id}
+                                taskId={task.id}
+                            />
 
                             {task.status === 'blocked' && (
                                 <Card className="border-destructive/25">

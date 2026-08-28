@@ -17,7 +17,7 @@ class HandleInertiaRequests extends Middleware
     protected $rootView = 'app';
 
     /**
-     * Determines the current asset version.
+     * Determine the current asset version.
      *
      * @see https://inertiajs.com/asset-versioning
      */
@@ -27,7 +27,7 @@ class HandleInertiaRequests extends Middleware
     }
 
     /**
-     * Define the props that are shared by default.
+     * Share safe application and local voice capability metadata with Inertia.
      *
      * @see https://inertiajs.com/shared-data
      *
@@ -41,7 +41,31 @@ class HandleInertiaRequests extends Middleware
             'auth' => [
                 'user' => $request->user(),
             ],
-            'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
+            'voice' => [
+                'enabled' => (bool) config(
+                    'aios.voice_stt_enabled',
+                    false,
+                ),
+                'transcription_url' => route(
+                    'voice.transcriptions.store',
+                ),
+                'max_audio_bytes' => max(
+                    0,
+                    (int) config(
+                        'aios.voice_stt_max_audio_bytes',
+                        0,
+                    ),
+                ),
+                'max_duration_seconds' => max(
+                    0,
+                    (int) config(
+                        'aios.voice_stt_max_duration_seconds',
+                        0,
+                    ),
+                ),
+            ],
+            'sidebarOpen' => ! $request->hasCookie('sidebar_state')
+                || $request->cookie('sidebar_state') === 'true',
         ];
     }
 }
