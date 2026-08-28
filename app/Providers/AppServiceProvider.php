@@ -5,8 +5,10 @@ namespace App\Providers;
 use App\Services\AgentHarnessResolver;
 use App\Services\ClaudeCodeHarness;
 use App\Services\CodexHarness;
+use App\Services\PiperTextToSpeech;
 use App\Services\RuntimeCommandContext;
 use App\Services\SpeechToText;
+use App\Services\TextToSpeech;
 use App\Services\WhisperCppSpeechToText;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Events\CommandFinished;
@@ -37,6 +39,11 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(
             SpeechToText::class,
             WhisperCppSpeechToText::class,
+        );
+
+        $this->app->bind(
+            TextToSpeech::class,
+            PiperTextToSpeech::class,
         );
 
         $this->app->singleton(

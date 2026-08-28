@@ -30,7 +30,7 @@ return [
     'max_task_planning_revisions' => (int) env('AIOS_MAX_TASK_PLANNING_REVISIONS', 3),
     'max_reviewer_attempts' => (int) env('AIOS_MAX_REVIEWER_ATTEMPTS', 3),
     'no_progress_repeat_threshold' => (int) env('AIOS_NO_PROGRESS_REPEAT_THRESHOLD', 1),
-    // Stops a valid Coder → Reviewer rejection loop when each rejection has the same task
+    // Stops a valid Coder -> Reviewer rejection loop when each rejection has the same task
     // contract and no repository progress. This blocks for an operator; it never approves
     // or cancels a task whose acceptance criteria remain unmet.
     'review_no_progress_block_threshold' => (int) env('AIOS_REVIEW_NO_PROGRESS_BLOCK_THRESHOLD', 3),
@@ -48,6 +48,16 @@ return [
     'voice_stt_timeout_seconds' => (int) env('AIOS_VOICE_STT_TIMEOUT_SECONDS', 120),
     'voice_stt_max_audio_bytes' => (int) env('AIOS_VOICE_STT_MAX_AUDIO_BYTES', 10485760),
     'voice_stt_max_duration_seconds' => (int) env('AIOS_VOICE_STT_MAX_DURATION_SECONDS', 60),
+
+    // Optional local text-to-speech presentation adapter. This capability is disabled until an
+    // operator explicitly configures an absolute local Piper binary and ONNX voice model path.
+    // TTS output is presentation-only and must never become workflow or durable application state.
+    'voice_tts_enabled' => (bool) env('AIOS_VOICE_TTS_ENABLED', false),
+    'voice_tts_binary_path' => env('AIOS_VOICE_TTS_BINARY_PATH'),
+    'voice_tts_model_path' => env('AIOS_VOICE_TTS_MODEL_PATH'),
+    'voice_tts_timeout_seconds' => (int) env('AIOS_VOICE_TTS_TIMEOUT_SECONDS', 60),
+    'voice_tts_max_text_characters' => (int) env('AIOS_VOICE_TTS_MAX_TEXT_CHARACTERS', 1000),
+    'voice_tts_max_audio_bytes' => (int) env('AIOS_VOICE_TTS_MAX_AUDIO_BYTES', 16777216),
 
     // Global Orchestrator bootstrap defaults. These values provision only the configurable
     // advisory Agent identity. They do not schedule, invoke, route, or mutate anything.

@@ -13,6 +13,7 @@ use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketEscalationDecisionController;
 use App\Http\Controllers\TicketOperationsController;
 use App\Http\Controllers\VoiceIntentController;
+use App\Http\Controllers\VoiceSpeechController;
 use App\Http\Controllers\VoiceTranscriptionController;
 use Illuminate\Support\Facades\Route;
 
@@ -25,6 +26,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         'voice/transcriptions',
         VoiceTranscriptionController::class,
     )->name('voice.transcriptions.store');
+
+    Route::post(
+        'voice/speech',
+        VoiceSpeechController::class,
+    )->name('voice.speech.store');
 
     Route::post(
         'projects/{project}/voice/intents',
