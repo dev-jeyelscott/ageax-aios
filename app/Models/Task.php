@@ -39,42 +39,72 @@ class Task extends Model
         'is_cleared' => false,
     ];
 
+    /**
+     * Define the durable attribute casts used by Tasks.
+     *
+     * @return array<string, string>
+     */
     protected function casts(): array
     {
         return ['status' => TaskStatus::class, 'is_cleared' => 'boolean', 'work_type' => TaskWorkType::class, 'complexity' => TaskComplexity::class, 'acceptance_criteria' => 'array', 'scope' => 'array', 'constraints' => 'array', 'relevant_paths' => 'array', 'verification_commands' => 'array', 'context_capsule' => 'array', 'stewardship_provenance' => 'array', 'claimed_at' => 'immutable_datetime', 'completed_at' => 'immutable_datetime'];
     }
 
+    /**
+     * Limit Task queries to durable records that have not been cleared.
+     *
+     * @param  Builder<self>  $query
+     */
     #[Scope]
     protected function notCleared(Builder $query): void
     {
         $query->where('is_cleared', false);
     }
 
-    /** @return BelongsTo<Project, $this> */
+    /**
+     * Return the Project that owns this Task.
+     *
+     * @return BelongsTo<Project, $this>
+     */
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
     }
 
-    /** @return BelongsTo<Phase, $this> */
+    /**
+     * Return the optional Phase containing this Task.
+     *
+     * @return BelongsTo<Phase, $this>
+     */
     public function phase(): BelongsTo
     {
         return $this->belongsTo(Phase::class);
     }
 
-    /** @return HasMany<TaskAttempt, $this> */
+    /**
+     * Return execution attempts recorded for this Task.
+     *
+     * @return HasMany<TaskAttempt, $this>
+     */
     public function attempts(): HasMany
     {
         return $this->hasMany(TaskAttempt::class);
     }
 
-    /** @return HasMany<Review, $this> */
+    /**
+     * Return Reviews recorded for this Task.
+     *
+     * @return HasMany<Review, $this>
+     */
     public function reviews(): HasMany
     {
         return $this->hasMany(Review::class);
     }
 
-    /** @return HasMany<AgentRun, $this> */
+    /**
+     * Return AgentRuns associated with this Task.
+     *
+     * @return HasMany<AgentRun, $this>
+     */
     public function runs(): HasMany
     {
         return $this->hasMany(AgentRun::class);
@@ -90,43 +120,71 @@ class Task extends Model
         return $this->hasMany(AgentHandoff::class);
     }
 
-    /** @return HasMany<AuditEvent, $this> */
+    /**
+     * Return durable audit events associated with this Task.
+     *
+     * @return HasMany<AuditEvent, $this>
+     */
     public function auditEvents(): HasMany
     {
         return $this->hasMany(AuditEvent::class);
     }
 
-    /** @return HasMany<TaskOperatorMessage, $this> */
+    /**
+     * Return operator messages associated with this Task.
+     *
+     * @return HasMany<TaskOperatorMessage, $this>
+     */
     public function operatorMessages(): HasMany
     {
         return $this->hasMany(TaskOperatorMessage::class);
     }
 
-    /** @return HasMany<RecoveryIncident, $this> */
+    /**
+     * Return recovery incidents associated with this Task.
+     *
+     * @return HasMany<RecoveryIncident, $this>
+     */
     public function recoveryIncidents(): HasMany
     {
         return $this->hasMany(RecoveryIncident::class);
     }
 
-    /** @return BelongsToMany<Task, $this> */
+    /**
+     * Return Tasks that must be satisfied before this Task can proceed.
+     *
+     * @return BelongsToMany<Task, $this>
+     */
     public function dependencies(): BelongsToMany
     {
         return $this->belongsToMany(self::class, 'task_dependencies', 'task_id', 'depends_on_task_id');
     }
 
-    /** @return BelongsToMany<Task, $this> */
+    /**
+     * Return Tasks that depend on this Task.
+     *
+     * @return BelongsToMany<Task, $this>
+     */
     public function dependents(): BelongsToMany
     {
         return $this->belongsToMany(self::class, 'task_dependencies', 'depends_on_task_id', 'task_id');
     }
 
-    /** @return HasOne<Ticket, $this> */
+    /**
+     * Return the Ticket that was converted into this Task, when applicable.
+     *
+     * @return HasOne<Ticket, $this>
+     */
     public function originTicket(): HasOne
     {
         return $this->hasOne(Ticket::class, 'converted_task_id');
     }
 
-    /** @return HasMany<TaskPlanningEscalation, $this> */
+    /**
+     * Return planning escalations associated with this Task.
+     *
+     * @return HasMany<TaskPlanningEscalation, $this>
+     */
     public function planningEscalations(): HasMany
     {
         return $this->hasMany(TaskPlanningEscalation::class);

@@ -11,8 +11,14 @@ use Illuminate\Validation\ValidationException;
 
 class ClearProjectTasks
 {
+    /**
+     * Create the action with the durable audit logger.
+     */
     public function __construct(private AuditLogger $audit) {}
 
+    /**
+     * Durably clear all inactive non-cleared Tasks for a Project.
+     */
     public function handle(Project $project): int
     {
         return DB::transaction(function () use ($project): int {
@@ -23,6 +29,7 @@ class ClearProjectTasks
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get();
+
             $activeTask = $tasks->first(fn (Task $task): bool => in_array(
                 TaskStatus::from($task->getRawOriginal('status')),
                 [TaskStatus::Coding, TaskStatus::Validating, TaskStatus::Reviewing],
@@ -30,12 +37,17 @@ class ClearProjectTasks
             ));
 
             if ($activeTask !== null) {
+                $activeStatus = TaskStatus::from(
+                    (string) $activeTask->getRawOriginal('status'),
+                );
+
                 throw ValidationException::withMessages([
-                    'tasks' => "Tasks cannot be cleared while {$activeTask->key} is {$activeTask->status->value}. Wait for active execution to finish before clearing the project queue.",
+                    'tasks' => "Tasks cannot be cleared while {$activeTask->key} is {$activeStatus->value}. Wait for active execution to finish before clearing the project queue.",
                 ]);
             }
 
             $taskIds = $tasks->pluck('id')->all();
+
             if ($taskIds !== []) {
                 Task::query()->whereKey($taskIds)->update(['is_cleared' => true]);
             }

@@ -454,7 +454,11 @@ class TicketContextCapsuleFactory
         ];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Build deterministic Project state evidence from non-cleared operational Tasks.
+     *
+     * @return array<string, mixed>
+     */
     private function projectState(Project $project): array
     {
         $terminal = [
@@ -465,10 +469,12 @@ class TicketContextCapsuleFactory
         $currentPhase = $project->phases()
             ->whereHas(
                 'tasks',
-                fn ($query) => $query->notCleared()->whereNotIn(
-                    'status',
-                    $terminal,
-                ),
+                fn ($query) => $query
+                    ->where('is_cleared', false)
+                    ->whereNotIn(
+                        'status',
+                        $terminal,
+                    ),
             )
             ->orderBy('position')
             ->first();

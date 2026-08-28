@@ -17,6 +17,8 @@ class TicketTriagePolicy
     public const float ConfidenceThreshold = 0.80;
 
     /**
+     * Evaluate a structured Ticket triage decision against deterministic policy.
+     *
      * @param  array<string, mixed>  $decision
      * @return array{
      *     schema_version: int,
@@ -59,6 +61,7 @@ class TicketTriagePolicy
 
         $reasons = $this->normalizeReasons($reasons);
         $requiresOperator = $reasons !== [];
+
         $automaticTaskConversionEligible = ! $requiresOperator
             && $decision['decision'] === TicketDecision::Approved->value
             && $decision['implementation_required'] === true
@@ -76,6 +79,8 @@ class TicketTriagePolicy
     }
 
     /**
+     * Return valid escalation reasons reported by structured triage output.
+     *
      * @param  array<string, mixed>  $decision
      * @return list<string>
      */
@@ -104,7 +109,11 @@ class TicketTriagePolicy
         return $reasons;
     }
 
-    /** @param array<string, mixed> $decision */
+    /**
+     * Determine whether critical Ticket work would preempt existing non-cleared work.
+     *
+     * @param  array<string, mixed>  $decision
+     */
     private function criticalPriorityWouldPreemptExistingWork(
         Ticket $ticket,
         array $decision,
@@ -129,7 +138,11 @@ class TicketTriagePolicy
             ->exists();
     }
 
-    /** @param array<string, mixed> $proposal */
+    /**
+     * Determine whether a preferred Phase would reopen earlier completed roadmap work.
+     *
+     * @param  array<string, mixed>  $proposal
+     */
     private function preferredPhaseWouldReorderRoadmap(
         Ticket $ticket,
         array $proposal,
@@ -153,10 +166,12 @@ class TicketTriagePolicy
             ->where('project_id', $ticket->project_id)
             ->whereHas(
                 'tasks',
-                fn ($query) => $query->notCleared()->whereNotIn('status', [
-                    TaskStatus::Done->value,
-                    TaskStatus::Cancelled->value,
-                ]),
+                fn ($query) => $query
+                    ->where('is_cleared', false)
+                    ->whereNotIn('status', [
+                        TaskStatus::Done->value,
+                        TaskStatus::Cancelled->value,
+                    ]),
             )
             ->orderBy('position')
             ->first();
@@ -165,7 +180,11 @@ class TicketTriagePolicy
             && $preferred->position < $current->position;
     }
 
-    /** @param array<string, mixed> $proposal */
+    /**
+     * Determine whether proposed dependency placement would violate workflow safety.
+     *
+     * @param  array<string, mixed>  $proposal
+     */
     private function dependencyPlacementIsUnsafe(
         Ticket $ticket,
         array $proposal,
@@ -187,6 +206,7 @@ class TicketTriagePolicy
         }
 
         $preferredPhaseId = $proposal['preferred_phase_id'] ?? null;
+
         $preferred = is_int($preferredPhaseId)
             ? Phase::query()
                 ->whereKey($preferredPhaseId)
@@ -214,6 +234,8 @@ class TicketTriagePolicy
     }
 
     /**
+     * Deduplicate and deterministically order escalation reasons.
+     *
      * @param  list<string>  $reasons
      * @return list<string>
      */
@@ -226,6 +248,7 @@ class TicketTriagePolicy
         }
 
         $reasons = array_values(array_unique($reasons));
+
         usort(
             $reasons,
             static fn (string $left, string $right): int => $order[$left] <=> $order[$right],
