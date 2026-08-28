@@ -69,14 +69,12 @@ class SetOrchestrationRecommendationStatus
 
             $locked->loadMissing('project', 'task');
 
+            $eventType = $status === OrchestrationRecommendationStatus::Dismissed
+                ? 'orchestrator.recommendation_dismissed'
+                : 'orchestrator.recommendation_superseded';
+
             $this->audit->record(
-                match ($status) {
-                    OrchestrationRecommendationStatus::Dismissed => 'orchestrator.recommendation_dismissed',
-                    OrchestrationRecommendationStatus::Superseded => 'orchestrator.recommendation_superseded',
-                    OrchestrationRecommendationStatus::Active => throw new LogicException(
-                        'Active cannot be persisted as a lifecycle decision.',
-                    ),
-                },
+                $eventType,
                 [
                     'recommendation_id' => $locked->id,
                     'agent_run_id' => $locked->agent_run_id,

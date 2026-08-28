@@ -145,6 +145,16 @@ class OrchestratorRecommendationController extends Controller
             );
         }
 
+        $recommendationType = $recommendation->getAttribute(
+            'recommendation_type',
+        );
+
+        if (! $recommendationType instanceof OrchestrationRecommendationType) {
+            throw new LogicException(
+                'An orchestration recommendation requires a supported recommendation type.',
+            );
+        }
+
         $payload = $recommendation->getAttribute(
             'structured_recommendation',
         );
@@ -163,9 +173,7 @@ class OrchestratorRecommendationController extends Controller
         return [
             'id' => $recommendation->id,
             'advisory' => true,
-            'recommendation_type' => (string) $recommendation->getRawOriginal(
-                'recommendation_type',
-            ),
+            'recommendation_type' => $recommendationType->value,
             'schema_version' => $recommendation->schema_version,
             'confidence' => $recommendation->confidence,
             'status' => (string) $recommendation->getRawOriginal('status'),
@@ -213,7 +221,7 @@ class OrchestratorRecommendationController extends Controller
                 ? null
                 : $this->currentConfiguration($targetAgent),
             'suggested_configuration' => $this->suggestedConfiguration(
-                $recommendation->recommendation_type,
+                $recommendationType,
                 $payload,
             ),
             'evaluated_evidence' => [
@@ -260,7 +268,7 @@ class OrchestratorRecommendationController extends Controller
                     ]),
             ],
             'manual_action' => $this->manualAction(
-                $recommendation->recommendation_type,
+                $recommendationType,
                 $project,
                 $task,
                 $targetRole,
@@ -290,8 +298,10 @@ class OrchestratorRecommendationController extends Controller
         ?Project $project,
         AgentRole $role,
     ): ?Agent {
+        $projectId = $project === null ? 0 : $project->id;
+
         $cacheKey = $this->isProjectRole($role)
-            ? 'project:'.($project?->id ?? 0).':'.$role->value
+            ? 'project:'.$projectId.':'.$role->value
             : 'global:'.$role->value;
 
         if (array_key_exists($cacheKey, $this->targetAgentCache)) {
