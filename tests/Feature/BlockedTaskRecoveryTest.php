@@ -3,6 +3,7 @@
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
+use App\Models\TaskPlanningEscalation;
 use App\Models\User;
 use App\ProjectStatus;
 use App\TaskStatus;
@@ -27,6 +28,36 @@ test('an authenticated user can requeue a blocked task without changing its work
 
     expect($task->refresh()->status)->toBe(TaskStatus::ChangesRequired)
         ->and($project->auditEvents()->where('task_id', $task->id)->where('event_type', 'task.requeued')->exists())->toBeTrue();
+});
+
+test('a task awaiting a Project Manager planning revision cannot be manually requeued', function () {
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
+    $task = Task::create([
+        'project_id' => $project->id,
+        'key' => 'TASK-001',
+        'position' => 1,
+        'title' => 'Blocked planning revision',
+        'objective' => 'Await the Project Manager revision.',
+        'acceptance_criteria' => ['The planned verification is corrected.'],
+        'implementation_prompt' => 'Do not begin implementation.',
+        'context_capsule' => [],
+        'status' => TaskStatus::Blocked,
+    ]);
+    TaskPlanningEscalation::create([
+        'task_id' => $task->id,
+        'defect_type' => 'missing_verification_file',
+        'fingerprint' => hash('sha256', 'pending-planning-revision'),
+        'failure_evidence' => [],
+        'allowed_fields' => ['verification_commands'],
+        'status' => 'pending',
+    ]);
+
+    $this->actingAs(User::factory()->create())
+        ->post(route('projects.tasks.requeue', [$project, $task]))
+        ->assertStatus(409);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($project->auditEvents()->where('task_id', $task->id)->where('event_type', 'task.requeued')->exists())->toBeFalse();
 });
 
 test('an exhausted reviewer retry is requeued for review instead of coder changes', function () {

@@ -92,6 +92,28 @@ test('an active planning revision prevents the Coder from claiming the task', fu
         ->and($task->refresh()->status)->toBe(TaskStatus::ChangesRequired);
 });
 
+test('claiming a pending planning revision repairs a manually requeued task before Project Manager execution', function () {
+    $project = Project::create(['name' => 'Planning revision repair project', 'path' => sys_get_temp_dir(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = Task::create([
+        'project_id' => $project->id, 'key' => 'TASK-001', 'position' => 1, 'title' => 'Repair task state',
+        'objective' => 'Restore the planning revision state.', 'acceptance_criteria' => ['The revision can be claimed.'],
+        'implementation_prompt' => 'Do not begin implementation.', 'context_capsule' => [], 'status' => TaskStatus::ChangesRequired,
+    ]);
+    $escalation = TaskPlanningEscalation::create([
+        'task_id' => $task->id, 'defect_type' => 'missing_verification_file', 'fingerprint' => hash('sha256', 'repair-planning-revision'),
+        'failure_evidence' => [], 'allowed_fields' => ['verification_commands'], 'status' => 'pending',
+    ]);
+    $revision = $escalation->revisionAttempts()->create(['number' => 1, 'status' => 'queued', 'claimed_at' => now()]);
+
+    $claimed = app(TaskPlanningEscalationWorkflow::class)->claim($project);
+
+    expect($claimed?->id)->toBe($revision->id)
+        ->and($claimed?->status)->toBe('claimed')
+        ->and($task->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($escalation->refresh()->status)->toBe('running')
+        ->and($project->auditEvents()->where('task_id', $task->id)->where('event_type', 'task.planning_escalation_state_repaired')->exists())->toBeTrue();
+});
+
 test('an earlier-phase dependency is valid planning input', function () {
     $project = Project::create(['name' => 'Cross-phase dependency project', 'path' => sys_get_temp_dir(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $firstPhase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Establish prerequisites.']);

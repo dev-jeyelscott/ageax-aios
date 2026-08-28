@@ -64,10 +64,26 @@ class TaskPlanningEscalationWorkflow
     public function claim(Project $project): ?TaskPlanningRevisionAttempt
     {
         return DB::transaction(function () use ($project): ?TaskPlanningRevisionAttempt {
-            $escalation = TaskPlanningEscalation::query()->where('status', 'pending')->whereHas('task', fn ($query) => $query->where('project_id', $project->id)->where('status', TaskStatus::Blocked->value))->oldest('id')->lockForUpdate()->first();
+            $escalation = TaskPlanningEscalation::query()
+                ->where('status', 'pending')
+                ->whereHas('task', fn ($query) => $query
+                    ->where('project_id', $project->id)
+                    ->whereIn('status', [TaskStatus::Blocked->value, TaskStatus::ChangesRequired->value]))
+                ->whereHas('revisionAttempts', fn ($query) => $query->where('status', 'queued'))
+                ->oldest('id')
+                ->lockForUpdate()
+                ->first();
             if ($escalation === null) {
                 return null;
             }
+
+            $task = Task::query()->lockForUpdate()->findOrFail($escalation->task_id);
+            if (TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::ChangesRequired) {
+                $task->update(['status' => TaskStatus::Blocked]);
+                $this->audit->record('task.transitioned', ['from' => TaskStatus::ChangesRequired->value, 'to' => TaskStatus::Blocked->value], $task->project, $task);
+                $this->audit->record('task.planning_escalation_state_repaired', ['planning_escalation_id' => $escalation->id, 'reason' => 'pending_revision_requires_blocked_task'], $task->project, $task);
+            }
+
             $attempt = $escalation->revisionAttempts()->where('status', 'queued')->oldest('number')->lockForUpdate()->first();
             if ($attempt === null) {
                 return null;

@@ -14,6 +14,11 @@ class RequeueBlockedTask
     public function handle(Task $task): Task
     {
         abort_unless(TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Blocked, 409, 'Only blocked tasks may be requeued.');
+        abort_if(
+            $task->planningEscalations()->whereIn('status', ['pending', 'running'])->exists(),
+            409,
+            'This task has a pending Project Manager planning revision and cannot be manually requeued.',
+        );
 
         $latestBlockDecision = $task->auditEvents()
             ->whereIn('event_type', ['review.retry_exhausted', 'task.coder_retry_exhausted', 'task.no_progress_detected', 'task.contract_drift_detected', 'task.review_no_progress_blocked'])
