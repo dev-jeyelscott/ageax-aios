@@ -250,7 +250,7 @@ function JsonDetails({
 
             <div className="border-t border-border-subtle p-3">
                 {value ? (
-                    <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed text-muted-foreground">
+                    <pre className="max-h-80 overflow-auto font-mono text-2xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
                         {JSON.stringify(value, null, 2)}
                     </pre>
                 ) : (
@@ -302,7 +302,8 @@ function RecommendationCard({
                         </Badge>
 
                         <Badge variant="outline">
-                            {formatConfidence(recommendation.confidence)} confidence
+                            {formatConfidence(recommendation.confidence)}{' '}
+                            confidence
                         </Badge>
 
                         <span className="font-mono text-2xs text-muted-foreground">
@@ -311,7 +312,8 @@ function RecommendationCard({
                     </div>
 
                     <h2 className="mt-4 text-base font-semibold text-foreground">
-                        {recommendation.project?.name ?? 'AIOS system recommendation'}
+                        {recommendation.project?.name ??
+                            'AIOS system recommendation'}
                         {recommendation.task
                             ? ` · ${recommendation.task.key}`
                             : ''}
@@ -337,7 +339,10 @@ function RecommendationCard({
                                 Evidence hash
                             </div>
                             <code className="mt-1 block text-2xs break-all text-foreground">
-                                {recommendation.evaluated_evidence.evidence_hash}
+                                {
+                                    recommendation.evaluated_evidence
+                                        .evidence_hash
+                                }
                             </code>
                         </div>
 
@@ -366,7 +371,9 @@ function RecommendationCard({
 
                         <ConfigurationPanel
                             title="Suggested configuration"
-                            configuration={recommendation.suggested_configuration}
+                            configuration={
+                                recommendation.suggested_configuration
+                            }
                             emptyMessage="This recommendation advises workflow, recovery, context, retry, or decomposition behavior rather than an Agent configuration change."
                         />
                     </div>

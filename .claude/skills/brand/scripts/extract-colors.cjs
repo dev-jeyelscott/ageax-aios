@@ -29,7 +29,6 @@ const DEFAULT_GUIDELINES_PATH = "docs/brand-guidelines.md";
  */
 function extractHexColors(text) {
   const hexPattern = /#[0-9A-Fa-f]{6}\b/g;
-
   return [...new Set(text.match(hexPattern) || [])];
 }
 
@@ -65,7 +64,6 @@ function parseBrandColors(guidelinesPath) {
 
   sections.forEach(({ name, regex }) => {
     const match = content.match(regex);
-
     if (match) {
       const colors = extractHexColors(match[0]);
       palette[name] = colors;
@@ -84,7 +82,6 @@ function parseBrandColors(guidelinesPath) {
  */
 function hexToRgb(hex) {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-
   return result
     ? {
         r: parseInt(result[1], 16),
@@ -103,7 +100,6 @@ function rgbToHex(r, g, b) {
     [r, g, b]
       .map((x) => {
         const hex = Math.round(x).toString(16);
-
         return hex.length === 1 ? "0" + hex : hex;
       })
       .join("")
@@ -118,9 +114,7 @@ function colorDistance(color1, color2) {
   const rgb1 = typeof color1 === "string" ? hexToRgb(color1) : color1;
   const rgb2 = typeof color2 === "string" ? hexToRgb(color2) : color2;
 
-  if (!rgb1 || !rgb2) {
-return Infinity;
-}
+  if (!rgb1 || !rgb2) return Infinity;
 
   return Math.sqrt(
     Math.pow(rgb1.r - rgb2.r, 2) +
@@ -138,7 +132,6 @@ function findNearestBrandColor(color, brandColors) {
 
   brandColors.forEach((brandColor) => {
     const distance = colorDistance(color, brandColor);
-
     if (distance < minDistance) {
       minDistance = distance;
       nearest = brandColor;
@@ -153,19 +146,13 @@ function findNearestBrandColor(color, brandColors) {
  * Distance threshold: 50 (out of max ~441 for RGB)
  */
 function calculateCompliance(extractedColors, brandColors, threshold = 50) {
-  if (!extractedColors || extractedColors.length === 0) {
-return 100;
-}
-
-  if (!brandColors || brandColors.length === 0) {
-return 0;
-}
+  if (!extractedColors || extractedColors.length === 0) return 100;
+  if (!brandColors || brandColors.length === 0) return 0;
 
   let matchCount = 0;
 
   extractedColors.forEach((color) => {
     const nearest = findNearestBrandColor(color, brandColors);
-
     if (nearest.distance <= threshold) {
       matchCount++;
     }
@@ -278,7 +265,6 @@ function main() {
         console.log('  magick image.png -colors 10 -depth 8 -format "%c" histogram:info:');
       }
     }
-
     return;
   }
 

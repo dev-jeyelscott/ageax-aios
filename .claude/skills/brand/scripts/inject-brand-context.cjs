@@ -23,7 +23,6 @@ const DEFAULT_GUIDELINES_PATH = "docs/brand-guidelines.md";
  */
 function extractHexColors(text) {
   const hexPattern = /#[0-9A-Fa-f]{6}\b/g;
-
   return [...new Set(text.match(hexPattern) || [])];
 }
 
@@ -52,21 +51,10 @@ function extractColorsFromTable(content) {
     /### Semantic[\s\S]*?\|[\s\S]*?(?=###|$)/i
   );
 
-  if (primaryMatch) {
-colors.primary = extractHexColors(primaryMatch[0]);
-}
-
-  if (secondaryMatch) {
-colors.secondary = extractHexColors(secondaryMatch[0]);
-}
-
-  if (neutralMatch) {
-colors.neutral = extractHexColors(neutralMatch[0]);
-}
-
-  if (semanticMatch) {
-colors.semantic = extractHexColors(semanticMatch[0]);
-}
+  if (primaryMatch) colors.primary = extractHexColors(primaryMatch[0]);
+  if (secondaryMatch) colors.secondary = extractHexColors(secondaryMatch[0]);
+  if (neutralMatch) colors.neutral = extractHexColors(neutralMatch[0]);
+  if (semanticMatch) colors.semantic = extractHexColors(semanticMatch[0]);
 
   return colors;
 }
@@ -88,32 +76,18 @@ function extractTypography(content) {
 
   // Fallback: look in tables
   const fontStackMatch = content.match(/### Font Stack[\s\S]*?(?=###|##|$)/i);
-
   if (fontStackMatch) {
     const stackText = fontStackMatch[0];
     const headingAlt = stackText.match(/heading[^']*['"]([^'"]+)['"]/i);
     const bodyAlt = stackText.match(/body[^']*['"]([^'"]+)['"]/i);
 
-    if (headingAlt) {
-typography.heading = headingAlt[1];
-}
-
-    if (bodyAlt) {
-typography.body = bodyAlt[1];
-}
+    if (headingAlt) typography.heading = headingAlt[1];
+    if (bodyAlt) typography.body = bodyAlt[1];
   }
 
-  if (headingMatch) {
-typography.heading = headingMatch[1];
-}
-
-  if (bodyMatch) {
-typography.body = bodyMatch[1];
-}
-
-  if (monoMatch) {
-typography.mono = monoMatch[1];
-}
+  if (headingMatch) typography.heading = headingMatch[1];
+  if (bodyMatch) typography.body = bodyMatch[1];
+  if (monoMatch) typography.mono = monoMatch[1];
 
   return typography;
 }
@@ -132,16 +106,13 @@ function extractVoice(content) {
   const personalityMatch = content.match(
     /### Brand Personality[\s\S]*?\|[\s\S]*?(?=###|##|$)/i
   );
-
   if (personalityMatch) {
     const traits = personalityMatch[0].match(
       /\*\*([^*]+)\*\*\s*\|\s*([^|]+)/g
     );
-
     if (traits) {
       voice.traits = traits.map((t) => {
         const match = t.match(/\*\*([^*]+)\*\*/);
-
         return match ? match[1].trim() : "";
       }).filter(Boolean);
     }
@@ -151,10 +122,8 @@ function extractVoice(content) {
   const prohibitedMatch = content.match(
     /### Prohibited[\s\S]*?(?=###|##|$)/i
   );
-
   if (prohibitedMatch) {
     const terms = prohibitedMatch[0].match(/\|\s*([^|]+)\s*\|/g);
-
     if (terms) {
       voice.prohibited = terms
         .map((t) => t.replace(/\|/g, "").trim())
@@ -166,10 +135,8 @@ function extractVoice(content) {
   const forbiddenMatch = content.match(
     /### Forbidden Phrases[\s\S]*?(?=###|##|$)/i
   );
-
   if (forbiddenMatch && voice.prohibited.length === 0) {
     const items = forbiddenMatch[0].match(/-\s*["']?([^"'\n(]+)/g);
-
     if (items) {
       voice.prohibited = items
         .map((item) => item.replace(/^-\s*["']?/, "").trim())
@@ -191,16 +158,13 @@ function extractCoreAttributes(content) {
   const attributesMatch = content.match(
     /### Core Attributes[\s\S]*?\|[\s\S]*?(?=###|##|$)/i
   );
-
   if (attributesMatch) {
     const rows = attributesMatch[0].match(
       /\|\s*\*\*([^*]+)\*\*\s*\|\s*([^|]+)\|/g
     );
-
     if (rows) {
       rows.forEach((row) => {
         const match = row.match(/\*\*([^*]+)\*\*\s*\|\s*([^|]+)/);
-
         if (match) {
           attributes.push({
             name: match[1].trim(),
@@ -230,7 +194,6 @@ function extractImageStyle(content) {
   const basePromptMatch = content.match(
     /### Base Prompt Template[\s\S]*?```\n?([\s\S]*?)```/i
   );
-
   if (basePromptMatch) {
     imageStyle.basePrompt = basePromptMatch[1].trim().replace(/\n/g, " ");
   }
@@ -239,14 +202,11 @@ function extractImageStyle(content) {
   const keywordsMatch = content.match(
     /### Style Keywords[\s\S]*?\|[\s\S]*?(?=###|##|$)/i
   );
-
   if (keywordsMatch) {
     const keywordRows = keywordsMatch[0].match(/\|\s*\*\*[^*]+\*\*\s*\|\s*([^|]+)\|/g);
-
     if (keywordRows) {
       keywordRows.forEach((row) => {
         const match = row.match(/\|\s*\*\*[^*]+\*\*\s*\|\s*([^|]+)\|/);
-
         if (match) {
           const keywords = match[1].split(",").map((k) => k.trim()).filter(Boolean);
           imageStyle.keywords.push(...keywords);
@@ -259,10 +219,8 @@ function extractImageStyle(content) {
   const moodMatch = content.match(
     /### Visual Mood Descriptors[\s\S]*?(?=###|##|$)/i
   );
-
   if (moodMatch) {
     const moodItems = moodMatch[0].match(/-\s*([^\n]+)/g);
-
     if (moodItems) {
       imageStyle.mood = moodItems.map((item) => item.replace(/^-\s*/, "").trim());
     }
@@ -272,14 +230,11 @@ function extractImageStyle(content) {
   const dontsMatch = content.match(
     /### Visual Don'ts[\s\S]*?\|[\s\S]*?(?=###|##|$)/i
   );
-
   if (dontsMatch) {
     const dontRows = dontsMatch[0].match(/\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|/g);
-
     if (dontRows) {
       dontRows.forEach((row) => {
         const match = row.match(/\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|/);
-
         if (match && !match[1].includes("Avoid") && !match[1].includes("---")) {
           imageStyle.donts.push(match[1].trim());
         }
@@ -289,14 +244,11 @@ function extractImageStyle(content) {
 
   // Extract example prompts (content between ``` blocks after specific headers)
   const exampleMatch = content.match(/### Example Prompts[\s\S]*?(?=##|$)/i);
-
   if (exampleMatch) {
     const prompts = exampleMatch[0].match(/\*\*([^*]+)\*\*:\s*```\n?([\s\S]*?)```/g);
-
     if (prompts) {
       prompts.forEach((p) => {
         const match = p.match(/\*\*([^*]+)\*\*:\s*```\n?([\s\S]*?)```/);
-
         if (match) {
           imageStyle.examplePrompts.push({
             type: match[1].trim(),

@@ -107,7 +107,6 @@ function getFiles(dir, ignore, files = []) {
       }
     } else if (entry.isFile()) {
       const ext = path.extname(entry.name);
-
       if (extensions.includes(ext)) {
         files.push(fullPath);
       }
@@ -140,7 +139,6 @@ function scanFile(filePath) {
 
     for (const [name, pattern] of Object.entries(patterns)) {
       const matches = line.match(pattern.regex);
-
       if (matches) {
         matches.forEach(match => {
           // Skip common exceptions
@@ -179,10 +177,7 @@ function formatReport(violations) {
   // Group by file
   const byFile = {};
   violations.forEach(v => {
-    if (!byFile[v.file]) {
-byFile[v.file] = [];
-}
-
+    if (!byFile[v.file]) byFile[v.file] = [];
     byFile[v.file].push(v);
   });
 
@@ -203,7 +198,6 @@ byFile[v.file] = [];
   });
 
   report += `\n📊 Summary:\n`;
-
   for (const [type, count] of Object.entries(byType)) {
     report += `   ${patterns[type].message}: ${count}\n`;
   }
@@ -235,9 +229,7 @@ function main() {
   const allViolations = [];
 
   for (const file of files) {
-    if (shouldSkip(file)) {
-continue;
-}
+    if (shouldSkip(file)) continue;
 
     const violations = scanFile(file);
     allViolations.push(...violations);
