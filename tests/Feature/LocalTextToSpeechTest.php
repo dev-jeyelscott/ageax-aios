@@ -5,6 +5,7 @@ use App\Models\AuditEvent;
 use App\Models\User;
 use App\Services\PiperTextToSpeech;
 use App\Services\TextToSpeech;
+use App\Services\TextToSpeechResult;
 use Illuminate\Process\PendingProcess;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Process;
@@ -85,6 +86,37 @@ function localTextToSpeechUser(): User
     return User::factory()->create([
         'email_verified_at' => now(),
     ]);
+}
+
+/**
+ * Replace the local TTS adapter with an exact binary response for HTTP transport tests.
+ */
+function fakeLocalTextToSpeechBoundary(string $audio): void
+{
+    app()->instance(
+        TextToSpeech::class,
+        new class($audio) implements TextToSpeech
+        {
+            /**
+             * Store the exact binary audio fixture returned by this test boundary.
+             */
+            public function __construct(
+                private readonly string $audio,
+            ) {}
+
+            /**
+             * Return the configured WAV bytes without Process fake normalization.
+             */
+            public function synthesize(string $text): TextToSpeechResult
+            {
+                return new TextToSpeechResult(
+                    successful: true,
+                    audio: $this->audio,
+                    mimeType: 'audio/wav',
+                );
+            }
+        },
+    );
 }
 
 test('resolves the explicit local tts boundary and launches no process while disabled', function (): void {
@@ -325,31 +357,23 @@ test('local tts route remains behind authenticated and verified middleware', fun
 });
 
 test('authenticated route returns non cacheable wav output without durable aios execution state', function (): void {
-    $fixture = localTextToSpeechFixture();
     $wave = fakeLocalTextToSpeechWave();
-    Process::fake([
-        '*' => Process::result(output: $wave),
-    ]);
 
-    try {
-        configureLocalTextToSpeech($fixture);
+    fakeLocalTextToSpeechBoundary($wave);
 
-        $this
-            ->actingAs(localTextToSpeechUser())
-            ->postJson(
-                route('voice.speech.store'),
-                ['text' => 'AGEAX local response.'],
-            )
-            ->assertOk()
-            ->assertHeader('Content-Type', 'audio/wav')
-            ->assertHeader('X-Content-Type-Options', 'nosniff')
-            ->assertContent($wave);
+    $this
+        ->actingAs(localTextToSpeechUser())
+        ->postJson(
+            route('voice.speech.store'),
+            ['text' => 'AGEAX local response.'],
+        )
+        ->assertOk()
+        ->assertHeader('Content-Type', 'audio/wav')
+        ->assertHeader('X-Content-Type-Options', 'nosniff')
+        ->assertContent($wave);
 
-        expect(AgentRun::query()->count())->toBe(0)
-            ->and(AuditEvent::query()->count())->toBe(0);
-    } finally {
-        removeLocalTextToSpeechFixture($fixture);
-    }
+    expect(AgentRun::query()->count())->toBe(0)
+        ->and(AuditEvent::query()->count())->toBe(0);
 });
 
 test('tts provider failure is isolated to presentation and creates no durable aios execution state', function (): void {
