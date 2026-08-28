@@ -770,9 +770,6 @@ export default function TaskOperatorMessageComposer({
         return () => {
             mountedRef.current = false;
 
-            microphoneRequestSequenceRef.current++;
-            transcriptionSequenceRef.current++;
-
             transcriptionAbortRef.current?.abort();
             transcriptionAbortRef.current = null;
 
