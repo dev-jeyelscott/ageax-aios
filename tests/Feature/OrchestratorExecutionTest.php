@@ -144,6 +144,7 @@ function p5004Harness(
             string $prompt,
             ?Closure $onOutput = null,
             ?Closure $onHeartbeat = null,
+            array $executionSettings = [],
         ): NormalizedExecutionResult {
             $result = ($this->callback)(
                 $project,

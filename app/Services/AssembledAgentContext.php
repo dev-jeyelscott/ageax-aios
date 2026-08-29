@@ -9,6 +9,7 @@ final readonly class AssembledAgentContext
      * @param  list<array<string, mixed>>  $skillsSnapshot
      * @param  array<string, mixed>  $taskContext
      * @param  array<string, mixed>  $contextCostEstimate
+     * @param  array<string, mixed>  $executionSettings
      */
     public function __construct(
         public int $contextSchemaVersion,
@@ -19,6 +20,7 @@ final readonly class AssembledAgentContext
         public string $hash,
         public array $contextCostEstimate,
         public int $contextCostSchemaVersion,
+        public array $executionSettings = [],
     ) {}
 
     /** @return array<string, mixed> */
@@ -31,6 +33,7 @@ final readonly class AssembledAgentContext
             'agent' => $this->agentSnapshot,
             'skills' => $this->skillsSnapshot,
             'task_context' => $this->taskContext,
+            'execution_settings' => $this->executionSettings,
         ];
     }
 
@@ -42,7 +45,33 @@ final readonly class AssembledAgentContext
             'context_hash' => $this->hash,
             'agent' => $this->agentSnapshot,
             'skills' => $this->skillsSnapshot,
+            'execution_settings' => $this->executionSettings,
         ];
+    }
+
+    /** @param array<string, mixed> $executionSettings */
+    public function withExecutionSettings(array $executionSettings): self
+    {
+        $payload = [
+            'context_schema_version' => $this->contextSchemaVersion,
+            'system_rules' => $this->systemRules,
+            'agent' => $this->agentSnapshot,
+            'skills' => $this->skillsSnapshot,
+            'task_context' => $this->taskContext,
+            'execution_settings' => $executionSettings,
+        ];
+
+        return new self(
+            contextSchemaVersion: $this->contextSchemaVersion,
+            systemRules: $this->systemRules,
+            agentSnapshot: $this->agentSnapshot,
+            skillsSnapshot: $this->skillsSnapshot,
+            taskContext: $this->taskContext,
+            hash: hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)),
+            contextCostEstimate: $this->contextCostEstimate,
+            contextCostSchemaVersion: $this->contextCostSchemaVersion,
+            executionSettings: $executionSettings,
+        );
     }
 
     /** @return array<string, mixed> */

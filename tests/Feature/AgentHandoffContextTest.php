@@ -251,6 +251,7 @@ function p8003Harness(int $capacityTokens): AgentHarness
             string $prompt,
             ?Closure $onOutput = null,
             ?Closure $onHeartbeat = null,
+            array $executionSettings = [],
         ): NormalizedExecutionResult {
             return new NormalizedExecutionResult(
                 exitCode: 0,

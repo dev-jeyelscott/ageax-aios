@@ -100,6 +100,7 @@ class AgentContextAssembler
         $agentSnapshot = $payload['agent'] ?? null;
         $skillsSnapshot = $payload['skills'] ?? null;
         $taskContext = $payload['task_context'] ?? null;
+        $executionSettings = $payload['execution_settings'] ?? [];
         $expectedSystemRules = is_int($contextSchemaVersion)
             ? $this->systemRules($contextSchemaVersion)
             : null;
@@ -111,7 +112,8 @@ class AgentContextAssembler
             || $systemRules !== $expectedSystemRules
             || ! is_array($agentSnapshot)
             || ! is_array($skillsSnapshot)
-            || ! is_array($taskContext)) {
+            || ! is_array($taskContext)
+            || ! is_array($executionSettings)) {
             throw new LogicException('The provider prompt does not contain a valid AIOS assembled-context payload.');
         }
 
@@ -135,6 +137,7 @@ class AgentContextAssembler
             hash: $contextHash,
             contextCostEstimate: $costEstimate,
             contextCostSchemaVersion: ContextCostEstimator::SchemaVersion,
+            executionSettings: $executionSettings,
         );
     }
 
@@ -154,6 +157,7 @@ class AgentContextAssembler
             $agentSnapshot,
             $skillsSnapshot,
             $taskContext,
+            $context->executionSettings,
         );
     }
 
@@ -171,12 +175,14 @@ class AgentContextAssembler
         $skillsSnapshot = $configurationSnapshot['skills'] ?? null;
         $contextSchemaVersion = $configurationSnapshot['context_schema_version'] ?? null;
         $contextHash = $configurationSnapshot['context_hash'] ?? null;
+        $executionSettings = $configurationSnapshot['execution_settings'] ?? [];
 
         if (! is_array($agentSnapshot)
             || ! is_array($skillsSnapshot)
             || ! is_int($contextSchemaVersion)
             || ! is_string($contextHash)
-            || $contextHash === '') {
+            || $contextHash === ''
+            || ! is_array($executionSettings)) {
             throw new LogicException('The interrupted Agent run is missing a valid immutable configuration snapshot.');
         }
 
@@ -193,6 +199,7 @@ class AgentContextAssembler
             hash: $contextHash,
             contextCostEstimate: $costEstimate,
             contextCostSchemaVersion: ContextCostEstimator::SchemaVersion,
+            executionSettings: $executionSettings,
         );
     }
 
@@ -297,6 +304,7 @@ class AgentContextAssembler
         array $agentSnapshot,
         array $skillsSnapshot,
         array $taskContext,
+        array $executionSettings = [],
     ): AssembledAgentContext {
         $systemRules = $this->systemRules($contextSchemaVersion);
         $payload = [
@@ -305,6 +313,7 @@ class AgentContextAssembler
             'agent' => $agentSnapshot,
             'skills' => $skillsSnapshot,
             'task_context' => $taskContext,
+            'execution_settings' => $executionSettings,
         ];
         $hash = hash(
             'sha256',
@@ -331,6 +340,7 @@ class AgentContextAssembler
             hash: $hash,
             contextCostEstimate: $costEstimate,
             contextCostSchemaVersion: ContextCostEstimator::SchemaVersion,
+            executionSettings: $executionSettings,
         );
     }
 

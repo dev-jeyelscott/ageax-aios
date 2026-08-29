@@ -78,6 +78,7 @@ final readonly class CodexHarness implements AgentHarness
         string $prompt,
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
+        array $executionSettings = [],
     ): NormalizedExecutionResult {
         $this->capabilities()->assertSupports(
             $agent,
@@ -93,15 +94,18 @@ final readonly class CodexHarness implements AgentHarness
                 string $approvedPrompt,
                 ?Closure $outputCallback,
                 ?Closure $heartbeatCallback,
+                array $approvedExecutionSettings,
             ): NormalizedExecutionResult => $this->executeProvider(
                 $project,
                 $agent,
                 $approvedPrompt,
                 $outputCallback,
                 $heartbeatCallback,
+                $approvedExecutionSettings,
             ),
             $onOutput,
             $onHeartbeat,
+            $executionSettings,
         );
     }
 
@@ -111,6 +115,7 @@ final readonly class CodexHarness implements AgentHarness
         string $prompt,
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
+        array $executionSettings = [],
     ): NormalizedExecutionResult {
         $result = $this->runner->runForAgent(
             $project,
@@ -118,6 +123,7 @@ final readonly class CodexHarness implements AgentHarness
             $prompt,
             $onOutput,
             $onHeartbeat,
+            $executionSettings,
         );
 
         return new NormalizedExecutionResult(

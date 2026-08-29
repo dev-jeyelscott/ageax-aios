@@ -135,6 +135,20 @@ test('converts an execution timeout into a normalized failure result instead of 
     }
 });
 
+test('uses the persisted AIOS execution setting when supplied', function () {
+    Process::fake(['*' => Process::result(output: 'completed')]);
+
+    app(CodexCliRunner::class)->runAtPath(
+        base_path(),
+        'Implement the task.',
+        executionSettings: ['max_execution_seconds' => 180],
+    );
+
+    Process::assertRan(function (PendingProcess $process): bool {
+        return $process->timeout === 180;
+    });
+});
+
 test('converts an externally signaled process into a normalized failure result instead of throwing', function () {
     $binary = tempnam(sys_get_temp_dir(), 'aios-codex-signaled-');
     expect($binary)->not->toBeFalse();

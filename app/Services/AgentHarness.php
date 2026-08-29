@@ -17,5 +17,6 @@ interface AgentHarness
      * @param  (Closure(string, string): void)|null  $onOutput
      * @param  (Closure(): mixed)|null  $onHeartbeat
      */
-    public function execute(Project $project, Agent $agent, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null): NormalizedExecutionResult;
+    /** @param array<string, mixed> $executionSettings */
+    public function execute(Project $project, Agent $agent, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null, array $executionSettings = []): NormalizedExecutionResult;
 }

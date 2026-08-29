@@ -66,6 +66,7 @@ final class PromptContractCiHarness implements AgentHarnessContract
         string $prompt,
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
+        array $executionSettings = [],
     ): NormalizedExecutionResult {
         $this->prompts[] = $prompt;
         $onHeartbeat?->__invoke();

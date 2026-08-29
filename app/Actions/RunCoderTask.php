@@ -21,6 +21,7 @@ use App\Services\AuditLogger;
 use App\Services\CoderRepositoryGuard;
 use App\Services\CodexCliRunner;
 use App\Services\DatabaseProtectionGuard;
+use App\Services\ExecutionBudgetPolicy;
 use App\Services\ManagedValidationProcessCleanup;
 use App\Services\NoProgressRetryGuard;
 use App\Services\ProjectGitState;
@@ -64,6 +65,7 @@ class RunCoderTask
         private CoderRepositoryGuard $repositoryGuard,
         private ProjectGitState $git,
         private DatabaseProtectionGuard $databaseProtection,
+        private ExecutionBudgetPolicy $executionBudget,
         private WorkflowBoundaryHandoffRecorder $boundaryHandoffs,
         private StaleWorkerRecovery $staleRecovery,
     ) {}
@@ -137,10 +139,13 @@ class RunCoderTask
             return $this->blockMisconfiguredAgent($task, $exception);
         }
 
+        $executionSettings = $assembled?->executionSettings ?? $this->executionBudget->forCoderTask($task);
+        $assembled = $assembled?->withExecutionSettings($executionSettings);
+
         $recoveryInstruction = $preflight['mode'] === 'recovery'
             ? 'AIOS has verified that the current working-tree changes are task-owned recovery state tied to the supplied prior attempt. Inspect and continue from them; do not stop solely because the worktree is dirty. Do not stage or commit; AIOS independently validates and commits only verified task files. '
             : '';
-        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and relevant documentation first. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Do not run git add, git commit, git reset, git stash, git checkout, git switch, git merge, git rebase, git cherry-pick, git clean, or any other Git mutation. AIOS independently validates and commits only verified task files. {$recoveryInstruction}Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
+        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and the task's relevant documentation first. Start with the supplied relevant paths and verification commands; do not scan unrelated areas, run broad test suites, or refactor speculatively unless the task evidence requires it. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Do not run git add, git commit, git reset, git stash, git checkout, git switch, git merge, git rebase, git cherry-pick, git clean, or any other Git mutation. AIOS independently validates and commits only verified task files. {$recoveryInstruction}Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
         $attempt = TaskAttempt::create([
             'task_id' => $task->id,
             'number' => $task->attempts()->max('number') + 1,
@@ -168,8 +173,8 @@ class RunCoderTask
             };
             $onHeartbeat = $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease);
             $execution = $harness !== null && $agent !== null
-                ? $harness->execute($task->project, $agent, $prompt, $onOutput, $onHeartbeat)->toArray()
-                : $this->runner->run($task->project, $prompt, $onOutput, $onHeartbeat);
+                ? $harness->execute($task->project, $agent, $prompt, $onOutput, $onHeartbeat, $executionSettings)->toArray()
+                : $this->runner->run($task->project, $prompt, $onOutput, $onHeartbeat, $executionSettings);
             $this->runs->complete($run, $execution);
 
             if ($execution['exit_code'] === 0) {

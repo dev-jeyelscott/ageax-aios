@@ -13,6 +13,7 @@ return [
     'codex_binary' => env('AIOS_CODEX_BINARY', 'codex'),
     'claude_code_binary' => env('AIOS_CLAUDE_CODE_BINARY', 'claude'),
     'execution_timeout' => (int) env('AIOS_EXECUTION_TIMEOUT', 1800),
+    'coder_low_complexity_execution_timeout' => (int) env('AIOS_CODER_LOW_COMPLEXITY_EXECUTION_TIMEOUT', 180),
     'stale_worker_after_seconds' => (int) env('AIOS_STALE_WORKER_AFTER_SECONDS', 1860),
     'worker_lease_seconds' => (int) env('AIOS_WORKER_LEASE_SECONDS', 60),
     'worker_heartbeat_interval_seconds' => (int) env('AIOS_WORKER_HEARTBEAT_INTERVAL_SECONDS', 5),

@@ -53,6 +53,7 @@ function p3016Harness(int $capacityTokens): AgentHarness
             string $prompt,
             ?Closure $onOutput = null,
             ?Closure $onHeartbeat = null,
+            array $executionSettings = [],
         ): NormalizedExecutionResult {
             $this->executions++;
 

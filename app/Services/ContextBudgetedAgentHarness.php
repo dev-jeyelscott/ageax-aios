@@ -36,7 +36,7 @@ final readonly class ContextBudgetedAgentHarness
     /**
      * Select handoffs, budget the final context, consume delivered evidence, then dispatch the provider.
      *
-     * @param  Closure(string, ?Closure, ?Closure): NormalizedExecutionResult  $provider
+     * @param  Closure(string, ?Closure, ?Closure, array<string, mixed>): NormalizedExecutionResult  $provider
      */
     public function execute(
         AgentHarness $harness,
@@ -46,6 +46,7 @@ final readonly class ContextBudgetedAgentHarness
         Closure $provider,
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
+        array $executionSettings = [],
     ): NormalizedExecutionResult {
         $run = $this->currentRun(
             $project,
@@ -66,6 +67,7 @@ final readonly class ContextBudgetedAgentHarness
                 $prompt,
                 $onOutput,
                 $onHeartbeat,
+                $executionSettings,
             );
         }
 
@@ -283,6 +285,7 @@ final readonly class ContextBudgetedAgentHarness
             $decision->prompt,
             $onOutput,
             $onHeartbeat,
+            $finalContext->executionSettings,
         );
     }
 

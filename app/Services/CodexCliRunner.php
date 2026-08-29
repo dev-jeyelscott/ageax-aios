@@ -36,12 +36,14 @@ class CodexCliRunner
         string $prompt,
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
+        array $executionSettings = [],
     ): array {
         return $this->runAtPath(
             $this->paths->assertProjectPath($project->path),
             $prompt,
             $onOutput,
             $onHeartbeat,
+            executionSettings: $executionSettings,
         );
     }
 
@@ -52,6 +54,7 @@ class CodexCliRunner
         string $prompt,
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
+        array $executionSettings = [],
     ): array {
         return $this->runAtPath(
             $this->paths->assertProjectPath($project->path),
@@ -59,6 +62,7 @@ class CodexCliRunner
             $onOutput,
             $onHeartbeat,
             $agent,
+            $executionSettings,
         );
     }
 
@@ -69,9 +73,10 @@ class CodexCliRunner
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         ?Agent $agent = null,
+        array $executionSettings = [],
     ): array {
         $pending = Process::path($path)
-            ->timeout((int) config('aios.execution_timeout'))
+            ->timeout($this->executionTimeout($executionSettings))
             ->input($prompt);
 
         try {
@@ -195,6 +200,18 @@ class CodexCliRunner
         $command[] = '-';
 
         return $this->environment->wrap($command);
+    }
+
+    /** @param array<string, mixed> $executionSettings */
+    private function executionTimeout(array $executionSettings): int
+    {
+        $configured = $executionSettings['max_execution_seconds'] ?? null;
+
+        $globalMaximum = max(1, (int) config('aios.execution_timeout'));
+
+        return is_int($configured) && $configured >= 60
+            ? min($configured, $globalMaximum)
+            : $globalMaximum;
     }
 
     /** @return array{exit_code: int, output: string, error_output: string} */

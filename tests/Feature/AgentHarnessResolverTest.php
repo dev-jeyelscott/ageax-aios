@@ -29,7 +29,7 @@ function p2005Harness(AgentHarnessIdentifier $identifier): AgentHarnessContract
             );
         }
 
-        public function execute(Project $project, Agent $agent, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null): NormalizedExecutionResult
+        public function execute(Project $project, Agent $agent, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null, array $executionSettings = []): NormalizedExecutionResult
         {
             if ($onOutput !== null) {
                 $onOutput('stdout', 'streamed output');

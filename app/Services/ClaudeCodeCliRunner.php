@@ -96,7 +96,7 @@ class ClaudeCodeCliRunner
      * @param  (Closure(): mixed)|null  $onHeartbeat
      * @return array{exit_code: int, output: string, error_output: string, failure_type: ?string}
      */
-    public function run(Project $project, Agent $agent, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null): array
+    public function run(Project $project, Agent $agent, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null, array $executionSettings = []): array
     {
         return $this->runAtPath(
             $this->paths->assertProjectPath($project->path),
@@ -104,6 +104,7 @@ class ClaudeCodeCliRunner
             $prompt,
             $onOutput,
             $onHeartbeat,
+            $executionSettings,
         );
     }
 
@@ -112,7 +113,7 @@ class ClaudeCodeCliRunner
      * @param  (Closure(): mixed)|null  $onHeartbeat
      * @return array{exit_code: int, output: string, error_output: string, failure_type: ?string}
      */
-    public function runAtPath(string $path, Agent $agent, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null): array
+    public function runAtPath(string $path, Agent $agent, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null, array $executionSettings = []): array
     {
         $authenticationFailure = $this->authenticationFailure($path);
 
@@ -121,7 +122,7 @@ class ClaudeCodeCliRunner
         }
 
         $pending = Process::path($path)
-            ->timeout((int) config('aios.execution_timeout'))
+            ->timeout($this->executionTimeout($executionSettings))
             ->input($prompt);
 
         try {
@@ -255,6 +256,18 @@ class ClaudeCodeCliRunner
         $command[] = self::StdinPrompt;
 
         return $this->environment->wrap($command);
+    }
+
+    /** @param array<string, mixed> $executionSettings */
+    private function executionTimeout(array $executionSettings): int
+    {
+        $configured = $executionSettings['max_execution_seconds'] ?? null;
+
+        $globalMaximum = max(1, (int) config('aios.execution_timeout'));
+
+        return is_int($configured) && $configured >= 60
+            ? min($configured, $globalMaximum)
+            : $globalMaximum;
     }
 
     /** @return array{exit_code: int, output: string, error_output: string, failure_type: ?string} */

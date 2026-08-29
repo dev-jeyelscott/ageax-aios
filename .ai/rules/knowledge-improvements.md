@@ -13,6 +13,7 @@ paths:
   - 'database/migrations/*knowledge_source*.php'
   - 'database/factories/KnowledgeSource*.php'
   - 'resources/js/**/knowledge-improvements/**'
+  - 'app/Services/**'
 ---
 
 # Knowledge Improvement Queue
@@ -56,3 +57,6 @@ The same project/fingerprint pair must resolve to one candidate. Scans may safel
 Deterministic detection remains preferred where an objective rule can identify a gap, stale source, conflict, or recurring failure. Knowledge Architect output is evidence or proposal only. AIOS validates and persists any resulting candidate, and the existing operator-review contract remains mandatory.
 
 Approved repository knowledge changes still enter the normal Task, Coder, Git, deterministic validation, and Reviewer lifecycle. Approval of a Knowledge Architect proposal must not become a second repository mutation path. Cross-project knowledge must never be silently promoted or injected into another project; any future reusable global pattern requires explicit operator-controlled promotion, bounded/redacted evidence, and immutable provenance.
+
+## Coder execution budgets are immutable per attempt
+AIOS resolves a bounded execution setting before a Coder run, persists it in the assembled configuration snapshot, and passes it through the harness to both provider runners. Recovery must reuse that snapshot; do not recompute or let the harness choose a different limit mid-attempt.
