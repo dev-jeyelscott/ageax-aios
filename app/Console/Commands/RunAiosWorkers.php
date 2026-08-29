@@ -109,6 +109,15 @@ class RunAiosWorkers extends Command
                     );
 
                     if ($lease !== null) {
+                        $agentName = $this->agentNameForLease(
+                            $lease,
+                            AgentRole::ProjectManager,
+                        );
+
+                        $this->info(
+                            "Processing roadmap {$roadmap->id} for project_manager [agent: {$agentName}].",
+                        );
+
                         try {
                             $runProjectManager->handle($roadmap, $lease);
                         } catch (Throwable $throwable) {
@@ -139,6 +148,15 @@ class RunAiosWorkers extends Command
                             );
 
                             if ($revisionAttempt !== null) {
+                                $agentName = $this->agentNameForLease(
+                                    $lease,
+                                    AgentRole::ProjectManager,
+                                );
+
+                                $this->info(
+                                    "Processing task planning revision for project_manager [agent: {$agentName}].",
+                                );
+
                                 $runTaskPlanningRevision->handle(
                                     $revisionAttempt,
                                     $lease,
@@ -173,9 +191,13 @@ class RunAiosWorkers extends Command
 
                             if ($attempt !== null) {
                                 $ticket = $attempt->ticket()->firstOrFail();
+                                $agentName = $this->agentNameForLease(
+                                    $lease,
+                                    AgentRole::ProjectManager,
+                                );
 
                                 $this->info(
-                                    "Claimed {$ticket->key} for project_manager ticket triage attempt {$attempt->number}.",
+                                    "Claimed {$ticket->key} for project_manager ticket triage attempt {$attempt->number} [agent: {$agentName}].",
                                 );
 
                                 $runTicketTriage->handle(
@@ -223,18 +245,14 @@ class RunAiosWorkers extends Command
                     $task ??= $claimTask->handle($project, $role);
 
                     if ($task !== null) {
-                        if ($role === AgentRole::Coder) {
-                            $agentName = $this->coderAgentName($lease)
-                                ?? 'unavailable';
+                        $agentName = $this->agentNameForLease(
+                            $lease,
+                            $role,
+                        );
 
-                            $this->info(
-                                "Processing {$task->key} for {$role->value} [agent: {$agentName}].",
-                            );
-                        } else {
-                            $this->info(
-                                "Processing {$task->key} for {$role->value}.",
-                            );
-                        }
+                        $this->info(
+                            "Processing {$task->key} for {$role->value} [agent: {$agentName}].",
+                        );
 
                         try {
                             if ($role === AgentRole::Coder) {
@@ -424,15 +442,17 @@ class RunAiosWorkers extends Command
     }
 
     /**
-     * Resolve the human-readable Agent name from the exact currently owned Coder worker lease.
+     * Resolve the human-readable Agent name from the exact currently owned worker lease.
      */
-    private function coderAgentName(WorkerLease $lease): ?string
-    {
+    private function agentNameForLease(
+        WorkerLease $lease,
+        AgentRole $role,
+    ): string {
         try {
             $worker = AgentWorker::query()
                 ->with('agent:id,name')
                 ->whereKey($lease->workerId)
-                ->where('role', AgentRole::Coder)
+                ->where('role', $role)
                 ->where('worker_instance_id', $lease->workerInstanceId)
                 ->where('lease_id', $lease->leaseId)
                 ->first();
@@ -444,9 +464,9 @@ class RunAiosWorkers extends Command
 
             return is_string($name) && trim($name) !== ''
                 ? $name
-                : null;
+                : 'unavailable';
         } catch (Throwable) {
-            return null;
+            return 'unavailable';
         }
     }
 
