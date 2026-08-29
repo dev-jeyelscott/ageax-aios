@@ -313,12 +313,16 @@ test('targeted retrieval returns provenance with clean repository state', functi
         ['explicit_paths' => ['status.md']],
     );
 
-    expect($result)->toHaveKeys(['files', 'repository_revision', 'selection_reason'])
+    expect($result)->toHaveKeys(['files', 'repository_revision', 'repository_state', 'selection_reason'])
         ->and($result['repository_revision'])->not->toBeNull()
-        ->and($result['files'][0])->toHaveKeys(['path', 'reason', 'git_sha']);
+        ->and($result['repository_state']['state'])->toBe('clean')
+        ->and($result['repository_state']['clean'])->toBeTrue()
+        ->and($result['files'][0])->toHaveKeys([
+            'path', 'reason', 'git_sha', 'excerpt', 'excerpt_line_count', 'excerpt_truncated', 'symbols',
+        ]);
 });
 
-test('targeted retrieval includes git sha in file entries only when clean', function (): void {
+test('targeted retrieval reports revision provenance for clean and dirty worktrees', function (): void {
     $project = targetedRetrievalProject('Dirty Repository');
 
     File::put($project->path.'/file.md', 'File content');
@@ -329,12 +333,20 @@ test('targeted retrieval includes git sha in file entries only when clean', func
     targetedRetrievalGit($project, ['git', 'add', 'file.md']);
     targetedRetrievalGit($project, ['git', 'commit', '--quiet', '-m', 'Add file']);
 
+    $headSha = targetedRetrievalGit($project, ['git', 'rev-parse', 'HEAD']);
+
     $cleanResult = app(TargetedRepositoryRetrieval::class)->retrieve(
         $project,
         ['explicit_paths' => ['file.md']],
     );
 
-    expect($cleanResult['files'][0]['git_sha'])->not->toBeNull();
+    expect($cleanResult['files'][0]['git_sha'])->toBe($headSha)
+        ->and($cleanResult['repository_revision'])->toBe($headSha)
+        ->and($cleanResult['repository_state'])->toMatchArray([
+            'state' => 'clean',
+            'clean' => true,
+            'head_sha' => $headSha,
+        ]);
 
     File::put($project->path.'/file.md', 'Modified content');
 
@@ -343,5 +355,138 @@ test('targeted retrieval includes git sha in file entries only when clean', func
         ['explicit_paths' => ['file.md']],
     );
 
-    expect($dirtyResult['files'][0]['git_sha'])->toBeNull();
+    expect($dirtyResult['files'][0]['git_sha'])->toBe($headSha)
+        ->and($dirtyResult['repository_revision'])->toBe($headSha)
+        ->and($dirtyResult['repository_state'])->toMatchArray([
+            'state' => 'dirty',
+            'clean' => false,
+            'head_sha' => $headSha,
+        ])
+        ->and($dirtyResult['files'][0]['excerpt'])->toBe('Modified content');
+});
+
+test('targeted retrieval returns bounded excerpts for selected files', function (): void {
+    $project = targetedRetrievalProject('Bounded Excerpts');
+
+    File::put($project->path.'/short.md', "Line one\nLine two");
+    File::put($project->path.'/long.md', implode("\n", array_map(
+        fn (int $line): string => 'Line '.$line,
+        range(1, 200),
+    )));
+
+    targetedRetrievalGit($project, ['git', 'init', '--quiet']);
+    targetedRetrievalGit($project, ['git', 'config', 'user.email', 'test@example.com']);
+    targetedRetrievalGit($project, ['git', 'config', 'user.name', 'Test User']);
+    targetedRetrievalGit($project, ['git', 'add', '.']);
+    targetedRetrievalGit($project, ['git', 'commit', '--quiet', '-m', 'Add files']);
+
+    $result = app(TargetedRepositoryRetrieval::class)->retrieve(
+        $project,
+        ['explicit_paths' => ['short.md', 'long.md']],
+    );
+
+    $excerpts = collect($result['files'])->keyBy('path');
+
+    expect($excerpts['short.md']['excerpt'])->toBe("Line one\nLine two")
+        ->and($excerpts['short.md']['excerpt_line_count'])->toBe(2)
+        ->and($excerpts['short.md']['excerpt_truncated'])->toBeFalse()
+        ->and($excerpts['long.md']['excerpt_line_count'])->toBe(40)
+        ->and($excerpts['long.md']['excerpt_truncated'])->toBeTrue()
+        ->and($excerpts['long.md']['excerpt'])->toStartWith('Line 1')
+        ->and($excerpts['long.md']['excerpt'])->not->toContain('Line 41');
+});
+
+test('targeted retrieval returns symbols where the file type supports them', function (): void {
+    $project = targetedRetrievalProject('Symbol Support');
+
+    File::put($project->path.'/notes.md', "# Overview\n\nBody\n\n## Details\n");
+    File::put($project->path.'/Sample.php', "<?php\n\nnamespace App;\n\nfinal class Sample\n{\n}\n\ninterface SampleContract\n{\n}\n");
+    File::put($project->path.'/notes.txt', 'Plain text without symbol support');
+
+    targetedRetrievalGit($project, ['git', 'init', '--quiet']);
+    targetedRetrievalGit($project, ['git', 'config', 'user.email', 'test@example.com']);
+    targetedRetrievalGit($project, ['git', 'config', 'user.name', 'Test User']);
+    targetedRetrievalGit($project, ['git', 'add', '.']);
+    targetedRetrievalGit($project, ['git', 'commit', '--quiet', '-m', 'Add sources']);
+
+    $result = app(TargetedRepositoryRetrieval::class)->retrieve(
+        $project,
+        ['explicit_paths' => ['notes.md', 'Sample.php', 'notes.txt']],
+    );
+
+    $files = collect($result['files'])->keyBy('path');
+
+    expect($files['notes.md']['symbols'])->toBe(['heading Overview', 'heading Details'])
+        ->and($files['Sample.php']['symbols'])->toBe(['class Sample', 'interface SampleContract'])
+        ->and($files['notes.txt']['symbols'])->toBe([]);
+});
+
+test('targeted retrieval rejects traversal through default search dirs', function (): void {
+    $project = targetedRetrievalProject('Search Dir Traversal');
+
+    File::put($project->path.'/doc.md', 'Document');
+
+    $outside = dirname($project->path).'/ageax-targeted-retrieval-outside-'.Str::uuid();
+    File::ensureDirectoryExists($outside);
+    File::put($outside.'/leaked.md', 'Outside document');
+
+    targetedRetrievalGit($project, ['git', 'init', '--quiet']);
+    targetedRetrievalGit($project, ['git', 'config', 'user.email', 'test@example.com']);
+    targetedRetrievalGit($project, ['git', 'config', 'user.name', 'Test User']);
+    targetedRetrievalGit($project, ['git', 'add', 'doc.md']);
+    targetedRetrievalGit($project, ['git', 'commit', '--quiet', '-m', 'Add doc']);
+
+    $result = app(TargetedRepositoryRetrieval::class)->retrieve(
+        $project,
+        [
+            'default_search_dirs' => [
+                '../'.basename($outside),
+                '../../'.basename(dirname($outside)),
+                $outside,
+            ],
+        ],
+    );
+
+    $paths = array_column($result['files'], 'path');
+
+    expect($result['files'])->toHaveCount(0)
+        ->and($paths)->not->toContain('leaked.md');
+
+    File::deleteDirectory($outside);
+});
+
+test('targeted retrieval rejects symlinked search dirs that escape the repository', function (): void {
+    $project = targetedRetrievalProject('Symlink Escape');
+
+    File::ensureDirectoryExists($project->path.'/docs');
+    File::put($project->path.'/docs/inside.md', 'Inside document');
+
+    $outside = dirname($project->path).'/ageax-targeted-retrieval-symlink-'.Str::uuid();
+    File::ensureDirectoryExists($outside);
+    File::put($outside.'/leaked.md', 'Outside document');
+
+    symlink($outside, $project->path.'/escape');
+    symlink($outside, $project->path.'/docs/escape');
+
+    targetedRetrievalGit($project, ['git', 'init', '--quiet']);
+    targetedRetrievalGit($project, ['git', 'config', 'user.email', 'test@example.com']);
+    targetedRetrievalGit($project, ['git', 'config', 'user.name', 'Test User']);
+    targetedRetrievalGit($project, ['git', 'add', 'docs/inside.md']);
+    targetedRetrievalGit($project, ['git', 'commit', '--quiet', '-m', 'Add inside']);
+
+    $result = app(TargetedRepositoryRetrieval::class)->retrieve(
+        $project,
+        [
+            'default_search_dirs' => ['escape', 'docs'],
+            'task_terms' => ['leaked', 'inside'],
+        ],
+    );
+
+    $paths = array_column($result['files'], 'path');
+
+    expect($paths)->toContain('docs/inside.md')
+        ->and($paths)->not->toContain('escape/leaked.md')
+        ->and($paths)->not->toContain('docs/escape/leaked.md');
+
+    File::deleteDirectory($outside);
 });

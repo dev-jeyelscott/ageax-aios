@@ -14,6 +14,14 @@ class TargetedRepositoryRetrieval
 
     private const int MaxFiles = 100;
 
+    private const int MaxExcerptLines = 40;
+
+    private const int MaxExcerptCharacters = 2000;
+
+    private const int MaxSymbols = 20;
+
+    private const int MaxSymbolScanBytes = 262144;
+
     private const array ExcludedFiles = ['.env', '.env.local', '.env.example'];
 
     private const array ExcludedDirectories = ['.git', '.github', 'vendor', 'node_modules', '.pytest_cache', 'build', 'dist'];
@@ -29,8 +37,17 @@ class TargetedRepositoryRetrieval
      *
      * @param  array<string, mixed>  $discoveryInputs
      * @return array{
-     *     files: list<array{path: string, reason: string, git_sha: ?string}>,
+     *     files: list<array{
+     *         path: string,
+     *         reason: string,
+     *         git_sha: ?string,
+     *         excerpt: string,
+     *         excerpt_line_count: int,
+     *         excerpt_truncated: bool,
+     *         symbols: list<string>,
+     *     }>,
      *     repository_revision: ?string,
+     *     repository_state: array{state: string, clean: bool, head_sha: ?string, base_sha: ?string},
      *     selection_reason: string,
      * }
      */
@@ -48,47 +65,55 @@ class TargetedRepositoryRetrieval
             return $this->emptyResult('The project directory is not inspectable as a Git repository.');
         }
 
+        $repositoryRoot = realpath($projectPath);
+
+        if (! is_string($repositoryRoot)) {
+            return $this->emptyResult('The project directory could not be resolved to a real path.');
+        }
+
         $selected = [];
 
         if (isset($discoveryInputs['explicit_paths']) && is_array($discoveryInputs['explicit_paths'])) {
             foreach ($discoveryInputs['explicit_paths'] as $path) {
-                $this->selectExplicitPath($projectPath, $path, $selected);
+                $this->selectReferencedPath($path, 'explicit_path_from_discovery_input', $selected);
             }
         }
 
         if (isset($discoveryInputs['changed_files']) && is_array($discoveryInputs['changed_files'])) {
             foreach ($discoveryInputs['changed_files'] as $path) {
-                $this->selectChangedFile($projectPath, $path, $selected);
+                $this->selectReferencedPath($path, 'changed_file_from_git_metadata', $selected);
             }
         }
 
+        $searchDirectories = isset($discoveryInputs['default_search_dirs']) && is_array($discoveryInputs['default_search_dirs'])
+            ? $this->resolveSearchDirectories($repositoryRoot, $discoveryInputs['default_search_dirs'])
+            : [];
+
         if (isset($discoveryInputs['task_terms']) && is_array($discoveryInputs['task_terms'])) {
-            $searchDirs = isset($discoveryInputs['default_search_dirs']) && is_array($discoveryInputs['default_search_dirs'])
-                ? $discoveryInputs['default_search_dirs']
-                : ['.'];
+            $termDirectories = $searchDirectories === []
+                ? [$repositoryRoot]
+                : $searchDirectories;
 
-            $this->selectByTermsInDirs($projectPath, $discoveryInputs['task_terms'], $searchDirs, $selected);
+            $this->selectByTermsInDirs($repositoryRoot, $discoveryInputs['task_terms'], $termDirectories, $selected);
         }
 
-        if (empty($selected) && isset($discoveryInputs['default_search_dirs']) && is_array($discoveryInputs['default_search_dirs'])) {
-            $this->selectFromDirectories($projectPath, $discoveryInputs['default_search_dirs'], $selected);
+        if ($selected === [] && $searchDirectories !== []) {
+            foreach ($searchDirectories as $directory) {
+                $this->addMarkdownFiles($repositoryRoot, $directory, $selected);
+            }
         }
 
+        $repositoryState = $this->repositoryState($gitState);
         $files = [];
-        $count = 0;
 
         foreach ($selected as $path => $reason) {
-            if ($count >= self::MaxFiles) {
+            if (count($files) >= self::MaxFiles) {
                 break;
             }
 
-            $resolved = $this->resolvePath($projectPath, $path);
+            $resolved = $this->resolvePath($repositoryRoot, $path);
 
-            if ($resolved === null || ! is_file($resolved)) {
-                continue;
-            }
-
-            if (! $this->isWithin($projectPath, $resolved)) {
+            if ($resolved === null || ! is_file($resolved) || ! $this->isWithin($repositoryRoot, $resolved)) {
                 continue;
             }
 
@@ -98,112 +123,149 @@ class TargetedRepositoryRetrieval
 
             try {
                 $content = $this->files->get($resolved);
-
-                if ($this->containsSecretMaterial($content)) {
-                    continue;
-                }
             } catch (Throwable) {
                 continue;
             }
 
-            $files[] = [
-                'path' => str_replace(DIRECTORY_SEPARATOR, '/', substr($resolved, strlen($projectPath) + 1)),
-                'reason' => $reason,
-                'git_sha' => $gitState['clean'] ? $gitState['head_sha'] : null,
-            ];
+            if ($this->containsSecretMaterial($content)) {
+                continue;
+            }
 
-            $count++;
+            $excerpt = $this->excerpt($content);
+
+            $files[] = [
+                'path' => $this->relativePath($repositoryRoot, $resolved),
+                'reason' => $reason,
+                'git_sha' => $gitState['head_sha'],
+                'excerpt' => $excerpt['text'],
+                'excerpt_line_count' => $excerpt['line_count'],
+                'excerpt_truncated' => $excerpt['truncated'],
+                'symbols' => $this->symbols($resolved, $content),
+            ];
         }
 
         return [
             'files' => $files,
-            'repository_revision' => $gitState['clean'] ? $gitState['head_sha'] : null,
+            'repository_revision' => $gitState['head_sha'],
+            'repository_state' => $repositoryState,
             'selection_reason' => 'deterministic_targeted_discovery_from_task_terms_and_changed_files',
         ];
     }
 
-    private function selectExplicitPath(string $projectPath, string $path, array &$selected): void
+    /**
+     * @param  array{clean: bool, head_sha: ?string, base_sha: ?string}  $gitState
+     * @return array{state: string, clean: bool, head_sha: ?string, base_sha: ?string}
+     */
+    private function repositoryState(array $gitState): array
     {
-        $normalized = $this->normalizePath($path);
-
-        if ($normalized === null) {
-            return;
-        }
-
-        if (! isset($selected[$normalized])) {
-            $selected[$normalized] = 'explicit_path_from_discovery_input';
-        }
+        return [
+            'state' => $gitState['clean'] ? 'clean' : 'dirty',
+            'clean' => $gitState['clean'],
+            'head_sha' => $gitState['head_sha'],
+            'base_sha' => $gitState['base_sha'],
+        ];
     }
 
-    private function selectChangedFile(string $projectPath, string $path, array &$selected): void
+    /** @param  array<string, string>  $selected */
+    private function selectReferencedPath(mixed $path, string $reason, array &$selected): void
     {
+        if (! is_string($path)) {
+            return;
+        }
+
         $normalized = $this->normalizePath($path);
 
         if ($normalized === null) {
             return;
         }
 
-        if (! isset($selected[$normalized])) {
-            $selected[$normalized] = 'changed_file_from_git_metadata';
-        }
+        $selected[$normalized] ??= $reason;
     }
 
     /**
-     * @param  list<string>  $terms
-     * @param  list<string>  $directories
+     * Resolve caller-provided search directories against the approved repository root before any
+     * directory is inspected, so traversal, absolute paths, and symlink escapes never reach the
+     * filesystem walk.
+     *
+     * @param  array<int, mixed>  $directories
+     * @return list<string>
      */
-    private function selectByTermsInDirs(string $projectPath, array $terms, array $directories, array &$selected): void
+    private function resolveSearchDirectories(string $repositoryRoot, array $directories): array
+    {
+        $resolved = [];
+
+        foreach ($directories as $directory) {
+            if (! is_string($directory)) {
+                continue;
+            }
+
+            $candidate = $this->resolveDirectory($repositoryRoot, $directory);
+
+            if ($candidate !== null && ! in_array($candidate, $resolved, true)) {
+                $resolved[] = $candidate;
+            }
+        }
+
+        return $resolved;
+    }
+
+    private function resolveDirectory(string $repositoryRoot, string $directory): ?string
+    {
+        $directory = trim(str_replace('\\', '/', trim($directory)), '/');
+
+        if ($directory === '' || $directory === '.') {
+            return $repositoryRoot;
+        }
+
+        $normalized = $this->normalizePath($directory);
+
+        if ($normalized === null) {
+            return null;
+        }
+
+        $resolved = realpath($repositoryRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $normalized));
+
+        if (! is_string($resolved) || ! is_dir($resolved) || ! $this->isWithin($repositoryRoot, $resolved)) {
+            return null;
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * @param  array<int, mixed>  $terms
+     * @param  list<string>  $directories
+     * @param  array<string, string>  $selected
+     */
+    private function selectByTermsInDirs(string $repositoryRoot, array $terms, array $directories, array &$selected): void
     {
         foreach ($directories as $directory) {
-            if (! is_string($directory) || trim($directory) === '') {
-                continue;
-            }
-
-            $searchPath = $projectPath.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $directory);
-
-            if (! is_dir($searchPath) || ! $this->isWithin($projectPath, $searchPath)) {
-                continue;
-            }
-
             foreach ($terms as $term) {
                 if (! is_string($term) || trim($term) === '') {
                     continue;
                 }
 
-                $this->searchDirectory($projectPath, $searchPath, $term, $selected);
+                $this->searchDirectory($repositoryRoot, $directory, $term, $selected);
             }
         }
     }
 
-    /** @param  list<string>  $directories */
-    private function selectFromDirectories(string $projectPath, array $directories, array &$selected): void
-    {
-        foreach ($directories as $directory) {
-            if (! is_string($directory) || trim($directory) === '') {
-                continue;
-            }
-
-            $path = $projectPath.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $directory);
-
-            if (is_dir($path) && $this->isWithin($projectPath, $path)) {
-                $this->addMarkdownFiles($path, $projectPath, $selected);
-            }
-        }
-    }
-
-    private function searchDirectory(string $projectPath, string $directory, string $term, array &$selected, int $depth = 0): void
+    /** @param  array<string, string>  $selected */
+    private function searchDirectory(string $repositoryRoot, string $directory, string $term, array &$selected, int $depth = 0): void
     {
         if ($depth > 3 || count($selected) >= self::MaxFiles) {
             return;
         }
 
         try {
-            foreach ($this->files->directories($directory) as $subdir) {
-                if ($this->isExcludedDirectory($subdir)) {
+            foreach ($this->files->directories($directory) as $subdirectory) {
+                $resolved = $this->containedRealPath($repositoryRoot, $subdirectory);
+
+                if ($resolved === null || $this->isExcludedDirectory($resolved)) {
                     continue;
                 }
 
-                $this->searchDirectory($projectPath, $subdir, $term, $selected, $depth + 1);
+                $this->searchDirectory($repositoryRoot, $resolved, $term, $selected, $depth + 1);
             }
 
             foreach ($this->files->files($directory) as $file) {
@@ -215,19 +277,25 @@ class TargetedRepositoryRetrieval
                     continue;
                 }
 
-                $filename = Str::lower($file->getFilename());
-
-                if (Str::contains($filename, Str::lower($term))) {
-                    $relativePath = str_replace(DIRECTORY_SEPARATOR, '/', $file->getRelativePathname());
-                    $selected[$relativePath] ??= 'matched_task_term_in_filename';
+                if (! Str::contains(Str::lower($file->getFilename()), Str::lower($term))) {
+                    continue;
                 }
+
+                $resolved = $this->containedRealPath($repositoryRoot, $file->getPathname());
+
+                if ($resolved === null) {
+                    continue;
+                }
+
+                $selected[$this->relativePath($repositoryRoot, $resolved)] ??= 'matched_task_term_in_filename';
             }
         } catch (Throwable) {
             // Unreadable directory, skip
         }
     }
 
-    private function addMarkdownFiles(string $directory, string $projectPath, array &$selected): void
+    /** @param  array<string, string>  $selected */
+    private function addMarkdownFiles(string $repositoryRoot, string $directory, array &$selected): void
     {
         try {
             foreach ($this->files->allFiles($directory) as $file) {
@@ -239,26 +307,109 @@ class TargetedRepositoryRetrieval
                     continue;
                 }
 
-                $realPath = $file->getRealPath();
+                $resolved = $this->containedRealPath($repositoryRoot, $file->getPathname());
 
-                if (! is_string($realPath) || ! $this->isWithin($projectPath, $realPath)) {
+                if ($resolved === null) {
                     continue;
                 }
 
-                $relativePath = str_replace(DIRECTORY_SEPARATOR, '/', substr($realPath, strlen($projectPath) + 1));
-                $selected[$relativePath] ??= 'found_in_default_directory';
+                $selected[$this->relativePath($repositoryRoot, $resolved)] ??= 'found_in_default_directory';
             }
         } catch (Throwable) {
             // Unreadable directory, skip
         }
     }
 
-    private function resolvePath(string $projectPath, string $path): ?string
+    /**
+     * Bounded excerpt derived from already secret-screened content.
+     *
+     * @return array{text: string, line_count: int, truncated: bool}
+     */
+    private function excerpt(string $content): array
     {
-        $candidate = $projectPath.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $path);
-        $resolved = realpath($candidate);
+        if (! mb_check_encoding($content, 'UTF-8')) {
+            return ['text' => '', 'line_count' => 0, 'truncated' => true];
+        }
+
+        $lines = preg_split('/\R/', $content) ?: [];
+        $truncated = count($lines) > self::MaxExcerptLines;
+        $text = implode("\n", array_slice($lines, 0, self::MaxExcerptLines));
+
+        if (mb_strlen($text) > self::MaxExcerptCharacters) {
+            $text = mb_substr($text, 0, self::MaxExcerptCharacters);
+            $truncated = true;
+        }
+
+        return [
+            'text' => $text,
+            'line_count' => $text === '' ? 0 : count(explode("\n", $text)),
+            'truncated' => $truncated,
+        ];
+    }
+
+    /**
+     * Lightweight deterministic symbol support for the file types AIOS already reasons about.
+     *
+     * @return list<string>
+     */
+    private function symbols(string $path, string $content): array
+    {
+        if (strlen($content) > self::MaxSymbolScanBytes || ! mb_check_encoding($content, 'UTF-8')) {
+            return [];
+        }
+
+        $extension = Str::lower(pathinfo($path, PATHINFO_EXTENSION));
+
+        $pattern = match ($extension) {
+            'php' => '/^\s*(?:abstract\s+|final\s+|readonly\s+)*(class|interface|trait|enum|function)\s+([A-Za-z_][A-Za-z0-9_]*)/m',
+            'md' => '/^(#{1,6})\s+(.+?)\s*$/m',
+            default => null,
+        };
+
+        if ($pattern === null || preg_match_all($pattern, $content, $matches, PREG_SET_ORDER) === false) {
+            return [];
+        }
+
+        $symbols = [];
+
+        foreach ($matches as $match) {
+            $symbol = $extension === 'php'
+                ? $match[1].' '.$match[2]
+                : 'heading '.trim($match[2]);
+
+            if (! in_array($symbol, $symbols, true)) {
+                $symbols[] = $symbol;
+            }
+
+            if (count($symbols) >= self::MaxSymbols) {
+                break;
+            }
+        }
+
+        return $symbols;
+    }
+
+    private function containedRealPath(string $repositoryRoot, string $path): ?string
+    {
+        $resolved = realpath($path);
+
+        if (! is_string($resolved) || ! $this->isWithin($repositoryRoot, $resolved)) {
+            return null;
+        }
+
+        return $resolved;
+    }
+
+    private function resolvePath(string $repositoryRoot, string $path): ?string
+    {
+        $resolved = realpath($repositoryRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $path));
 
         return is_string($resolved) ? $resolved : null;
+    }
+
+    private function relativePath(string $repositoryRoot, string $resolved): string
+    {
+        return str_replace(DIRECTORY_SEPARATOR, '/', substr($resolved, strlen($repositoryRoot) + 1));
     }
 
     private function normalizePath(string $path): ?string
@@ -314,9 +465,7 @@ class TargetedRepositoryRetrieval
 
     private function isExcludedDirectory(string $path): bool
     {
-        $basename = basename($path);
-
-        return in_array($basename, self::ExcludedDirectories, true);
+        return in_array(basename($path), self::ExcludedDirectories, true);
     }
 
     private function isWithin(string $root, string $path): bool
@@ -326,12 +475,33 @@ class TargetedRepositoryRetrieval
         return Str::startsWith($path, $root.DIRECTORY_SEPARATOR);
     }
 
-    /** @return array{files: list, repository_revision: null, selection_reason: string} */
+    /**
+     * @return array{
+     *     files: list<array{
+     *         path: string,
+     *         reason: string,
+     *         git_sha: ?string,
+     *         excerpt: string,
+     *         excerpt_line_count: int,
+     *         excerpt_truncated: bool,
+     *         symbols: list<string>,
+     *     }>,
+     *     repository_revision: null,
+     *     repository_state: array{state: string, clean: false, head_sha: null, base_sha: null},
+     *     selection_reason: string,
+     * }
+     */
     private function emptyResult(string $reason): array
     {
         return [
             'files' => [],
             'repository_revision' => null,
+            'repository_state' => [
+                'state' => 'unavailable',
+                'clean' => false,
+                'head_sha' => null,
+                'base_sha' => null,
+            ],
             'selection_reason' => $reason,
         ];
     }
