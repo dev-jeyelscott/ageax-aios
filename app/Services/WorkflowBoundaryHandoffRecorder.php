@@ -55,8 +55,9 @@ final class WorkflowBoundaryHandoffRecorder
                     !== TaskStatus::ReadyForReview
                 || $attempt->getRawOriginal('status') !== 'completed'
                 || ! is_array($validation)
-                || ($validation['passed'] ?? false) !== true
-                || ($validation['checks']['task_commit'] ?? false) !== true
+                || ! $this->implementationValidationSupportsReview(
+                    $validation,
+                )
                 || ! is_array($rawChangedFiles)
                 || ($rawChangedFiles !== [] && blank($attempt->commit_sha))
                 || ! $this->sourceRunMatches(
@@ -310,6 +311,54 @@ final class WorkflowBoundaryHandoffRecorder
         }
 
         return $payload;
+    }
+
+    /**
+     * Accept either the legacy task-only commit gate or the P10 durable candidate plus serialized integration gate.
+     *
+     * Successful P10 integration remains stricter than provider completion. AIOS must have
+     * persisted a verified candidate, a successful canonical integration result, and one of
+     * the allowlisted successful integration statuses.
+     *
+     * @param  array<string, mixed>  $validation
+     */
+    private function implementationValidationSupportsReview(
+        array $validation,
+    ): bool {
+        if (
+            ($validation['passed'] ?? false) !== true
+            || ! is_array($validation['checks'] ?? null)
+        ) {
+            return false;
+        }
+
+        $checks = $validation['checks'];
+
+        if (($checks['task_commit'] ?? false) === true) {
+            return true;
+        }
+
+        if (
+            ($checks['git_candidate'] ?? false) !== true
+            || ($checks['git_integration'] ?? false) !== true
+            || ! is_array($validation['git_integration'] ?? null)
+        ) {
+            return false;
+        }
+
+        $integration = $validation['git_integration'];
+
+        return ($integration['passed'] ?? false) === true
+            && is_string($integration['status'] ?? null)
+            && in_array(
+                $integration['status'],
+                [
+                    'integrated',
+                    'already_integrated',
+                    'already_satisfied',
+                ],
+                true,
+            );
     }
 
     /**

@@ -27,12 +27,16 @@ class StaleWorkerRecovery
 {
     private const int PrimaryWorkerSlot = 1;
 
+    private const int ParallelRecoverySchemaVersion = 1;
+
     public function __construct(
         private TaskWorkflow $workflow,
         private TicketWorkflow $ticketWorkflow,
         private AuditLogger $audit,
         private WorkspacePathResolver $paths,
         private WorkerHeartbeat $heartbeat,
+        private TaskGitIntegrator $gitIntegration,
+        private TaskWorktreeManager $taskWorktrees,
     ) {}
 
     /**
@@ -226,9 +230,33 @@ class StaleWorkerRecovery
             ]);
 
             $evidence = $this->recoveryEvidence($task);
-            $this->storeRecoveryEvidence($task, $evidence);
 
             if ($role === AgentRole::Coder) {
+                $attempt = $task->attempts()
+                    ->whereIn('status', ['running', 'failed'])
+                    ->latest('number')
+                    ->first();
+
+                $worktree = $attempt instanceof TaskAttempt
+                    ? $this->releaseTaskWorktree($task, $attempt)
+                    : $this->emptyWorktreeEvidence();
+
+                $ownership = $this->releaseInactiveCoderOwnership(
+                    $task,
+                    $lockedRun,
+                );
+
+                $evidence['parallel_recovery'] = [
+                    'schema_version' => self::ParallelRecoverySchemaVersion,
+                    'state' => 'orphaned_execution_interrupted',
+                    'attempt_number' => $attempt?->number,
+                    'durable_candidate_preserved' => false,
+                    'worktree' => $worktree,
+                    'worker' => $ownership,
+                ];
+
+                $this->storeRecoveryEvidence($task, $evidence);
+
                 $task->attempts()
                     ->where('status', 'running')
                     ->update([
@@ -241,6 +269,8 @@ class StaleWorkerRecovery
                     TaskStatus::Failed,
                 );
             } else {
+                $this->storeRecoveryEvidence($task, $evidence);
+
                 $this->workflow->recordReviewerOperationalFailure(
                     $task,
                     $task->attempts()
@@ -338,7 +368,10 @@ class StaleWorkerRecovery
             $attempt = $lockedTask->attempts()
                 ->when(
                     $role === AgentRole::Coder,
-                    fn ($query) => $query->where('status', 'running'),
+                    fn ($query) => $query->whereIn(
+                        'status',
+                        ['running', 'failed'],
+                    ),
                 )
                 ->latest('number')
                 ->first();
@@ -384,10 +417,49 @@ class StaleWorkerRecovery
                 return false;
             }
 
+            if ($role === AgentRole::Coder) {
+                $preserved = $this->preserveDurableCoderFinalization(
+                    $lockedTask,
+                    $attempt,
+                    'abandoned_finalization',
+                );
+
+                if ($preserved !== null) {
+                    return true;
+                }
+            }
+
             $evidence = $this->recoveryEvidence($lockedTask);
-            $this->storeRecoveryEvidence($lockedTask, $evidence);
 
             if ($role === AgentRole::Coder) {
+                $latestRun = $runs
+                    ->sortByDesc('id')
+                    ->first();
+
+                $worktree = $this->releaseTaskWorktree(
+                    $lockedTask,
+                    $attempt,
+                );
+
+                $ownership = $this->releaseInactiveCoderOwnership(
+                    $lockedTask,
+                    $latestRun instanceof AgentRun ? $latestRun : null,
+                );
+
+                $evidence['parallel_recovery'] = [
+                    'schema_version' => self::ParallelRecoverySchemaVersion,
+                    'state' => 'abandoned_worktree_discarded_for_fresh_retry',
+                    'attempt_number' => $attempt->number,
+                    'durable_candidate_preserved' => false,
+                    'worktree' => $worktree,
+                    'worker' => $ownership,
+                ];
+
+                $this->storeRecoveryEvidence(
+                    $lockedTask,
+                    $evidence,
+                );
+
                 $lockedTask->attempts()
                     ->where('status', 'running')
                     ->update([
@@ -399,20 +471,27 @@ class StaleWorkerRecovery
                     $lockedTask,
                     TaskStatus::Failed,
                 );
-            } elseif (
-                $this->workflow->reconcileExistingReviewerDecision(
+            } else {
+                $this->storeRecoveryEvidence(
                     $lockedTask,
-                    $attempt,
-                ) === null
-            ) {
-                $this->workflow->recordReviewerOperationalFailure(
-                    $lockedTask,
-                    $attempt,
-                    [
-                        'reason' => 'abandoned_finalization',
-                        'evidence' => $evidence,
-                    ],
+                    $evidence,
                 );
+
+                if (
+                    $this->workflow->reconcileExistingReviewerDecision(
+                        $lockedTask,
+                        $attempt,
+                    ) === null
+                ) {
+                    $this->workflow->recordReviewerOperationalFailure(
+                        $lockedTask,
+                        $attempt,
+                        [
+                            'reason' => 'abandoned_finalization',
+                            'evidence' => $evidence,
+                        ],
+                    );
+                }
             }
 
             $this->audit->record('task.recovered', [
@@ -491,10 +570,69 @@ class StaleWorkerRecovery
                 $slot,
                 &$recoveredTasks,
             ): void {
+                if ($role === AgentRole::Coder) {
+                    $candidateAttempt = $task->attempts()
+                        ->whereIn('status', ['running', 'failed'])
+                        ->whereNotNull('base_sha')
+                        ->latest('number')
+                        ->first();
+
+                    if ($candidateAttempt instanceof TaskAttempt) {
+                        $preserved = $this->preserveDurableCoderFinalization(
+                            $task,
+                            $candidateAttempt,
+                            'expired_worker_lease',
+                        );
+
+                        if ($preserved !== null) {
+                            $recoveredTasks[] = [
+                                'task_key' => $task->key,
+                                'evidence' => [
+                                    'parallel_recovery' => $preserved,
+                                ],
+                            ];
+
+                            return;
+                        }
+                    }
+                }
+
                 $evidence = $this->recoveryEvidence($task);
-                $this->storeRecoveryEvidence($task, $evidence);
 
                 if ($role === AgentRole::Coder) {
+                    $attempt = $task->attempts()
+                        ->whereIn('status', ['running', 'failed'])
+                        ->latest('number')
+                        ->first();
+
+                    $run = $task->runs()
+                        ->where('role', AgentRole::Coder)
+                        ->latest('started_at')
+                        ->first();
+
+                    $worktree = $attempt instanceof TaskAttempt
+                        ? $this->releaseTaskWorktree($task, $attempt)
+                        : $this->emptyWorktreeEvidence();
+
+                    $ownership = $this->releaseInactiveCoderOwnership(
+                        $task,
+                        $run,
+                    );
+
+                    $evidence['parallel_recovery'] = [
+                        'schema_version' => self::ParallelRecoverySchemaVersion,
+                        'state' => 'expired_worker_retry_required',
+                        'attempt_number' => $attempt?->number,
+                        'durable_candidate_preserved' => false,
+                        'worktree' => $worktree,
+                        'worker' => $ownership,
+                    ];
+
+                    $this->storeRecoveryEvidence(
+                        $task,
+                        $evidence,
+                    );
+
                     $task->attempts()
                         ->where('status', 'running')
                         ->update([
@@ -507,6 +645,11 @@ class StaleWorkerRecovery
                         TaskStatus::Failed,
                     );
                 } else {
+                    $this->storeRecoveryEvidence(
+                        $task,
+                        $evidence,
+                    );
+
                     $this->workflow->recordReviewerOperationalFailure(
                         $task,
                         $task->attempts()
@@ -523,6 +666,7 @@ class StaleWorkerRecovery
                     'agent_worker_id' => $lease->workerId,
                     'role' => $role->value,
                     'slot' => $slot,
+                    'reason' => 'expired_worker_lease',
                     'evidence' => $evidence,
                 ], $project, $task);
 
@@ -1043,6 +1187,346 @@ class StaleWorkerRecovery
             ->where('role', $role)
             ->limit(2)
             ->count() === 1;
+    }
+
+    /**
+     * Preserve a durable P10 Task candidate so the next Coder claim can resume serialized Git finalization.
+     *
+     * The candidate ref is authoritative durable evidence. The disposable worktree may therefore
+     * be released once candidate identity, successful source run, and inactive worker ownership are proven.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function preserveDurableCoderFinalization(
+        Task $task,
+        TaskAttempt $attempt,
+        string $reason,
+    ): ?array {
+        return DB::transaction(function () use (
+            $task,
+            $attempt,
+            $reason,
+        ): ?array {
+            $lockedTask = Task::query()
+                ->lockForUpdate()
+                ->find($task->id);
+
+            $lockedAttempt = TaskAttempt::query()
+                ->lockForUpdate()
+                ->find($attempt->id);
+
+            if (
+                $lockedTask === null
+                || $lockedAttempt === null
+                || (int) $lockedAttempt->task_id
+                    !== (int) $lockedTask->id
+                || ! in_array(
+                    TaskStatus::from(
+                        $lockedTask->getRawOriginal('status'),
+                    ),
+                    [TaskStatus::Coding, TaskStatus::Validating],
+                    true,
+                )
+                || ! in_array(
+                    (string) $lockedAttempt->getRawOriginal('status'),
+                    ['running', 'failed'],
+                    true,
+                )
+                || blank($lockedAttempt->base_sha)
+            ) {
+                return null;
+            }
+
+            $run = AgentRun::query()
+                ->whereBelongsTo($lockedTask)
+                ->where('role', AgentRole::Coder)
+                ->where('attempt_number', $lockedAttempt->number)
+                ->where('status', AgentRunStatus::Completed)
+                ->where('exit_code', 0)
+                ->whereNotNull('finished_at')
+                ->latest('id')
+                ->first();
+
+            if ($run === null) {
+                return null;
+            }
+
+            $ownership = $this->coderOwnershipEvidence(
+                $lockedTask,
+                $run,
+            );
+
+            if ($ownership['active_lease'] === true) {
+                return null;
+            }
+
+            try {
+                $candidate = $this->gitIntegration->recoverCandidate(
+                    $lockedTask,
+                    $lockedAttempt,
+                );
+            } catch (Throwable $throwable) {
+                report($throwable);
+
+                return null;
+            }
+
+            if ($candidate === null) {
+                return null;
+            }
+
+            $ownership = $this->releaseInactiveCoderOwnership(
+                $lockedTask,
+                $run,
+            );
+
+            if ($ownership['active_lease'] === true) {
+                return null;
+            }
+
+            $worktree = $this->releaseTaskWorktree(
+                $lockedTask,
+                $lockedAttempt,
+            );
+
+            $parallelRecovery = [
+                'schema_version' => self::ParallelRecoverySchemaVersion,
+                'state' => 'durable_candidate_pending_integration',
+                'reason' => $reason,
+                'attempt_number' => (int) $lockedAttempt->number,
+                'durable_candidate_preserved' => true,
+                'review_eligible' => false,
+                'candidate' => [
+                    'base_sha' => $candidate['base_sha'],
+                    'candidate_sha' => $candidate['candidate_sha'],
+                    'candidate_ref' => $candidate['candidate_ref'],
+                    'candidate_diff_sha256' => $candidate['candidate_diff_sha256'],
+                    'changed_files' => $candidate['changed_files'],
+                ],
+                'worktree' => $worktree,
+                'worker' => $ownership,
+                'next_step' => 'coder_reclaim_then_aios_git_finalization',
+            ];
+
+            $validation = $lockedAttempt->getAttribute(
+                'validation_results',
+            );
+            $validation = is_array($validation)
+                ? $validation
+                : [];
+
+            $lockedAttempt->update([
+                'status' => 'failed',
+                'validation_results' => [
+                    ...$validation,
+                    'parallel_recovery' => $parallelRecovery,
+                ],
+                'changed_files' => $candidate['changed_files'],
+                'finished_at' => now(),
+            ]);
+
+            $this->workflow->transition(
+                $lockedTask,
+                TaskStatus::Failed,
+            );
+
+            $this->audit->record(
+                'task.parallel_finalization_preserved',
+                $parallelRecovery,
+                $lockedTask->project,
+                $lockedTask,
+            );
+
+            $this->audit->record(
+                'task.recovered',
+                [
+                    'role' => AgentRole::Coder->value,
+                    'reason' => 'durable_git_finalization_preserved',
+                    'evidence' => $parallelRecovery,
+                ],
+                $lockedTask->project,
+                $lockedTask,
+            );
+
+            return $parallelRecovery;
+        }, attempts: 3);
+    }
+
+    /**
+     * Capture privacy-safe worker-slot ownership evidence for one Coder Task.
+     *
+     * @return array{
+     *     agent_worker_id: ?int,
+     *     worker_slot: ?int,
+     *     worker_lease_sha256: ?string,
+     *     active_lease: bool
+     * }
+     */
+    private function coderOwnershipEvidence(
+        Task $task,
+        ?AgentRun $run = null,
+    ): array {
+        $task->loadMissing('project');
+
+        $taskWorkerId = $task->getAttribute('coder_worker_id');
+        $runWorkerId = $run?->getAttribute('agent_worker_id');
+
+        $workerId = is_int($taskWorkerId)
+            ? $taskWorkerId
+            : (is_int($runWorkerId) ? $runWorkerId : null);
+
+        $taskLeaseId = $task->getAttribute(
+            'coder_worker_lease_id',
+        );
+        $runLeaseId = $run?->getAttribute('worker_lease_id');
+
+        $leaseId = is_string($taskLeaseId)
+            && $taskLeaseId !== ''
+                ? $taskLeaseId
+                : (
+                    is_string($runLeaseId)
+                    && $runLeaseId !== ''
+                        ? $runLeaseId
+                        : null
+                );
+
+        $worker = $workerId === null
+            ? null
+            : AgentWorker::query()
+                ->whereKey($workerId)
+                ->whereBelongsTo($task->project)
+                ->where('role', AgentRole::Coder)
+                ->first(['id', 'slot']);
+
+        $slotValue = $worker?->getAttribute('slot');
+        $slot = is_int($slotValue)
+            ? $slotValue
+            : null;
+
+        $activeLease = $workerId !== null
+            && $leaseId !== null
+            && AgentWorker::query()
+                ->whereKey($workerId)
+                ->whereBelongsTo($task->project)
+                ->where('role', AgentRole::Coder)
+                ->where('lease_id', $leaseId)
+                ->where('lease_expires_at', '>', now())
+                ->exists();
+
+        return [
+            'agent_worker_id' => $workerId,
+            'worker_slot' => $slot,
+            'worker_lease_sha256' => $leaseId === null
+                ? null
+                : hash('sha256', $leaseId),
+            'active_lease' => $activeLease,
+        ];
+    }
+
+    /**
+     * Clear Task-level Coder ownership only when the exact persisted lease is no longer active.
+     *
+     * @return array{
+     *     agent_worker_id: ?int,
+     *     worker_slot: ?int,
+     *     worker_lease_sha256: ?string,
+     *     active_lease: bool,
+     *     released_task_claim: bool
+     * }
+     */
+    private function releaseInactiveCoderOwnership(
+        Task $task,
+        ?AgentRun $run = null,
+    ): array {
+        $ownership = $this->coderOwnershipEvidence(
+            $task,
+            $run,
+        );
+
+        if ($ownership['active_lease']) {
+            return [
+                ...$ownership,
+                'released_task_claim' => false,
+            ];
+        }
+
+        $hadTaskClaim = $task->getAttribute('coder_worker_id') !== null
+            || $task->getAttribute('coder_worker_lease_id') !== null;
+
+        if ($hadTaskClaim) {
+            $task->forceFill([
+                'coder_worker_id' => null,
+                'coder_worker_lease_id' => null,
+            ])->save();
+        }
+
+        return [
+            ...$ownership,
+            'released_task_claim' => $hadTaskClaim,
+        ];
+    }
+
+    /**
+     * Release only the deterministic AIOS-owned worktree assigned to one exact Task attempt.
+     *
+     * No worktree path is persisted in evidence because the project/task/attempt identifiers
+     * already determine ownership and ephemeral filesystem paths are not durable workflow truth.
+     *
+     * @return array{
+     *     present_before_release: bool,
+     *     released: bool,
+     *     error_class: ?string
+     * }
+     */
+    private function releaseTaskWorktree(
+        Task $task,
+        TaskAttempt $attempt,
+    ): array {
+        try {
+            $path = $this->taskWorktrees->pathFor(
+                $task,
+                $attempt,
+            );
+
+            $present = file_exists($path);
+
+            $this->taskWorktrees->release(
+                $task,
+                $attempt,
+            );
+
+            return [
+                'present_before_release' => $present,
+                'released' => ! file_exists($path),
+                'error_class' => null,
+            ];
+        } catch (Throwable $throwable) {
+            report($throwable);
+
+            return [
+                'present_before_release' => false,
+                'released' => false,
+                'error_class' => $throwable::class,
+            ];
+        }
+    }
+
+    /**
+     * Return empty worktree evidence when no durable TaskAttempt identifies a disposable workspace.
+     *
+     * @return array{
+     *     present_before_release: bool,
+     *     released: bool,
+     *     error_class: ?string
+     * }
+     */
+    private function emptyWorktreeEvidence(): array
+    {
+        return [
+            'present_before_release' => false,
+            'released' => false,
+            'error_class' => null,
+        ];
     }
 
     /**
