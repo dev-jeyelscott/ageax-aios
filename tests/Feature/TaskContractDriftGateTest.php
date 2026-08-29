@@ -9,6 +9,7 @@ use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
+use App\Models\TaskPlanningEscalation;
 use App\ProjectStatus;
 use App\Services\AgentContextAssembler;
 use App\Services\AuditLogger;
@@ -199,10 +200,11 @@ test('coder retry is blocked on contract drift before an AgentRun can start', fu
 
     $blockedAttempt = app(RunCoderTask::class)->handle($task->refresh());
 
-    expect($blockedAttempt->status)->toBe('blocked')
+    expect($blockedAttempt->refresh()->status)->toBe('failed')
         ->and($task->refresh()->status)->toBe(TaskStatus::Blocked)
         ->and(AgentRun::query()->whereBelongsTo($task)->count())->toBe(0)
-        ->and($task->auditEvents()->where('event_type', 'task.contract_drift_detected')->exists())->toBeTrue();
+        ->and($task->auditEvents()->where('event_type', 'task.contract_drift_detected')->exists())->toBeTrue()
+        ->and(TaskPlanningEscalation::query()->whereBelongsTo($task)->where('defect_type', 'task_contract_drift')->where('status', 'pending')->exists())->toBeTrue();
 });
 
 test('reviewer execution is blocked on drift before paid Agent execution', function () {
@@ -294,6 +296,37 @@ test('explicit operator requeue after contract drift establishes a new contract 
 
     expect($task->refresh()->status)->toBe(TaskStatus::ChangesRequired)
         ->and($result['baseline'])->toBeNull()
+        ->and($result['drifted'])->toBeFalse();
+});
+
+test('a validated contract rebase establishes a new contract baseline boundary', function () {
+    $project = taskContractProject('Planning contract rebase project');
+    $task = taskContractTask($project, TaskStatus::Blocked);
+    $guard = app(TaskContractGuard::class);
+    $context = taskContractContext();
+    $baseline = $guard->evidence($task, $context);
+    TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'status' => 'failed',
+        'validation_results' => ['task_contract' => $baseline],
+        'started_at' => now()->subMinute(),
+        'finished_at' => now()->subMinute(),
+    ]);
+    $task->update(['objective' => 'Rebased task objective.']);
+    $current = $guard->evidence($task->refresh(), $context);
+    app(AuditLogger::class)->record('task.contract_drift_detected', [
+        'operation' => 'coder',
+        'baseline_attempt_number' => 1,
+        'baseline_fingerprint' => $baseline['fingerprint'],
+        'current_fingerprint' => $current['fingerprint'],
+        'changed_inputs' => ['objective'],
+    ], $project, $task);
+    app(AuditLogger::class)->record('task.contract_rebased', ['rebase_only' => true], $project, $task);
+
+    $result = $guard->evaluate($task->refresh(), $context);
+
+    expect($result['baseline'])->toBeNull()
         ->and($result['drifted'])->toBeFalse();
 });
 

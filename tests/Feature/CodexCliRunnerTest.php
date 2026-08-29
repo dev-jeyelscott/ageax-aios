@@ -154,14 +154,24 @@ test('converts an externally signaled process into a normalized failure result i
 });
 
 test('stops Codex when its AIOS worker lease is lost', function () {
-    Process::fake(['*' => Process::describe()->iterations(2)]);
+    $binary = tempnam(sys_get_temp_dir(), 'aios-codex-lease-loss-');
+    expect($binary)->not->toBeFalse();
+    file_put_contents($binary, "#!/bin/sh\nsleep 10\n");
+    chmod($binary, 0700);
 
-    $result = app(CodexCliRunner::class)->runAtPath(
-        base_path(),
-        'Implement the task.',
-        onHeartbeat: fn (): bool => false,
-    );
+    try {
+        config()->set('aios.codex_binary', $binary);
+        config()->set('aios.execution_timeout', 15);
 
-    expect($result['exit_code'])->toBe(125)
-        ->and($result['error_output'])->toContain('worker lease was lost');
+        $result = app(CodexCliRunner::class)->runAtPath(
+            base_path(),
+            'Implement the task.',
+            onHeartbeat: fn (): bool => false,
+        );
+
+        expect($result['exit_code'])->toBe(125)
+            ->and($result['error_output'])->toContain('worker lease was lost');
+    } finally {
+        @unlink($binary);
+    }
 });

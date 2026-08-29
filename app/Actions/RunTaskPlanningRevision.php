@@ -103,7 +103,9 @@ class RunTaskPlanningRevision
     private function prompt(array $context): string
     {
         $contract = <<<'PROMPT'
-You are the Project Manager in AIOS planning_revision mode. Return one JSON object only: {"reason":"concise evidence", "replacements":{"allowed_field":"replacement value"}}. Replace only supplied allowed_fields. Do not change task identity, title, objective, phase, position, work metadata, or any field not explicitly allowed.
+You are the Project Manager in AIOS planning_revision mode. Return one JSON object only: {"reason":"concise evidence", "rebase_only":false, "replacements":{"allowed_field":"replacement value"}}. Replace only supplied allowed_fields. Do not change task identity, title, objective, phase, position, work metadata, or any field not explicitly allowed.
+
+Set rebase_only to true only when defect_type is task_contract_drift, the changed evidence does not require any task-field change, and replacements is exactly an empty object. This confirms the task may adopt the updated authoritative context; AIOS independently validates and applies that rebase.
 
 When replacing verification_commands, every command must be one standalone allowlisted executable beginning with exactly one of: php, composer, npm, pnpm, yarn, bun, npx, git, vendor/bin/pest, ./vendor/bin/pest, vendor/bin/phpstan, ./vendor/bin/phpstan, vendor/bin/pint, or ./vendor/bin/pint. Never use ls, rg, find, shell pipelines, redirects, command substitution, semicolons, shell operators, or database migration/destructive Artisan commands. Preserve any safe existing verification command unless replacement is necessary.
 PROMPT;
@@ -125,13 +127,15 @@ PROMPT;
                 throw ValidationException::withMessages(['attempt' => 'Planning revision is no longer active.']);
             }
             $replacements = $proposal['replacements'] ?? null;
+            $rebaseOnly = $proposal['rebase_only'] ?? false;
             $allowedFields = $this->allowedFields($escalation);
-            if (! is_string($proposal['reason'] ?? null) || trim($proposal['reason']) === '' || ! is_array($replacements) || $replacements === [] || array_diff(array_keys($replacements), $allowedFields) !== []) {
+            $canRebaseOnly = $escalation->defect_type === 'task_contract_drift';
+            if (! is_string($proposal['reason'] ?? null) || trim($proposal['reason']) === '' || ! is_bool($rebaseOnly) || ! is_array($replacements) || array_diff(array_keys($replacements), $allowedFields) !== [] || ($rebaseOnly && (! $canRebaseOnly || $replacements !== [])) || (! $rebaseOnly && $replacements === [])) {
                 throw ValidationException::withMessages(['proposal' => 'Only non-empty allowlisted replacements are permitted.']);
             }
             $this->validateReplacements($task, $replacements);
             $changed = collect($replacements)->filter(fn (mixed $value, string $field): bool => $field === 'dependencies' ? $value !== $task->dependencies()->pluck('key')->all() : $value !== $task->getAttribute($field));
-            if ($changed->isEmpty()) {
+            if ($changed->isEmpty() && ! $rebaseOnly) {
                 throw ValidationException::withMessages(['proposal' => 'A planning revision must change an allowed field.']);
             }
             $attributes = $changed->except('dependencies')->all();
@@ -142,10 +146,11 @@ PROMPT;
                 $task->dependencies()->sync(Task::query()->where('project_id', $task->project_id)->whereIn('key', $changed['dependencies'])->pluck('id'));
             }
             $task->update(['context_capsule' => $this->capsules->make($task->refresh())]);
-            $lockedAttempt->update(['status' => 'applied', 'proposal' => ['reason' => $proposal['reason'], 'replacements' => $changed->all()], 'finished_at' => now()]);
+            $lockedAttempt->update(['status' => 'applied', 'proposal' => ['reason' => $proposal['reason'], 'rebase_only' => $rebaseOnly, 'replacements' => $changed->all()], 'finished_at' => now()]);
             $escalation->update(['status' => 'resolved', 'resolved_at' => now()]);
             $task->update(['status' => TaskStatus::ChangesRequired]);
             $this->audit->record('task.planning_revision_applied', ['planning_escalation_id' => $escalation->id, 'revision_attempt_number' => $lockedAttempt->number, 'reason' => $proposal['reason'], 'changed_fields' => array_keys($changed->all()), 'contract_baseline_reset' => true], $task->project, $task);
+            $this->audit->record('task.contract_rebased', ['planning_escalation_id' => $escalation->id, 'revision_attempt_number' => $lockedAttempt->number, 'rebase_only' => $rebaseOnly, 'changed_fields' => array_keys($changed->all())], $task->project, $task);
             $this->audit->record('task.transitioned', ['from' => TaskStatus::Blocked->value, 'to' => TaskStatus::ChangesRequired->value], $task->project, $task);
         }, attempts: 3);
     }

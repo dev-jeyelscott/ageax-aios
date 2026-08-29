@@ -544,7 +544,7 @@ class RunCoderTask
             'task_id' => $task->id,
             'number' => $task->attempts()->max('number') + 1,
             'base_sha' => $baseSha,
-            'status' => 'blocked',
+            'status' => 'failed',
             'validation_results' => [
                 'passed' => false,
                 'checks' => ['task_contract' => false],
@@ -570,9 +570,28 @@ class RunCoderTask
             'changed_inputs' => $contract['changed_inputs'],
             'recovery_pinned' => $contract['recovery_pinned'],
         ], $task->project, $task);
-        $this->workflow->transition($task, TaskStatus::Blocked);
+        $this->planningEscalations->escalate($task, [
+            'type' => 'task_contract_drift',
+            'fingerprint' => $contract['current']['fingerprint'],
+            'evidence' => [
+                'baseline_attempt_number' => $contract['baseline_attempt_number'],
+                'baseline_fingerprint' => $contract['baseline']['fingerprint'] ?? null,
+                'current_fingerprint' => $contract['current']['fingerprint'],
+                'changed_inputs' => $contract['changed_inputs'],
+                'recovery_pinned' => $contract['recovery_pinned'],
+            ],
+            'allowed_fields' => [
+                'acceptance_criteria',
+                'scope',
+                'constraints',
+                'relevant_paths',
+                'verification_commands',
+                'implementation_prompt',
+                'dependencies',
+            ],
+        ], $attempt);
 
-        return $attempt;
+        return $attempt->refresh();
     }
 
     /**

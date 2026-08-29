@@ -194,66 +194,74 @@ class TaskWorkflow
         return DB::transaction(function () use ($task): bool {
             $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
 
-            if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::ChangesRequired) {
-                return false;
-            }
-
-            $threshold = max(1, (int) config('aios.review_no_progress_block_threshold'));
-            $requeueEvent = $lockedTask->auditEvents()
-                ->where('event_type', 'task.requeued')
-                ->latest('id')
-                ->first();
-
-            $reviews = $lockedTask->reviews()
-                ->where('status', ReviewStatus::ChangesRequired)
-                ->when($requeueEvent !== null, fn ($query) => $query->where('completed_at', '>', $requeueEvent->occurred_at))
-                ->latest('completed_at')
-                ->limit($threshold)
-                ->with('attempt')
-                ->get();
-
-            if ($reviews->count() !== $threshold) {
-                return false;
-            }
-
-            $attempts = $reviews
-                ->map(fn (Review $review): ?TaskAttempt => $review->attempt)
-                ->filter()
-                ->values();
-
-            if ($attempts->count() !== $threshold) {
-                return false;
-            }
-
-            $headShas = $attempts->pluck('head_sha')->unique();
-            $baseShas = $attempts->pluck('base_sha')->unique();
-            $fingerprints = $attempts
-                ->map(fn (TaskAttempt $attempt): ?string => $this->taskContractFingerprint($attempt))
-                ->filter()
-                ->unique();
-
-            $hasChangedFiles = $attempts->contains(
-                fn (TaskAttempt $attempt): bool => $this->attemptHasChangedFiles($attempt),
-            );
-
-            if ($headShas->count() !== 1 || $baseShas->count() !== 1 || $fingerprints->count() !== 1 || $hasChangedFiles) {
-                return false;
-            }
-
-            $orderedAttempts = $attempts->sortBy('number')->values();
-
-            $this->transitionLocked($lockedTask, TaskStatus::Blocked);
-
-            $this->audit->record('task.review_no_progress_blocked', [
-                'threshold' => $threshold,
-                'attempt_numbers' => $orderedAttempts->pluck('number')->all(),
-                'base_sha' => $baseShas->first(),
-                'head_sha' => $headShas->first(),
-                'task_contract_fingerprint' => $fingerprints->first(),
-            ], $lockedTask->project, $lockedTask);
-
-            return true;
+            return $this->blockRepeatedRejectedReviewsLocked($lockedTask);
         }, attempts: 3);
+    }
+
+    /**
+     * Enforce the deterministic Reviewer no-progress threshold while the caller already owns the Task row lock.
+     */
+    private function blockRepeatedRejectedReviewsLocked(Task $lockedTask): bool
+    {
+        if (TaskStatus::from($lockedTask->getRawOriginal('status')) !== TaskStatus::ChangesRequired) {
+            return false;
+        }
+
+        $threshold = max(1, (int) config('aios.review_no_progress_block_threshold'));
+        $requeueEvent = $lockedTask->auditEvents()
+            ->where('event_type', 'task.requeued')
+            ->latest('id')
+            ->first();
+
+        $reviews = $lockedTask->reviews()
+            ->where('status', ReviewStatus::ChangesRequired)
+            ->when($requeueEvent !== null, fn ($query) => $query->where('completed_at', '>', $requeueEvent->occurred_at))
+            ->latest('completed_at')
+            ->limit($threshold)
+            ->with('attempt')
+            ->get();
+
+        if ($reviews->count() !== $threshold) {
+            return false;
+        }
+
+        $attempts = $reviews
+            ->map(fn (Review $review): ?TaskAttempt => $review->attempt)
+            ->filter()
+            ->values();
+
+        if ($attempts->count() !== $threshold) {
+            return false;
+        }
+
+        $headShas = $attempts->pluck('head_sha')->unique();
+        $baseShas = $attempts->pluck('base_sha')->unique();
+        $fingerprints = $attempts
+            ->map(fn (TaskAttempt $attempt): ?string => $this->taskContractFingerprint($attempt))
+            ->filter()
+            ->unique();
+
+        $hasChangedFiles = $attempts->contains(
+            fn (TaskAttempt $attempt): bool => $this->attemptHasChangedFiles($attempt),
+        );
+
+        if ($headShas->count() !== 1 || $baseShas->count() !== 1 || $fingerprints->count() !== 1 || $hasChangedFiles) {
+            return false;
+        }
+
+        $orderedAttempts = $attempts->sortBy('number')->values();
+
+        $this->transitionLocked($lockedTask, TaskStatus::Blocked);
+
+        $this->audit->record('task.review_no_progress_blocked', [
+            'threshold' => $threshold,
+            'attempt_numbers' => $orderedAttempts->pluck('number')->all(),
+            'base_sha' => $baseShas->first(),
+            'head_sha' => $headShas->first(),
+            'task_contract_fingerprint' => $fingerprints->first(),
+        ], $lockedTask->project, $lockedTask);
+
+        return true;
     }
 
     /**
@@ -305,6 +313,10 @@ class TaskWorkflow
             if ($existing !== null) {
                 $this->applyFinalizedReviewLocked($lockedTask, $lockedAttempt, $existing);
 
+                if (ReviewStatus::from($existing->getRawOriginal('status')) === ReviewStatus::ChangesRequired) {
+                    $this->blockRepeatedRejectedReviewsLocked($lockedTask);
+                }
+
                 return $existing;
             }
 
@@ -340,6 +352,10 @@ class TaskWorkflow
             ], $lockedTask->project, $lockedTask);
 
             $this->applyFinalizedReviewLocked($lockedTask, $lockedAttempt, $review);
+
+            if ($outcome === ReviewStatus::ChangesRequired) {
+                $this->blockRepeatedRejectedReviewsLocked($lockedTask);
+            }
 
             return $review->fresh('findings') ?? $review;
         }, attempts: 3);

@@ -92,6 +92,9 @@ test('finalized reviewer decisions automatically block an unchanged rejection lo
             'base_sha' => 'same-head',
             'head_sha' => 'same-head',
             'status' => 'completed',
+            'validation_results' => [
+                'task_contract' => ['fingerprint' => 'same-contract'],
+            ],
             'changed_files' => [],
             'started_at' => now(),
             'finished_at' => now(),
@@ -121,6 +124,7 @@ test('finalized reviewer decisions automatically block an unchanged rejection lo
             'threshold' => 3,
             'attempt_numbers' => [1, 2, 3],
             'head_sha' => 'same-head',
+            'task_contract_fingerprint' => 'same-contract',
         ]);
 });
 

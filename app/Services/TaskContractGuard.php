@@ -126,12 +126,12 @@ final readonly class TaskContractGuard
             ->max('id');
 
         if ($latestDriftId !== null) {
-            $requeuedAfterDrift = $task->auditEvents()
-                ->where('event_type', 'task.requeued')
+            $rebasedAfterDrift = $task->auditEvents()
+                ->whereIn('event_type', ['task.requeued', 'task.contract_rebased'])
                 ->where('id', '>', $latestDriftId)
                 ->exists();
 
-            if ($requeuedAfterDrift) {
+            if ($rebasedAfterDrift) {
                 return null;
             }
         }
