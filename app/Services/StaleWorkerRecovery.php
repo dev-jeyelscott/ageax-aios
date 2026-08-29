@@ -964,11 +964,12 @@ class StaleWorkerRecovery
                 ->whereNull('worker_lease_id');
         }
 
-        return $query->pluck('task_id')
-            ->map(fn ($taskId): int => (int) $taskId)
-            ->unique()
-            ->values()
-            ->all();
+        return array_values(
+            $query->pluck('task_id')
+                ->map(fn ($taskId): int => (int) $taskId)
+                ->unique()
+                ->all(),
+        );
     }
 
     /**
