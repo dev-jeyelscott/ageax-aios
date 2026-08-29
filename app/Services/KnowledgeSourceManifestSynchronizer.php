@@ -17,6 +17,8 @@ class KnowledgeSourceManifestSynchronizer
 
     private const string RepositorySourceType = 'repository';
 
+    public const string ExternalObsidianSourceType = 'obsidian_external';
+
     private const int MaxSourceReferenceCharacters = 500;
 
     private const int ReconcileAttempts = 2;
@@ -144,6 +146,33 @@ class KnowledgeSourceManifestSynchronizer
             $reference,
             $content,
             $gitSha,
+        );
+    }
+
+    /**
+     * Observe one already-read external Obsidian knowledge source version for a resolved project.
+     *
+     * External knowledge lives outside the project-local Obsidian directory, so its containment and
+     * approval checks belong to the caller; this only reconciles temporal provenance so superseded
+     * external versions stop being current.
+     */
+    public function observeExternalObsidianSource(
+        Project $project,
+        string $sourceReference,
+        string $content,
+    ): ?KnowledgeSourceManifest {
+        $reference = $this->normalizeReference($sourceReference);
+
+        if ($reference === null) {
+            return null;
+        }
+
+        return $this->observeContent(
+            $project,
+            self::ExternalObsidianSourceType,
+            $reference,
+            $content,
+            null,
         );
     }
 

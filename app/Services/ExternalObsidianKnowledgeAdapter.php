@@ -2,17 +2,34 @@
 
 namespace App\Services;
 
+use App\Models\ExternalKnowledgeSection;
+use App\Models\KnowledgeSourceManifest;
 use App\Models\Project;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\Yaml\Yaml;
 use Throwable;
 
+/**
+ * Read-only, section-level retrieval of approved external Obsidian knowledge.
+ *
+ * External knowledge is untrusted advisory context. It is indexed at deterministic heading
+ * granularity into a local full-text index and is only ever retrieved through bounded,
+ * query-scoped lookups against that index, never by scanning or injecting the vault.
+ */
 class ExternalObsidianKnowledgeAdapter
 {
     private const int MaxSourceReferenceCharacters = 500;
 
-    private const int MaxContentCharacters = 10000;
+    private const int MaxHeadingCharacters = 500;
+
+    private const int MaxSectionCharacters = 1000;
+
+    private const int MaxQueryTerms = 12;
+
+    private const int MinQueryTermCharacters = 2;
 
     private const string GlobalScope = 'global';
 
@@ -20,67 +37,48 @@ class ExternalObsidianKnowledgeAdapter
 
     private const string AgentScope = 'agent';
 
-    public function __construct(private Filesystem $files) {}
+    private const string ActiveStatus = 'active';
+
+    public function __construct(
+        private Filesystem $files,
+        private KnowledgeSourceManifestSynchronizer $manifests,
+    ) {}
 
     /**
-     * Retrieve sections from external Markdown sources with validated YAML frontmatter scopes.
-     * Returns only approved knowledge whose scope, project, and optional Agent match the request.
+     * Index every approved, active external Markdown source that is scoped to this project.
+     *
+     * Source notes are only read; provenance is reconciled through the existing knowledge source
+     * manifest, so a changed source supersedes its previous version and stops being retrievable.
      *
      * @return array{
-     *     sections: list<array{
-     *         source_reference: string,
-     *         heading: string,
-     *         level: int,
-     *         content: string,
-     *         character_count: int
-     *     }>,
-     *     total_character_count: int,
-     *     retrieval_status: string
+     *     indexed_sources: int,
+     *     indexed_sections: int,
+     *     index_status: string
      * }
      */
-    public function retrieveKnowledge(
-        Project $project,
-        ?int $agentId = null,
-        int $maxCharacters = 5000,
-    ): array {
+    public function indexExternalKnowledge(Project $project): array
+    {
         $vaultPath = config('aios.obsidian_vault_path');
 
         if (! is_string($vaultPath) || $vaultPath === '') {
-            return [
-                'sections' => [],
-                'total_character_count' => 0,
-                'retrieval_status' => 'vault_unavailable',
-            ];
+            return $this->indexEvidence(0, 0, 'vault_unavailable');
         }
 
         $externalDirectory = $this->resolveExternalKnowledgeDirectory($vaultPath);
 
-        if (! is_dir($externalDirectory) || ! is_readable($externalDirectory)) {
-            return [
-                'sections' => [],
-                'total_character_count' => 0,
-                'retrieval_status' => 'external_knowledge_unavailable',
-            ];
+        if ($externalDirectory === null) {
+            return $this->indexEvidence(0, 0, 'external_knowledge_unavailable');
         }
-
-        $sections = [];
-        $remainingCharacters = $maxCharacters;
 
         try {
             $files = $this->files->allFiles($externalDirectory);
         } catch (Throwable) {
-            return [
-                'sections' => [],
-                'total_character_count' => 0,
-                'retrieval_status' => 'file_enumeration_failed',
-            ];
+            return $this->indexEvidence(0, 0, 'file_enumeration_failed');
         }
 
-        foreach ($files as $file) {
-            if ($remainingCharacters <= 0) {
-                break;
-            }
+        $candidates = [];
 
+        foreach ($files as $file) {
             if (Str::lower($file->getExtension()) !== 'md') {
                 continue;
             }
@@ -97,133 +95,332 @@ class ExternalObsidianKnowledgeAdapter
                 continue;
             }
 
-            try {
-                $content = $this->files->get($realPath);
-            } catch (Throwable) {
-                continue;
-            }
-
-            $extracted = $this->extractFrontmatterAndContent($content);
-
-            if ($extracted === null || ! $this->validateFrontmatter($extracted['frontmatter'], $project, $agentId)) {
-                continue;
-            }
-
-            $fileSections = $this->parseMarkdownSections(
-                $extracted['content'],
-                $reference,
-                $remainingCharacters,
-            );
-
-            foreach ($fileSections as $section) {
-                $characterCount = Str::length($section['content']);
-                $sections[] = $section;
-                $remainingCharacters -= $characterCount;
-
-                if ($remainingCharacters <= 0) {
-                    break;
-                }
-            }
+            $candidates[$reference] = $realPath;
         }
 
-        $totalCharacters = array_sum(array_column($sections, 'character_count'));
+        ksort($candidates);
 
-        return [
-            'sections' => $sections,
-            'total_character_count' => $totalCharacters,
-            'retrieval_status' => 'success',
-        ];
+        $indexedSources = 0;
+        $indexedSections = 0;
+        $currentManifestIds = [];
+
+        try {
+            foreach ($candidates as $reference => $realPath) {
+                $content = $this->files->get($realPath);
+                $document = $this->extractFrontmatterAndContent($content);
+
+                if ($document === null) {
+                    continue;
+                }
+
+                $eligibility = $this->resolveEligibility($document['frontmatter'], $project);
+
+                if ($eligibility === null) {
+                    continue;
+                }
+
+                $manifest = $this->manifests->observeExternalObsidianSource(
+                    $project,
+                    $reference,
+                    $content,
+                );
+
+                if (! $manifest instanceof KnowledgeSourceManifest) {
+                    continue;
+                }
+
+                $currentManifestIds[] = $manifest->id;
+                $indexedSources++;
+                $indexedSections += $this->replaceIndexedSections(
+                    $project,
+                    $manifest,
+                    $reference,
+                    $eligibility,
+                    $document['content'],
+                );
+            }
+        } catch (Throwable) {
+            return $this->indexEvidence($indexedSources, $indexedSections, 'index_write_failed');
+        }
+
+        $this->purgeStaleSections($project, $currentManifestIds);
+
+        return $this->indexEvidence($indexedSources, $indexedSections, 'success');
     }
 
     /**
-     * Parse Markdown content into deterministic section-level units.
+     * Retrieve bounded, query-matched external knowledge sections for a resolved identity.
      *
-     * @return list<array{
-     *     source_reference: string,
-     *     heading: string,
-     *     level: int,
-     *     content: string,
-     *     character_count: int
-     * }>
+     * Only current (non-superseded) indexed versions whose scope matches the resolved project and
+     * optional logical Agent are eligible; unrelated indexed knowledge is never returned.
+     *
+     * @return array{
+     *     sections: list<array{
+     *         source_reference: string,
+     *         heading: string,
+     *         level: int,
+     *         scope: string,
+     *         content: string,
+     *         character_count: int,
+     *         content_hash: string,
+     *         knowledge_source_manifest_id: int,
+     *         matched_terms: list<string>
+     *     }>,
+     *     total_character_count: int,
+     *     query_terms: list<string>,
+     *     retrieval_status: string
+     * }
      */
-    private function parseMarkdownSections(
-        string $content,
-        string $sourceReference,
-        int $maxCharacters,
+    public function retrieveKnowledge(
+        Project $project,
+        string $query,
+        ?int $agentId = null,
+        int $maxCharacters = 5000,
+        int $maxSections = 10,
     ): array {
-        $sections = [];
-        $currentCharacters = 0;
+        $terms = $this->queryTerms($query);
 
-        if (Str::length($content) === 0) {
-            return [];
+        if ($terms === []) {
+            return $this->retrievalEvidence([], [], 'query_required');
         }
 
-        $lines = explode("\n", $content);
-        $currentSection = null;
-        $currentContent = [];
+        try {
+            $matches = $this->eligibleSections($project, $agentId)
+                ->where(function (Builder $builder) use ($terms): void {
+                    foreach ($terms as $term) {
+                        $builder->orWhere('search_text', 'like', '%'.$term.'%');
+                    }
+                })
+                ->orderBy('source_reference')
+                ->orderBy('position')
+                ->orderBy('id')
+                ->get();
+        } catch (Throwable) {
+            return $this->retrievalEvidence([], $terms, 'index_unavailable');
+        }
 
-        foreach ($lines as $line) {
-            if ($currentCharacters >= $maxCharacters) {
+        $ranked = [];
+
+        foreach ($matches as $index => $section) {
+            $matchedTerms = array_values(array_filter(
+                $terms,
+                fn (string $term): bool => Str::contains($section->search_text, $term),
+            ));
+
+            if ($matchedTerms === []) {
+                continue;
+            }
+
+            $ranked[] = [
+                'score' => count($matchedTerms),
+                'order' => $index,
+                'section' => $section,
+                'matched_terms' => $matchedTerms,
+            ];
+        }
+
+        usort(
+            $ranked,
+            fn (array $left, array $right): int => $right['score'] <=> $left['score']
+                ?: $left['order'] <=> $right['order'],
+        );
+
+        $sections = [];
+        $remainingCharacters = max($maxCharacters, 0);
+
+        foreach ($ranked as $match) {
+            if (count($sections) >= $maxSections || $remainingCharacters <= 0) {
                 break;
             }
 
+            $section = $match['section'];
+            $excerpt = Str::substr(
+                $section->content,
+                0,
+                min(self::MaxSectionCharacters, $remainingCharacters),
+            );
+            $characterCount = Str::length($excerpt);
+
+            if ($characterCount === 0) {
+                continue;
+            }
+
+            $sections[] = [
+                'source_reference' => $section->source_reference,
+                'heading' => $section->heading,
+                'level' => $section->heading_level,
+                'scope' => $section->scope,
+                'content' => $excerpt,
+                'character_count' => $characterCount,
+                'content_hash' => $section->content_hash,
+                'knowledge_source_manifest_id' => $section->knowledge_source_manifest_id,
+                'matched_terms' => $match['matched_terms'],
+            ];
+
+            $remainingCharacters -= $characterCount;
+        }
+
+        return $this->retrievalEvidence($sections, $terms, 'success');
+    }
+
+    /**
+     * Constrain the index to current versions the resolved identity is allowed to read.
+     *
+     * @return Builder<ExternalKnowledgeSection>
+     */
+    private function eligibleSections(Project $project, ?int $agentId): Builder
+    {
+        return ExternalKnowledgeSection::query()
+            ->whereBelongsTo($project)
+            ->whereHas(
+                'knowledgeSourceManifest',
+                fn (Builder $builder) => $builder->whereNull('superseded_at'),
+            )
+            ->where(function (Builder $builder) use ($project, $agentId): void {
+                $builder
+                    ->where('scope', self::GlobalScope)
+                    ->orWhere(
+                        fn (Builder $scoped) => $scoped
+                            ->where('scope', self::ProjectScope)
+                            ->where('project_id', $project->id),
+                    );
+
+                if ($agentId !== null) {
+                    $builder->orWhere(
+                        fn (Builder $scoped) => $scoped
+                            ->where('scope', self::AgentScope)
+                            ->where('project_id', $project->id)
+                            ->where('scoped_agent_id', $agentId),
+                    );
+                }
+            });
+    }
+
+    /**
+     * Replace the indexed sections of one observed source version idempotently.
+     *
+     * @param  array{scope: string, scoped_agent_id: int|null}  $eligibility
+     */
+    private function replaceIndexedSections(
+        Project $project,
+        KnowledgeSourceManifest $manifest,
+        string $sourceReference,
+        array $eligibility,
+        string $content,
+    ): int {
+        $sections = $this->parseMarkdownSections($content);
+        $indexedAt = now();
+
+        return DB::transaction(function () use (
+            $project,
+            $manifest,
+            $sourceReference,
+            $eligibility,
+            $sections,
+            $indexedAt,
+        ): int {
+            ExternalKnowledgeSection::query()
+                ->where('knowledge_source_manifest_id', $manifest->id)
+                ->delete();
+
+            foreach ($sections as $position => $section) {
+                ExternalKnowledgeSection::query()->create([
+                    'project_id' => $project->id,
+                    'knowledge_source_manifest_id' => $manifest->id,
+                    'source_reference' => $sourceReference,
+                    'scope' => $eligibility['scope'],
+                    'scoped_agent_id' => $eligibility['scoped_agent_id'],
+                    'heading' => $section['heading'],
+                    'heading_level' => $section['level'],
+                    'position' => $position,
+                    'content' => $section['content'],
+                    'search_text' => $this->searchText($section['heading'], $section['content']),
+                    'character_count' => Str::length($section['content']),
+                    'content_hash' => $manifest->content_hash,
+                    'indexed_at' => $indexedAt,
+                ]);
+            }
+
+            return count($sections);
+        });
+    }
+
+    /**
+     * Drop indexed sections that are no longer backed by a current eligible source version.
+     *
+     * @param  list<int>  $currentManifestIds
+     */
+    private function purgeStaleSections(Project $project, array $currentManifestIds): void
+    {
+        ExternalKnowledgeSection::query()
+            ->whereBelongsTo($project)
+            ->when(
+                $currentManifestIds !== [],
+                fn (Builder $builder) => $builder->whereNotIn(
+                    'knowledge_source_manifest_id',
+                    $currentManifestIds,
+                ),
+            )
+            ->delete();
+    }
+
+    /**
+     * Parse Markdown content into deterministic heading-level sections.
+     *
+     * @return list<array{heading: string, level: int, content: string}>
+     */
+    private function parseMarkdownSections(string $content): array
+    {
+        $sections = [];
+        $currentSection = null;
+        $currentContent = [];
+
+        foreach (explode("\n", $content) as $line) {
             $headingMatch = [];
 
             if (preg_match('/^(#{1,6})\s+(.+)$/', $line, $headingMatch)) {
-                if ($currentSection !== null) {
-                    $sectionContent = trim(implode("\n", $currentContent));
-
-                    if (Str::length($sectionContent) > 0) {
-                        $characterCount = min(
-                            Str::length($sectionContent),
-                            $maxCharacters - $currentCharacters,
-                        );
-                        $truncated = Str::substr($sectionContent, 0, $characterCount);
-
-                        $sections[] = [
-                            'source_reference' => $sourceReference,
-                            'heading' => $currentSection['heading'],
-                            'level' => $currentSection['level'],
-                            'content' => $truncated,
-                            'character_count' => $characterCount,
-                        ];
-
-                        $currentCharacters += $characterCount;
-                    }
-                }
-
-                $level = Str::length($headingMatch[1]);
-                $heading = trim($headingMatch[2]);
+                $sections = $this->appendSection($sections, $currentSection, $currentContent);
 
                 $currentSection = [
-                    'heading' => $heading,
-                    'level' => $level,
+                    'heading' => Str::substr(trim($headingMatch[2]), 0, self::MaxHeadingCharacters),
+                    'level' => Str::length($headingMatch[1]),
                 ];
                 $currentContent = [];
-            } else {
-                $currentContent[] = $line;
+
+                continue;
             }
+
+            $currentContent[] = $line;
         }
 
-        if ($currentSection !== null && $currentCharacters < $maxCharacters) {
-            $sectionContent = trim(implode("\n", $currentContent));
+        return $this->appendSection($sections, $currentSection, $currentContent);
+    }
 
-            if (Str::length($sectionContent) > 0) {
-                $characterCount = min(
-                    Str::length($sectionContent),
-                    $maxCharacters - $currentCharacters,
-                );
-                $truncated = Str::substr($sectionContent, 0, $characterCount);
-
-                $sections[] = [
-                    'source_reference' => $sourceReference,
-                    'heading' => $currentSection['heading'],
-                    'level' => $currentSection['level'],
-                    'content' => $truncated,
-                    'character_count' => $characterCount,
-                ];
-            }
+    /**
+     * Append one completed section when it has both a heading and content.
+     *
+     * @param  list<array{heading: string, level: int, content: string}>  $sections
+     * @param  array{heading: string, level: int}|null  $currentSection
+     * @param  list<string>  $currentContent
+     * @return list<array{heading: string, level: int, content: string}>
+     */
+    private function appendSection(array $sections, ?array $currentSection, array $currentContent): array
+    {
+        if ($currentSection === null) {
+            return $sections;
         }
+
+        $sectionContent = trim(implode("\n", $currentContent));
+
+        if (Str::length($sectionContent) === 0) {
+            return $sections;
+        }
+
+        $sections[] = [
+            'heading' => $currentSection['heading'],
+            'level' => $currentSection['level'],
+            'content' => Str::substr($sectionContent, 0, self::MaxSectionCharacters),
+        ];
 
         return $sections;
     }
@@ -243,60 +440,139 @@ class ExternalObsidianKnowledgeAdapter
 
         try {
             $frontmatter = Yaml::parse($frontmatterMatch[1]);
-
-            if (! is_array($frontmatter)) {
-                $frontmatter = [];
-            }
         } catch (Throwable) {
             return null;
         }
 
-        $content = $frontmatterMatch[2];
+        if (! is_array($frontmatter)) {
+            return null;
+        }
 
         return [
             'frontmatter' => $frontmatter,
-            'content' => $content,
+            'content' => $frontmatterMatch[2],
         ];
     }
 
     /**
-     * Validate YAML frontmatter scope, project, and optional Agent constraints.
+     * Resolve indexable scope for a source, failing closed on absent or invalid approval metadata.
+     *
+     * @param  array<string, mixed>  $frontmatter
+     * @return array{scope: string, scoped_agent_id: int|null}|null
      */
-    private function validateFrontmatter(array $frontmatter, Project $project, ?int $agentId): bool
+    private function resolveEligibility(array $frontmatter, Project $project): ?array
     {
-        $scope = $frontmatter['scope'] ?? null;
-        $projectId = $frontmatter['project_id'] ?? null;
-        $sourceAgentId = $frontmatter['agent_id'] ?? null;
-
-        if (! is_string($scope) || ! in_array($scope, [self::GlobalScope, self::ProjectScope, self::AgentScope], true)) {
-            return false;
+        if (! $this->isApprovedAndActive($frontmatter)) {
+            return null;
         }
 
+        $scope = $frontmatter['scope'] ?? null;
+
+        if (! is_string($scope)) {
+            return null;
+        }
+
+        $scope = Str::lower(trim($scope));
+        $sourceProjectId = $this->positiveInteger($frontmatter['project_id'] ?? null);
+        $sourceAgentId = $this->positiveInteger($frontmatter['agent_id'] ?? null);
+
         if ($scope === self::GlobalScope) {
-            return true;
+            return ['scope' => self::GlobalScope, 'scoped_agent_id' => null];
         }
 
         if ($scope === self::ProjectScope) {
-            return $projectId === $project->id || (int) $projectId === $project->id;
+            return $sourceProjectId === $project->id
+                ? ['scope' => self::ProjectScope, 'scoped_agent_id' => null]
+                : null;
         }
 
         if ($scope === self::AgentScope) {
-            if ($agentId === null) {
-                return false;
-            }
-
-            return ((int) $sourceAgentId === $agentId) && ((int) $projectId === $project->id);
+            return $sourceProjectId === $project->id && $sourceAgentId !== null
+                ? ['scope' => self::AgentScope, 'scoped_agent_id' => $sourceAgentId]
+                : null;
         }
 
-        return false;
+        return null;
     }
 
     /**
-     * Resolve the external knowledge directory without creating it.
+     * Require explicit approval and an explicit active lifecycle status.
+     *
+     * @param  array<string, mixed>  $frontmatter
      */
-    private function resolveExternalKnowledgeDirectory(string $vaultPath): string
+    private function isApprovedAndActive(array $frontmatter): bool
     {
-        return $vaultPath.'/External Knowledge';
+        $approved = $frontmatter['approved'] ?? null;
+        $status = $frontmatter['status'] ?? null;
+
+        if ($approved !== true || ! is_string($status)) {
+            return false;
+        }
+
+        return Str::lower(trim($status)) === self::ActiveStatus;
+    }
+
+    /**
+     * Coerce a frontmatter identifier without accepting loose or non-numeric values.
+     */
+    private function positiveInteger(mixed $value): ?int
+    {
+        if (is_int($value) && $value > 0) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^\d+$/', trim($value)) === 1) {
+            $parsed = (int) trim($value);
+
+            return $parsed > 0 ? $parsed : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Build the deterministic lowercase full-text representation of one section.
+     */
+    private function searchText(string $heading, string $content): string
+    {
+        $text = Str::lower($heading."\n".$content);
+
+        return trim((string) preg_replace('/\s+/u', ' ', $text));
+    }
+
+    /**
+     * Normalize a retrieval query into bounded deterministic full-text terms.
+     *
+     * @return list<string>
+     */
+    private function queryTerms(string $query): array
+    {
+        $tokens = preg_split('/[^\p{L}\p{N}]+/u', Str::lower(trim($query))) ?: [];
+
+        $terms = array_values(array_unique(array_filter(
+            $tokens,
+            fn (string $token): bool => Str::length($token) >= self::MinQueryTermCharacters,
+        )));
+
+        return array_slice($terms, 0, self::MaxQueryTerms);
+    }
+
+    /**
+     * Resolve the external knowledge directory without creating or traversing the vault.
+     */
+    private function resolveExternalKnowledgeDirectory(string $vaultPath): ?string
+    {
+        $directory = realpath($vaultPath.'/External Knowledge');
+
+        if (
+            $directory === false
+            || ! is_dir($directory)
+            || ! is_readable($directory)
+        ) {
+            return null;
+        }
+
+        return rtrim($directory, DIRECTORY_SEPARATOR);
     }
 
     /**
@@ -350,5 +626,61 @@ class ExternalObsidianKnowledgeAdapter
             $path,
             $root.DIRECTORY_SEPARATOR,
         );
+    }
+
+    /**
+     * Shape bounded indexing evidence.
+     *
+     * @return array{indexed_sources: int, indexed_sections: int, index_status: string}
+     */
+    private function indexEvidence(int $sources, int $sections, string $status): array
+    {
+        return [
+            'indexed_sources' => $sources,
+            'indexed_sections' => $sections,
+            'index_status' => $status,
+        ];
+    }
+
+    /**
+     * Shape bounded retrieval evidence.
+     *
+     * @param  list<array{
+     *     source_reference: string,
+     *     heading: string,
+     *     level: int,
+     *     scope: string,
+     *     content: string,
+     *     character_count: int,
+     *     content_hash: string,
+     *     knowledge_source_manifest_id: int,
+     *     matched_terms: list<string>
+     * }>  $sections
+     * @param  list<string>  $terms
+     * @return array{
+     *     sections: list<array{
+     *         source_reference: string,
+     *         heading: string,
+     *         level: int,
+     *         scope: string,
+     *         content: string,
+     *         character_count: int,
+     *         content_hash: string,
+     *         knowledge_source_manifest_id: int,
+     *         matched_terms: list<string>
+     *     }>,
+     *     total_character_count: int,
+     *     query_terms: list<string>,
+     *     retrieval_status: string
+     * }
+     */
+    private function retrievalEvidence(array $sections, array $terms, string $status): array
+    {
+        return [
+            'sections' => $sections,
+            'total_character_count' => array_sum(array_column($sections, 'character_count')),
+            'query_terms' => $terms,
+            'retrieval_status' => $status,
+        ];
     }
 }
