@@ -31,6 +31,10 @@ class ContextGatewayProjectResolver
                 throw new ProjectResolutionFailed("No registered AIOS Project matches the explicit Project ID [{$explicitProjectId}].");
             }
 
+            // Validate the persisted project path through existing safety protections: fail closed
+            // if it is traversal-based, symlink-escaping, AIOS-installation, or otherwise unsafe.
+            $this->paths->assertProjectPath($project->path);
+
             return new ProjectResolution($project->id, ProjectResolutionMethod::ExplicitProjectId);
         }
 

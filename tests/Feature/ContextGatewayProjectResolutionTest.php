@@ -173,3 +173,12 @@ test('ContextGatewayProjectResolution requires either an explicit Project ID or 
     expect(fn () => app(ContextGatewayProjectResolver::class)->resolve(null, null))
         ->toThrow(ProjectResolutionFailed::class);
 });
+
+test('ContextGatewayProjectResolution fails closed for an explicit Project ID tied to an unsafe persisted path', function () {
+    // Create a project with an unsafe path (AIOS installation itself).
+    config()->set('aios.workspace_root', dirname(base_path()));
+    $project = Project::factory()->create(['name' => 'Unsafe Project', 'path' => base_path()]);
+
+    expect(fn () => app(ContextGatewayProjectResolver::class)->resolve($project->id, null))
+        ->toThrow(UnsafeProjectPath::class);
+});
