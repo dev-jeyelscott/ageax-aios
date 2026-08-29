@@ -155,7 +155,7 @@ class RunCoderTask
             return $this->blockMisconfiguredAgent($task, $exception);
         }
 
-        $executionSettings = $assembled?->executionSettings ?? $this->executionBudget->forCoderTask($task);
+        $executionSettings = $assembled->executionSettings ?? $this->executionBudget->forCoderTask($task);
         $assembled = $assembled?->withExecutionSettings($executionSettings);
 
         $recoveryInstruction = $preflight['mode'] === 'recovery'
@@ -454,6 +454,7 @@ class RunCoderTask
             : null;
         $passed = $alreadyImplemented || ($validationPassed && $commitSha !== null);
         $state = $this->git->inspect($projectPath);
+        $changedFileList = array_values($changedFiles ?? []);
 
         $validation = [
             'passed' => $passed,
@@ -480,7 +481,7 @@ class RunCoderTask
                 ],
             ],
             'base_sha' => $baseSha,
-            'candidate_changed_files' => $changedFiles ?? [],
+            'candidate_changed_files' => $changedFileList,
             'repository_preflight' => [
                 'mode' => $preflight['mode'],
                 'recovery_attempt_number' => $preflight['recovery_attempt']?->number,
@@ -498,7 +499,7 @@ class RunCoderTask
             'commit_sha' => $commitSha,
             'status' => $passed ? 'completed' : 'failed',
             'validation_results' => $validation,
-            'changed_files' => $changedFiles ?? [],
+            'changed_files' => $changedFileList,
             'finished_at' => now(),
         ]);
 
@@ -506,7 +507,7 @@ class RunCoderTask
             $renewLease();
         }
 
-        $this->recordValidationAudit($task, $attempt, $validation, $commitSha, $baseSha, $changedFiles ?? []);
+        $this->recordValidationAudit($task, $attempt, $validation, $commitSha, $baseSha, $changedFileList);
         $transitionedTask = $this->workflow->transition(
             $task,
             $passed ? TaskStatus::ReadyForReview : $this->retryStatus($task, $attempt),
@@ -526,8 +527,28 @@ class RunCoderTask
     /**
      * Persist one candidate/integration outcome and cross the review boundary only after verified canonical success.
      *
-     * @param  array<string, mixed>  $candidate
-     * @param  array<string, mixed>  $integration
+     * @param array{
+     *     base_sha: string,
+     *     candidate_sha: ?string,
+     *     candidate_ref: ?string,
+     *     candidate_diff_sha256: string,
+     *     changed_files: list<string>,
+     *     no_changes: bool
+     * } $candidate
+     * @param array{
+     *     passed: bool,
+     *     status: string,
+     *     base_sha: string,
+     *     candidate_sha: ?string,
+     *     candidate_ref: ?string,
+     *     candidate_diff_sha256: string,
+     *     changed_files: list<string>,
+     *     canonical_head_before: ?string,
+     *     canonical_head_after: ?string,
+     *     integrated_sha: ?string,
+     *     conflict_paths: list<string>,
+     *     summary: string
+     * } $integration
      * @param  array<string, mixed>  $preflight
      * @param  array<string, mixed>  $contractEvidence
      */
@@ -542,7 +563,7 @@ class RunCoderTask
         bool $recovered = false,
     ): TaskAttempt {
         $passed = ($integration['passed'] ?? false) === true;
-        $changedFiles = is_array($candidate['changed_files'] ?? null) ? $candidate['changed_files'] : [];
+        $changedFiles = $candidate['changed_files'];
         $headAfter = is_string($integration['canonical_head_after'] ?? null)
             ? $integration['canonical_head_after']
             : null;
@@ -576,7 +597,7 @@ class RunCoderTask
             'canonical_head_before' => $integration['canonical_head_before'] ?? null,
             'canonical_head_after' => $headAfter,
             'integrated_sha' => $commitSha,
-            'conflict_paths' => is_array($integration['conflict_paths'] ?? null) ? $integration['conflict_paths'] : [],
+            'conflict_paths' => $integration['conflict_paths'],
             'files' => $changedFiles,
             'summary' => (string) ($integration['summary'] ?? 'AIOS could not verify canonical integration.'),
         ];
@@ -687,7 +708,7 @@ class RunCoderTask
         array $contractEvidence,
         int $exitCode,
     ): TaskAttempt {
-        $changedFiles = $this->git->changedFilesFromBase($executionPath, $baseSha) ?? [];
+        $changedFiles = array_values($this->git->changedFilesFromBase($executionPath, $baseSha) ?? []);
         $state = $this->git->inspect((string) $task->project->path);
         $validation = [
             'passed' => false,

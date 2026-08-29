@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
 use Illuminate\Cache\Lock;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Process;
@@ -183,16 +184,9 @@ final class TaskGitIntegrator
     }
 
     /**
-     * Serialize and safely integrate one verified Task candidate into the canonical repository.
+     * Serialize and safely integrate one candidate after validating all supplied durable evidence.
      *
-     * @param array{
-     *     base_sha: string,
-     *     candidate_sha: ?string,
-     *     candidate_ref: ?string,
-     *     candidate_diff_sha256: string,
-     *     changed_files: list<string>,
-     *     no_changes: bool
-     * } $candidate
+     * @param  array<string, mixed>  $candidate
      * @return array{
      *     passed: bool,
      *     status: string,
@@ -214,53 +208,39 @@ final class TaskGitIntegrator
         $task->loadMissing('project');
 
         $repositoryPath = $this->paths->assertProjectPath((string) $task->project->path);
-        $baseSha = $this->normalizeExactObjectId((string) $attempt->base_sha);
+        $candidate = $this->validateCandidateEvidence($task, $attempt, $candidate);
+        $baseSha = $candidate['base_sha'];
         $candidateSha = $candidate['candidate_sha'];
         $candidateRef = $candidate['candidate_ref'];
-        $changedFiles = is_array($candidate['changed_files'] ?? null)
-            ? $this->normalizeFiles($candidate['changed_files'])
-            : null;
-        $diffIdentity = $candidate['candidate_diff_sha256'] ?? null;
 
-        if (
-            ! is_string($candidate['base_sha'] ?? null)
-            || ! hash_equals($baseSha, $candidate['base_sha'])
-            || $changedFiles === null
-            || ! is_string($diffIdentity)
-            || preg_match('/\A[0-9a-f]{64}\z/', $diffIdentity) !== 1
-        ) {
-            throw new RuntimeException('The Task candidate base does not match the persisted attempt base.');
+        $store = Cache::store('database')->getStore();
+
+        if (! $store instanceof LockProvider) {
+            throw new RuntimeException('The configured AIOS database cache store does not support atomic locks.');
         }
 
-        if ($candidateSha === null) {
-            if (
-                ($candidate['no_changes'] ?? null) !== true
-                || $candidateRef !== null
-                || $changedFiles !== []
-                || ! hash_equals(hash('sha256', ''), $diffIdentity)
-            ) {
-                throw new RuntimeException('The empty Task candidate evidence is inconsistent.');
-            }
-        } else {
-            $candidateSha = $this->normalizeExactObjectId($candidateSha);
-
-            if (
-                ($candidate['no_changes'] ?? null) !== false
-                || ! is_string($candidateRef)
-                || $candidateRef !== $this->candidateRef($task, $attempt)
-            ) {
-                throw new RuntimeException('The Task candidate reference does not match the durable AIOS attempt identity.');
-            }
-        }
-
-        /** @var Lock $lock */
-        $lock = Cache::store('database')->lock(
+        $lock = $store->lock(
             $this->repositoryLockName($task->project),
             self::IntegrationLockSeconds,
         );
 
         try {
-            return $lock->block(self::IntegrationLockWaitSeconds, function () use (
+            /** @var array{
+             *     passed: bool,
+             *     status: string,
+             *     base_sha: string,
+             *     candidate_sha: ?string,
+             *     candidate_ref: ?string,
+             *     candidate_diff_sha256: string,
+             *     changed_files: list<string>,
+             *     canonical_head_before: ?string,
+             *     canonical_head_after: ?string,
+             *     integrated_sha: ?string,
+             *     conflict_paths: list<string>,
+             *     summary: string
+             * } $result
+             */
+            $result = $lock->block(self::IntegrationLockWaitSeconds, function () use (
                 $lock,
                 $repositoryPath,
                 $task,
@@ -270,7 +250,7 @@ final class TaskGitIntegrator
                 $candidateSha,
                 $candidateRef,
             ): array {
-                if (! $lock->isOwnedByCurrentProcess()) {
+                if (! $this->ownsIntegrationLock($lock)) {
                     return $this->failure($candidate, 'lock_lost', null, null, [], 'AIOS lost the repository integration lock before Git mutation.');
                 }
 
@@ -318,7 +298,7 @@ final class TaskGitIntegrator
                     return $this->failure($candidate, 'base_not_ancestor', $headBefore, $headBefore, [], 'The Task base is not an ancestor of the current canonical HEAD, so AIOS will not integrate across unrelated history.');
                 }
 
-                if (! $lock->isOwnedByCurrentProcess()) {
+                if (! $this->ownsIntegrationLock($lock)) {
                     return $this->failure($candidate, 'lock_lost', $headBefore, $headBefore, [], 'AIOS lost the repository integration lock before Git mutation.');
                 }
 
@@ -354,7 +334,7 @@ final class TaskGitIntegrator
                 $headAfter = $after['head_sha'];
 
                 if (
-                    ! $lock->isOwnedByCurrentProcess()
+                    ! $this->ownsIntegrationLock($lock)
                     || ! $after['inspectable']
                     || ! $after['clean']
                     || ! is_string($headAfter)
@@ -371,9 +351,100 @@ final class TaskGitIntegrator
 
                 return $this->success($candidate, 'integrated', $headBefore, $headAfter, $headAfter, 'The Task candidate was serialized and integrated into the canonical repository.');
             });
+
+            return $result;
         } catch (LockTimeoutException) {
             return $this->failure($candidate, 'lock_timeout', null, null, [], 'AIOS could not acquire the canonical repository integration lock within the bounded wait window.');
         }
+    }
+
+    /**
+     * Validate external or persisted candidate evidence before it enters the canonical Git critical section.
+     *
+     * @param  array<string, mixed>  $candidate
+     * @return array{
+     *     base_sha: string,
+     *     candidate_sha: ?string,
+     *     candidate_ref: ?string,
+     *     candidate_diff_sha256: string,
+     *     changed_files: list<string>,
+     *     no_changes: bool
+     * }
+     */
+    private function validateCandidateEvidence(Task $task, TaskAttempt $attempt, array $candidate): array
+    {
+        $baseSha = $this->normalizeExactObjectId((string) $attempt->base_sha);
+        $candidateBase = $candidate['base_sha'] ?? null;
+        $candidateSha = $candidate['candidate_sha'] ?? null;
+        $candidateRef = $candidate['candidate_ref'] ?? null;
+        $diffIdentity = $candidate['candidate_diff_sha256'] ?? null;
+        $rawChangedFiles = $candidate['changed_files'] ?? null;
+        $noChanges = $candidate['no_changes'] ?? null;
+
+        if (
+            ! is_string($candidateBase)
+            || ! hash_equals($baseSha, $candidateBase)
+            || ! is_string($diffIdentity)
+            || preg_match('/\A[0-9a-f]{64}\z/', $diffIdentity) !== 1
+            || ! is_array($rawChangedFiles)
+            || ! is_bool($noChanges)
+        ) {
+            throw new RuntimeException('The Task candidate base does not match the persisted attempt base.');
+        }
+
+        $changedFiles = [];
+        foreach ($rawChangedFiles as $file) {
+            if (! is_string($file)) {
+                throw new RuntimeException('The Task candidate changed-file evidence is invalid.');
+            }
+
+            $changedFiles[] = $file;
+        }
+        $changedFiles = $this->normalizeFiles($changedFiles);
+
+        if ($candidateSha === null) {
+            if (
+                $noChanges !== true
+                || $candidateRef !== null
+                || $changedFiles !== []
+                || ! hash_equals(hash('sha256', ''), $diffIdentity)
+            ) {
+                throw new RuntimeException('The empty Task candidate evidence is inconsistent.');
+            }
+        } else {
+            if (! is_string($candidateSha)) {
+                throw new RuntimeException('AIOS Git integration requires an exact commit SHA.');
+            }
+
+            $candidateSha = $this->normalizeExactObjectId($candidateSha);
+
+            if (
+                $noChanges !== false
+                || ! is_string($candidateRef)
+                || $candidateRef !== $this->candidateRef($task, $attempt)
+            ) {
+                throw new RuntimeException('The Task candidate reference does not match the durable AIOS attempt identity.');
+            }
+        }
+
+        return [
+            'base_sha' => $baseSha,
+            'candidate_sha' => $candidateSha,
+            'candidate_ref' => is_string($candidateRef) ? $candidateRef : null,
+            'candidate_diff_sha256' => $diffIdentity,
+            'changed_files' => $changedFiles,
+            'no_changes' => $noChanges,
+        ];
+    }
+
+    /**
+     * Re-check live lock ownership at each Git mutation boundary without allowing static-analysis memoization.
+     *
+     * @phpstan-impure
+     */
+    private function ownsIntegrationLock(Lock $lock): bool
+    {
+        return $lock->isOwnedByCurrentProcess();
     }
 
     /**
@@ -449,6 +520,8 @@ final class TaskGitIntegrator
 
     /**
      * Find a previously integrated canonical commit for the exact durable Task attempt.
+     *
+     * @param  list<string>  $expectedFiles
      */
     private function findIntegratedCommit(
         string $repositoryPath,
@@ -598,8 +671,28 @@ final class TaskGitIntegrator
     /**
      * Return a normalized success integration result.
      *
-     * @param  array<string, mixed>  $candidate
-     * @return array<string, mixed>
+     * @param array{
+     *     base_sha: string,
+     *     candidate_sha: ?string,
+     *     candidate_ref: ?string,
+     *     candidate_diff_sha256: string,
+     *     changed_files: list<string>,
+     *     no_changes: bool
+     * } $candidate
+     * @return array{
+     *     passed: bool,
+     *     status: string,
+     *     base_sha: string,
+     *     candidate_sha: ?string,
+     *     candidate_ref: ?string,
+     *     candidate_diff_sha256: string,
+     *     changed_files: list<string>,
+     *     canonical_head_before: ?string,
+     *     canonical_head_after: ?string,
+     *     integrated_sha: ?string,
+     *     conflict_paths: list<string>,
+     *     summary: string
+     * }
      */
     private function success(
         array $candidate,
@@ -628,9 +721,29 @@ final class TaskGitIntegrator
     /**
      * Return a normalized failed integration result without mutating durable workflow state.
      *
-     * @param  array<string, mixed>  $candidate
+     * @param array{
+     *     base_sha: string,
+     *     candidate_sha: ?string,
+     *     candidate_ref: ?string,
+     *     candidate_diff_sha256: string,
+     *     changed_files: list<string>,
+     *     no_changes: bool
+     * } $candidate
      * @param  list<string>  $conflictPaths
-     * @return array<string, mixed>
+     * @return array{
+     *     passed: bool,
+     *     status: string,
+     *     base_sha: string,
+     *     candidate_sha: ?string,
+     *     candidate_ref: ?string,
+     *     candidate_diff_sha256: string,
+     *     changed_files: list<string>,
+     *     canonical_head_before: ?string,
+     *     canonical_head_after: ?string,
+     *     integrated_sha: ?string,
+     *     conflict_paths: list<string>,
+     *     summary: string
+     * }
      */
     private function failure(
         array $candidate,

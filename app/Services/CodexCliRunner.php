@@ -29,6 +29,7 @@ class CodexCliRunner
      * attributable Agent/harness/model configuration. P3-016 permits such a scoped, tested
      * exception rather than introducing a second authoritative budgeting/capability system here.
      *
+     * @param  array<string, mixed>  $executionSettings
      * @return array{exit_code: int, output: string, error_output: string}
      */
     public function run(
@@ -47,7 +48,12 @@ class CodexCliRunner
         );
     }
 
-    /** @return array{exit_code: int, output: string, error_output: string} */
+    /**
+     * Execute Codex for one bound Agent in the canonical project path.
+     *
+     * @param  array<string, mixed>  $executionSettings
+     * @return array{exit_code: int, output: string, error_output: string}
+     */
     public function runForAgent(
         Project $project,
         Agent $agent,
@@ -66,7 +72,12 @@ class CodexCliRunner
         );
     }
 
-    /** @return array{exit_code: int, output: string, error_output: string} */
+    /**
+     * Execute Codex in the exact AIOS-selected and already-validated workspace path.
+     *
+     * @param  array<string, mixed>  $executionSettings
+     * @return array{exit_code: int, output: string, error_output: string}
+     */
     public function runAtPath(
         string $path,
         string $prompt,
@@ -141,6 +152,8 @@ class CodexCliRunner
     }
 
     /**
+     * Build the constrained Codex CLI command for the supplied Agent and execution path.
+     *
      * AIOS's own path/workspace boundary (WorkspacePathResolver::assertProjectPath(), enforced by
      * every caller before this command is built) is the authoritative protection against Codex
      * escaping into the AIOS repository, its database, or its backups. `--approve-for-me` is
@@ -202,7 +215,11 @@ class CodexCliRunner
         return $this->environment->wrap($command);
     }
 
-    /** @param array<string, mixed> $executionSettings */
+    /**
+     * Resolve the bounded provider timeout from AIOS-owned execution settings.
+     *
+     * @param  array<string, mixed>  $executionSettings
+     */
     private function executionTimeout(array $executionSettings): int
     {
         $configured = $executionSettings['max_execution_seconds'] ?? null;
@@ -214,7 +231,11 @@ class CodexCliRunner
             : $globalMaximum;
     }
 
-    /** @return array{exit_code: int, output: string, error_output: string} */
+    /**
+     * Normalize one completed process result into the legacy runner result shape.
+     *
+     * @return array{exit_code: int, output: string, error_output: string}
+     */
     private function result(ProcessResult $result): array
     {
         return [
@@ -224,7 +245,11 @@ class CodexCliRunner
         ];
     }
 
-    /** @return array{exit_code: int, output: string, error_output: string} */
+    /**
+     * Build one deterministic failed runner result without provider output.
+     *
+     * @return array{exit_code: int, output: string, error_output: string}
+     */
     private function failure(int $exitCode, string $message): array
     {
         return [

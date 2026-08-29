@@ -254,6 +254,9 @@ class AgentContextAssembler
             ->values();
     }
 
+    /**
+     * Determine whether one Skill is permitted for the requested Agent role.
+     */
     private function skillAppliesToRole(Skill $skill, AgentRole $role): bool
     {
         $applicableRoles = $skill->getAttribute('applicable_roles');
@@ -295,9 +298,12 @@ class AgentContextAssembler
     }
 
     /**
+     * Build the deterministic provider-facing Agent context and hash.
+     *
      * @param  array<string, mixed>  $agentSnapshot
      * @param  list<array<string, mixed>>  $skillsSnapshot
      * @param  array<string, mixed>  $taskContext
+     * @param  array<string, mixed>  $executionSettings
      */
     private function build(
         int $contextSchemaVersion,
@@ -344,6 +350,9 @@ class AgentContextAssembler
         );
     }
 
+    /**
+     * Resolve the immutable AIOS system-rule text for one supported context schema version.
+     */
     private function systemRules(int $contextSchemaVersion): string
     {
         return match ($contextSchemaVersion) {
