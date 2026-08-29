@@ -2,7 +2,6 @@
 
 namespace App\Contracts\Context;
 
-use App\AgentRole;
 use App\Services\AssembledAgentContext;
 
 /**
@@ -16,7 +15,6 @@ final readonly class ContextPack
     public function __construct(
         public int $projectId,
         public int $agentId,
-        public AgentRole $role,
         public int $contextSchemaVersion,
         public string $hash,
         public array $sources,
@@ -82,7 +80,6 @@ final readonly class ContextPack
         return new self(
             projectId: $request->projectId,
             agentId: $request->agentId,
-            role: $request->role,
             contextSchemaVersion: $context->contextSchemaVersion,
             hash: $context->hash,
             sources: $sources,
@@ -114,7 +111,6 @@ final readonly class ContextPack
         return [
             'project_id' => $this->projectId,
             'agent_id' => $this->agentId,
-            'role' => $this->role->value,
             'context_schema_version' => $this->contextSchemaVersion,
             'context_hash' => $this->hash,
             'total_estimated_tokens' => $this->totalEstimatedTokens,

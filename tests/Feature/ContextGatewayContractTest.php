@@ -39,7 +39,6 @@ test('ContextGatewayContract ContextPack distinguishes required from reducible s
     $request = new ContextRequest(
         projectId: $project->id,
         agentId: $agent->id,
-        role: AgentRole::Coder,
         taskContext: $taskContext,
     );
 
@@ -48,7 +47,7 @@ test('ContextGatewayContract ContextPack distinguishes required from reducible s
 
     expect($pack->projectId)->toBe($project->id)
         ->and($pack->agentId)->toBe($agent->id)
-        ->and($pack->role)->toBe(AgentRole::Coder)
+        ->and($payload)->not->toHaveKey('role')
         ->and($pack->contextSchemaVersion)->toBe($assembled->contextSchemaVersion)
         ->and($pack->hash)->toBe($assembled->hash)
         ->and($payload['sources'])->not->toBeEmpty();
@@ -74,7 +73,7 @@ test('ContextGatewayContract ContextPack construction is deterministic for ident
     ]);
     $taskContext = ['objective' => 'Deterministic construction proof.'];
 
-    $request = new ContextRequest($project->id, $agent->id, AgentRole::Coder, $taskContext);
+    $request = new ContextRequest($project->id, $agent->id, $taskContext);
 
     $first = ContextPack::fromAssembledContext(
         $request,
@@ -115,13 +114,24 @@ test('ContextGatewayContract ContextBudgetResult wraps the existing deterministi
 
     expect($result->blocked)->toBe($decision->blocked)
         ->and($result->decision)->toBe($decision->evidence['decision'])
+        ->and($result->capacitySource)->toBe($decision->evidence['capacity_source'] ?? null)
+        ->and($result->capacitySourceVersion)->toBe($decision->evidence['capacity_source_version'] ?? null)
         ->and($result->capacityTokens)->toBe($decision->evidence['resolved_capacity_tokens'])
         ->and($result->targetTokens)->toBe($decision->evidence['budget_tokens'])
         ->and($result->warningTokens)->toBe($decision->evidence['warning_tokens'])
         ->and($result->hardCeilingTokens)->toBe($decision->evidence['hard_ceiling_tokens'])
+        ->and($result->requiredEstimatedTokens)->toBe($decision->evidence['required_estimated_tokens'])
+        ->and($result->originalEstimatedTokens)->toBe($decision->evidence['original_estimated_tokens'])
+        ->and($result->finalEstimatedTokens)->toBe($decision->evidence['final_estimated_tokens'])
+        ->and($result->sourceContributions)->toBe($decision->evidence['source_contributions'])
         ->and($result->includedSources)->toBe($decision->evidence['included_sources'])
         ->and($result->reducedSources)->toBe($decision->evidence['reduced_sources'])
         ->and($result->excludedSources)->toBe($decision->evidence['excluded_sources'])
+        ->and($result->reductions)->toBe($decision->evidence['reductions'])
+        ->and($result->reductionMethod)->toBe($decision->evidence['reduction_method'])
+        ->and($result->reductionReason)->toBe($decision->evidence['reduction_reason'] ?? null)
+        ->and($result->originalContextHash)->toBe($decision->evidence['original_context_hash'])
+        ->and($result->finalContextHash)->toBe($decision->evidence['final_context_hash'])
         ->and($result->toArray()['decision'])->toBe($decision->evidence['decision']);
 });
 
@@ -136,6 +146,7 @@ test('ContextGatewayContract contracts carry no Codex, Claude Code, or workflow-
             ->not->toContain('CodexHarness')
             ->not->toContain('ClaudeCodeHarness')
             ->not->toContain('AgentWorker')
-            ->not->toContain('WorkflowRole');
+            ->not->toContain('WorkflowRole')
+            ->not->toContain('AgentRole');
     }
 });
