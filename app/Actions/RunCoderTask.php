@@ -357,15 +357,6 @@ class RunCoderTask
             return null;
         }
 
-        $attempt = TaskAttempt::query()
-            ->whereKey($run->task_attempt_id)
-            ->whereBelongsTo($task)
-            ->first();
-
-        if ($attempt !== null) {
-            return $attempt;
-        }
-
         if ($run->attempt_number !== null) {
             return $task->attempts()
                 ->where('number', $run->attempt_number)

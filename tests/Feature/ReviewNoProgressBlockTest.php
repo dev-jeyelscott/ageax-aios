@@ -77,6 +77,53 @@ test('three unchanged reviewer rejections block a task with durable operator evi
         ]);
 });
 
+test('finalized reviewer decisions automatically block an unchanged rejection loop', function () {
+    $task = rejectedReviewLoopTask();
+    $workflow = app(TaskWorkflow::class);
+
+    foreach (range(1, 3) as $number) {
+        $workflow->transition($task->refresh(), TaskStatus::Coding);
+        $workflow->transition($task->refresh(), TaskStatus::ReadyForReview);
+        $workflow->transition($task->refresh(), TaskStatus::Reviewing);
+
+        $attempt = TaskAttempt::create([
+            'task_id' => $task->id,
+            'number' => $number,
+            'base_sha' => 'same-head',
+            'head_sha' => 'same-head',
+            'status' => 'completed',
+            'changed_files' => [],
+            'started_at' => now(),
+            'finished_at' => now(),
+        ]);
+
+        $workflow->finalizeReviewerDecision(
+            $task->refresh(),
+            $attempt,
+            ReviewStatus::ChangesRequired,
+            'Verification evidence is still missing.',
+            [[
+                'severity' => 'high',
+                'location' => 'tests/Feature/InventoryItemsTest.php',
+                'current_implementation' => 'No verification evidence is recorded.',
+                'expected_implementation' => 'Record the required verification evidence.',
+                'why_incorrect' => 'The acceptance criteria remain unproven.',
+                'required_fix' => 'Run and report the required checks.',
+                'verification_requirement' => 'Provide passing command output.',
+                'implementation_fix_context' => 'Use the task verification commands.',
+            ]],
+        );
+    }
+
+    expect($task->refresh()->status)->toBe(TaskStatus::Blocked)
+        ->and($task->auditEvents()->where('event_type', 'task.review_no_progress_blocked')->firstOrFail()->payload)
+        ->toMatchArray([
+            'threshold' => 3,
+            'attempt_numbers' => [1, 2, 3],
+            'head_sha' => 'same-head',
+        ]);
+});
+
 test('repository progress prevents the review loop guard from blocking a task', function () {
     $task = rejectedReviewLoopTask();
     addRejectedNoProgressReview($task, 1);

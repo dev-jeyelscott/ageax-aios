@@ -136,9 +136,7 @@ class ClaudeCodeCliRunner
             while ($process->running()) {
                 if (now()->gte($nextHeartbeatAt)) {
                     if ($onHeartbeat() === false) {
-                        if (method_exists($process, 'stop')) {
-                            $process->stop(1);
-                        }
+                        $process->stop(1);
 
                         return $this->failure(
                             125,

@@ -17,6 +17,7 @@ use App\ProjectStatus;
 use App\ReviewStatus;
 use App\TaskStatus;
 use App\WorkerLease;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Facades\DB;
 
@@ -115,7 +116,9 @@ class TaskWorkflow
                 }
             }
 
-            if ($worker->lease_expires_at === null || ! $worker->lease_expires_at->isFuture()) {
+            $leaseExpiresAt = $worker->getAttribute('lease_expires_at');
+
+            if (! $leaseExpiresAt instanceof CarbonImmutable || ! $leaseExpiresAt->isFuture()) {
                 return null;
             }
 
