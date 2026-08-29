@@ -17,10 +17,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
-#[Fillable(['project_id', 'knowledge_improvement_candidate_id', 'phase_id', 'key', 'position', 'title', 'objective', 'work_type', 'complexity', 'acceptance_criteria', 'scope', 'constraints', 'relevant_paths', 'verification_commands', 'implementation_prompt', 'context_capsule', 'stewardship_provenance', 'status', 'is_cleared', 'claimed_at', 'completed_at'])]
+#[Fillable(['project_id', 'knowledge_improvement_candidate_id', 'phase_id', 'coder_worker_id', 'coder_worker_lease_id', 'key', 'position', 'title', 'objective', 'work_type', 'complexity', 'acceptance_criteria', 'scope', 'constraints', 'relevant_paths', 'verification_commands', 'implementation_prompt', 'context_capsule', 'stewardship_provenance', 'status', 'is_cleared', 'claimed_at', 'completed_at'])]
 /**
  * @property TaskStatus $status
  * @property bool $is_cleared
+ * @property ?int $coder_worker_id
+ * @property ?string $coder_worker_lease_id
  * @property ?TaskWorkType $work_type
  * @property ?TaskComplexity $complexity
  * @property array<int, string> $acceptance_criteria
@@ -78,6 +80,16 @@ class Task extends Model
     public function phase(): BelongsTo
     {
         return $this->belongsTo(Phase::class);
+    }
+
+    /**
+     * Return the Coder worker that currently owns this Task while it is coding or validating.
+     *
+     * @return BelongsTo<AgentWorker, $this>
+     */
+    public function coderWorker(): BelongsTo
+    {
+        return $this->belongsTo(AgentWorker::class, 'coder_worker_id');
     }
 
     /**

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\AgentRole;
 use App\Exceptions\InvalidTaskTransition;
+use App\Models\AgentWorker;
 use App\Models\AuditEvent;
 use App\Models\Phase;
 use App\Models\Project;
@@ -11,20 +12,29 @@ use App\Models\Review;
 use App\Models\ReviewFinding;
 use App\Models\Task;
 use App\Models\TaskAttempt;
+use App\ParallelTaskSafety;
 use App\ProjectStatus;
 use App\ReviewStatus;
 use App\TaskStatus;
+use App\WorkerLease;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Facades\DB;
 
 class TaskWorkflow
 {
     /**
-     * Create the workflow service with its durable collaborators and repository guards.
+     * Create the workflow service with its durable collaborators, repository guards, and deterministic parallel-safety evaluator.
      */
-    public function __construct(private AuditLogger $audit, private ObsidianProjectNotes $notes, private CoderRepositoryGuard $repositoryGuard, private NoProgressRetryGuard $noProgress) {}
+    public function __construct(
+        private AuditLogger $audit,
+        private ObsidianProjectNotes $notes,
+        private CoderRepositoryGuard $repositoryGuard,
+        private NoProgressRetryGuard $noProgress,
+        private ParallelTaskSafetyEvaluator $parallelSafety,
+    ) {}
 
     /**
-     * Claim the next eligible Task for the requested Agent role.
+     * Claim the next eligible Task for the requested Agent role using the existing serial workflow path.
      */
     public function claim(Project $project, AgentRole $role): ?Task
     {
@@ -52,6 +62,81 @@ class TaskWorkflow
             $status = $role === AgentRole::Coder ? TaskStatus::Coding : TaskStatus::Reviewing;
             $this->transitionLocked($task, $status);
             $this->audit->record('task.claimed', ['role' => $role->value], $lockedProject, $task);
+
+            return $task->refresh();
+        }, attempts: 3);
+
+        $this->notes->writeState($project);
+
+        return $task;
+    }
+
+    /**
+     * Claim one independent Coder Task for an exact live worker lease while serializing admission through the Project row lock.
+     */
+    public function claimConcurrentCoder(Project $project, WorkerLease $lease): ?Task
+    {
+        $task = DB::transaction(function () use ($project, $lease): ?Task {
+            $lockedProject = Project::query()->lockForUpdate()->findOrFail($project->id);
+
+            if (ProjectStatus::from($lockedProject->getRawOriginal('status')) !== ProjectStatus::Running) {
+                return null;
+            }
+
+            $worker = $this->lockedCoderWorkerForLease($lockedProject, $lease);
+
+            if ($worker === null || $this->workerHasActiveCoderClaim($lockedProject, $worker)) {
+                return null;
+            }
+
+            $task = $this->nextCoderTask($lockedProject);
+
+            if ($task === null) {
+                return null;
+            }
+
+            $activeTasks = $this->activeCoderTasks($lockedProject);
+
+            foreach ($activeTasks as $activeTask) {
+                if (! $this->hasDurableLiveCoderClaimOwner($lockedProject, $activeTask)) {
+                    return null;
+                }
+            }
+
+            if (! $this->repositoryAllowsCoderClaim($lockedProject, $task)) {
+                return null;
+            }
+
+            foreach ($activeTasks as $activeTask) {
+                $assessment = $this->parallelSafety->evaluate($task, $activeTask);
+
+                if ($assessment['decision'] !== ParallelTaskSafety::Safe) {
+                    return null;
+                }
+            }
+
+            if ($worker->lease_expires_at === null || ! $worker->lease_expires_at->isFuture()) {
+                return null;
+            }
+
+            $task->forceFill([
+                'coder_worker_id' => $worker->id,
+                'coder_worker_lease_id' => $lease->leaseId,
+            ])->save();
+
+            $this->transitionLocked($task, TaskStatus::Coding);
+            $this->audit->record('task.claimed', [
+                'role' => AgentRole::Coder->value,
+                'agent_worker_id' => $worker->id,
+                'slot' => (int) $worker->slot,
+                'worker_instance_id' => $lease->workerInstanceId,
+                'lease_id' => $lease->leaseId,
+                'concurrent_claim' => true,
+                'active_task_ids' => $activeTasks
+                    ->pluck('id')
+                    ->map(fn ($id): int => (int) $id)
+                    ->all(),
+            ], $lockedProject, $task);
 
             return $task->refresh();
         }, attempts: 3);
@@ -403,6 +488,78 @@ class TaskWorkflow
         $this->audit->record('task.approved', ['attempt_number' => $attempt?->number], $completedTask->project, $completedTask);
 
         return $completedTask;
+    }
+
+    /**
+     * Resolve the exact live Coder worker lease that is requesting concurrent admission.
+     */
+    private function lockedCoderWorkerForLease(Project $project, WorkerLease $lease): ?AgentWorker
+    {
+        return AgentWorker::query()
+            ->whereKey($lease->workerId)
+            ->whereBelongsTo($project)
+            ->where('role', AgentRole::Coder)
+            ->where('worker_instance_id', $lease->workerInstanceId)
+            ->where('lease_id', $lease->leaseId)
+            ->where('lease_expires_at', '>=', now())
+            ->lockForUpdate()
+            ->first();
+    }
+
+    /**
+     * Prevent one Coder slot from owning more than one active implementation Task at a time.
+     */
+    private function workerHasActiveCoderClaim(Project $project, AgentWorker $worker): bool
+    {
+        return Task::query()
+            ->whereBelongsTo($project)
+            ->notCleared()
+            ->where('coder_worker_id', $worker->id)
+            ->whereIn('status', [
+                TaskStatus::Coding,
+                TaskStatus::Validating,
+            ])
+            ->exists();
+    }
+
+    /**
+     * Return all currently active Coder Tasks while the Project admission lock is held.
+     *
+     * @return EloquentCollection<int, Task>
+     */
+    private function activeCoderTasks(Project $project): EloquentCollection
+    {
+        return Task::query()
+            ->whereBelongsTo($project)
+            ->notCleared()
+            ->whereIn('status', [
+                TaskStatus::Coding,
+                TaskStatus::Validating,
+            ])
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+    }
+
+    /**
+     * Require every active Coder Task to have exact durable ownership tied to a still-live worker lease.
+     */
+    private function hasDurableLiveCoderClaimOwner(Project $project, Task $task): bool
+    {
+        $workerId = $task->getAttribute('coder_worker_id');
+        $leaseId = $task->getAttribute('coder_worker_lease_id');
+
+        if (! is_int($workerId) || ! is_string($leaseId) || $leaseId === '') {
+            return false;
+        }
+
+        return AgentWorker::query()
+            ->whereKey($workerId)
+            ->whereBelongsTo($project)
+            ->where('role', AgentRole::Coder)
+            ->where('lease_id', $leaseId)
+            ->where('lease_expires_at', '>=', now())
+            ->exists();
     }
 
     /**
