@@ -67,6 +67,14 @@ type AgentRun = {
     status: string;
     attempt_number: number | null;
     token_usage: number | null;
+    token_breakdown: {
+        input_tokens: number;
+        input_includes_cached_tokens: boolean;
+        cache_creation_input_tokens: number;
+        cache_read_input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+    } | null;
     exit_code: number | null;
     started_at: string;
     finished_at: string | null;
@@ -1816,6 +1824,44 @@ function RecentActivityPanel({ project }: { project: Project }) {
                                                 </time>
                                             </div>
 
+                                            {run.token_breakdown && (
+                                                <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                                                    <TokenBreakdownMetric
+                                                        label={
+                                                            run.token_breakdown
+                                                                .input_includes_cached_tokens
+                                                                ? 'Input (incl. cache)'
+                                                                : 'Input'
+                                                        }
+                                                        tokens={
+                                                            run.token_breakdown
+                                                                .input_tokens
+                                                        }
+                                                    />
+                                                    <TokenBreakdownMetric
+                                                        label="Cache create"
+                                                        tokens={
+                                                            run.token_breakdown
+                                                                .cache_creation_input_tokens
+                                                        }
+                                                    />
+                                                    <TokenBreakdownMetric
+                                                        label="Cache read"
+                                                        tokens={
+                                                            run.token_breakdown
+                                                                .cache_read_input_tokens
+                                                        }
+                                                    />
+                                                    <TokenBreakdownMetric
+                                                        label="Output"
+                                                        tokens={
+                                                            run.token_breakdown
+                                                                .output_tokens
+                                                        }
+                                                    />
+                                                </div>
+                                            )}
+
                                             {run.failure_reason && (
                                                 <div className="mt-2 rounded-lg border border-destructive/20 bg-destructive/5 px-2.5 py-2 text-xs text-destructive-foreground">
                                                     {run.failure_reason}
@@ -1953,6 +1999,25 @@ function RecentActivityPanel({ project }: { project: Project }) {
                     </div>
                 </section>
             </div>
+        </div>
+    );
+}
+
+function TokenBreakdownMetric({
+    label,
+    tokens,
+}: {
+    label: string;
+    tokens: number;
+}) {
+    return (
+        <div className="rounded-md border border-border-subtle bg-foreground/2 px-2 py-1.5">
+            <p className="font-mono text-2xs tracking-[0.08em] text-muted-foreground uppercase">
+                {label}
+            </p>
+            <p className="mt-0.5 font-mono text-xs font-medium text-foreground">
+                {formatTokens(tokens)}
+            </p>
         </div>
     );
 }

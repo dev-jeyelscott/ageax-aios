@@ -218,6 +218,7 @@ class ProjectController extends Controller
                 'status',
                 'attempt_number',
                 'token_usage',
+                'result',
                 'exit_code',
                 'live_output',
                 'log_path',
@@ -230,6 +231,9 @@ class ProjectController extends Controller
 
         $recentRuns->each(
             function (AgentRun $run) use ($runs): void {
+                $result = $run->getAttribute('result');
+                $tokenUsage = is_array($result) ? $result['token_usage'] ?? null : null;
+
                 $run->setAttribute(
                     'failure_reason',
                     $run->getRawOriginal('status')
@@ -237,9 +241,14 @@ class ProjectController extends Controller
                         ? $runs->failureReason($run)
                         : null,
                 );
+                $run->setAttribute(
+                    'token_breakdown',
+                    $this->tokenBreakdown($tokenUsage),
+                );
                 $run->makeHidden([
                     'live_output',
                     'log_path',
+                    'result',
                 ]);
             },
         );
@@ -250,6 +259,35 @@ class ProjectController extends Controller
         );
 
         return $project;
+    }
+
+    /**
+     * @return array{input_tokens: int, input_includes_cached_tokens: bool, cache_creation_input_tokens: int, cache_read_input_tokens: int, output_tokens: int, total_tokens: int}|null
+     */
+    private function tokenBreakdown(mixed $tokenUsage): ?array
+    {
+        if (! is_array($tokenUsage) || ($tokenUsage['status'] ?? null) !== 'complete') {
+            return null;
+        }
+
+        $inputTokens = $tokenUsage['input_tokens'] ?? null;
+        $cacheCreationTokens = $tokenUsage['cache_creation_input_tokens'] ?? null;
+        $cacheReadTokens = $tokenUsage['cache_read_input_tokens'] ?? null;
+        $outputTokens = $tokenUsage['output_tokens'] ?? null;
+        $totalTokens = $tokenUsage['canonical_total_tokens'] ?? null;
+
+        if (! is_int($inputTokens) || ! is_int($cacheCreationTokens) || ! is_int($cacheReadTokens) || ! is_int($outputTokens) || ! is_int($totalTokens)) {
+            return null;
+        }
+
+        return [
+            'input_tokens' => $inputTokens,
+            'input_includes_cached_tokens' => ($tokenUsage['canonical_total_method'] ?? null) === 'input_includes_cached_tokens_plus_output',
+            'cache_creation_input_tokens' => $cacheCreationTokens,
+            'cache_read_input_tokens' => $cacheReadTokens,
+            'output_tokens' => $outputTokens,
+            'total_tokens' => $totalTokens,
+        ];
     }
 
     /**

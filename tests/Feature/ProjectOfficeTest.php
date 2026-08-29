@@ -277,7 +277,13 @@ test('normalized claude usage is persisted and aggregated by harness', function 
             ->component('projects/show')
             ->where('project.token_usage_total', 130)
             ->where('project.harness_usage.claude_code.run_count', 1)
-            ->where('project.harness_usage.claude_code.token_usage', 130));
+            ->where('project.harness_usage.claude_code.token_usage', 130)
+            ->where('project.recent_agent_runs.0.token_breakdown.input_tokens', 100)
+            ->where('project.recent_agent_runs.0.token_breakdown.input_includes_cached_tokens', false)
+            ->where('project.recent_agent_runs.0.token_breakdown.cache_creation_input_tokens', 0)
+            ->where('project.recent_agent_runs.0.token_breakdown.cache_read_input_tokens', 0)
+            ->where('project.recent_agent_runs.0.token_breakdown.output_tokens', 30)
+            ->where('project.recent_agent_runs.0.token_breakdown.total_tokens', 130));
 });
 
 test('incomplete harness telemetry is unavailable rather than treated as zero usage', function () {
