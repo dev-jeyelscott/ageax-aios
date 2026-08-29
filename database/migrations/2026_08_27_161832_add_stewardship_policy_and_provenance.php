@@ -16,7 +16,7 @@ return new class extends Migration
         });
 
         Schema::table('knowledge_improvement_candidates', function (Blueprint $table): void {
-            $table->foreignId('source_reconciliation_run_id')->nullable()->after('project_id')->constrained('project_reconciliation_runs')->nullOnDelete();
+            $table->foreignId('source_reconciliation_run_id')->nullable()->after('project_id');
         });
 
         Schema::table('tasks', function (Blueprint $table): void {
