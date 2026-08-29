@@ -562,7 +562,7 @@ class RunCoderTask
         array $contractEvidence,
         bool $recovered = false,
     ): TaskAttempt {
-        $passed = ($integration['passed'] ?? false) === true;
+        $passed = $integration['passed'] === true;
         $changedFiles = $candidate['changed_files'];
         $headAfter = is_string($integration['canonical_head_after'] ?? null)
             ? $integration['canonical_head_after']
@@ -580,7 +580,7 @@ class RunCoderTask
             'candidate_ref' => $candidate['candidate_ref'],
             'candidate_diff_sha256' => $candidate['candidate_diff_sha256'],
             'files' => $changedFiles,
-            'summary' => ($candidate['no_changes'] ?? false) === true
+            'summary' => $candidate['no_changes'] === true
                 ? 'The isolated Task worktree produced no candidate changes.'
                 : 'AIOS created and verified a durable Task-only candidate commit.',
         ];
@@ -589,17 +589,17 @@ class RunCoderTask
             'passed' => $passed,
             'verification_identifier' => 'AIOS serialized canonical Git integration',
             'exit_code' => $passed ? 0 : 1,
-            'status' => $integration['status'] ?? 'unknown',
-            'base_sha' => $integration['base_sha'] ?? $attempt->base_sha,
+            'status' => $integration['status'],
+            'base_sha' => $integration['base_sha'],
             'candidate_sha' => $integration['candidate_sha'] ?? null,
             'candidate_ref' => $integration['candidate_ref'] ?? null,
-            'candidate_diff_sha256' => $integration['candidate_diff_sha256'] ?? null,
+            'candidate_diff_sha256' => $integration['candidate_diff_sha256'],
             'canonical_head_before' => $integration['canonical_head_before'] ?? null,
             'canonical_head_after' => $headAfter,
             'integrated_sha' => $commitSha,
             'conflict_paths' => $integration['conflict_paths'],
             'files' => $changedFiles,
-            'summary' => (string) ($integration['summary'] ?? 'AIOS could not verify canonical integration.'),
+            'summary' => $integration['summary'],
         ];
         $validation = $attempt->getAttribute('validation_results');
         $validation = is_array($validation) ? $validation : [];
@@ -672,7 +672,7 @@ class RunCoderTask
             $this->audit->record('task.git_integration_recovered', [
                 'attempt_number' => $attempt->number,
                 'candidate_sha' => $candidate['candidate_sha'],
-                'integration_status' => $integration['status'] ?? null,
+                'integration_status' => $integration['status'],
                 'integrated_sha' => $passed ? $commitSha : null,
             ], $task->project, $task);
         }

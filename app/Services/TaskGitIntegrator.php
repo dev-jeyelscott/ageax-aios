@@ -224,6 +224,12 @@ final class TaskGitIntegrator
             self::IntegrationLockSeconds,
         );
 
+        if (! $lock instanceof Lock) {
+            throw new RuntimeException(
+                'The configured AIOS database cache lock does not expose the ownership semantics required for Git integration.',
+            );
+        }
+
         try {
             /** @var array{
              *     passed: bool,
