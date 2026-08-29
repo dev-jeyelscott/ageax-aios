@@ -37,6 +37,7 @@ final readonly class ContextBudgetedAgentHarness
      * Select handoffs, budget the final context, consume delivered evidence, then dispatch the provider.
      *
      * @param  Closure(string, ?Closure, ?Closure, array<string, mixed>): NormalizedExecutionResult  $provider
+     * @param  array<string, mixed>  $executionSettings
      */
     public function execute(
         AgentHarness $harness,
