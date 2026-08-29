@@ -76,6 +76,7 @@ final class KnowledgeArchitectTestHarness implements AgentHarness
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         array $executionSettings = [],
+        ?string $executionPath = null,
     ): NormalizedExecutionResult {
         $this->paths[] = $project->path;
         $this->prompts[] = $prompt;
