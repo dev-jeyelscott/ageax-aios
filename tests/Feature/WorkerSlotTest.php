@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\BindAgentWorker;
+use App\Actions\RunCoderTask;
 use App\AgentHarness;
 use App\AgentRole;
 use App\AgentRunStatus;
@@ -16,6 +17,7 @@ use App\Services\WorkerHeartbeat;
 use App\TaskStatus;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Artisan;
+use Mockery\MockInterface;
 
 /**
  * Create a project fixture for worker-slot regression coverage.
@@ -347,4 +349,101 @@ test('normal worker command remains pinned to slot one by default', function () 
         ->toBeNull()
         ->and($slotTwo->lease_id)
         ->toBeNull();
+});
+
+test('worker command prints the Agent bound to the exact leased Coder slot', function () {
+    $project = p10003Project('Exact Coder Agent observability');
+
+    $slotOneAgent = Agent::factory()
+        ->for($project)
+        ->create([
+            'name' => 'Coder Alpha',
+            'role' => AgentRole::Coder,
+            'harness' => AgentHarness::Codex,
+            'enabled' => true,
+        ]);
+
+    $slotTwoAgent = Agent::factory()
+        ->for($project)
+        ->create([
+            'name' => 'Coder Beta',
+            'role' => AgentRole::Coder,
+            'harness' => AgentHarness::Codex,
+            'enabled' => true,
+        ]);
+
+    p10003Worker(
+        $project,
+        AgentRole::Coder,
+        1,
+        $slotOneAgent->id,
+    );
+
+    p10003Worker(
+        $project,
+        AgentRole::Coder,
+        2,
+        $slotTwoAgent->id,
+    );
+
+    p10003Task(
+        $project,
+        'TASK-AGENT-OUTPUT',
+        1,
+        TaskStatus::Coding,
+    );
+
+    $this->mock(
+        RunCoderTask::class,
+        function (MockInterface $mock): void {
+            $mock->shouldReceive('handle')
+                ->once()
+                ->andReturn(new TaskAttempt);
+        },
+    );
+
+    expect(
+        Artisan::call('aios:work', ['--once' => true]),
+    )->toBe(0);
+
+    expect(Artisan::output())
+        ->toContain(
+            'Processing TASK-AGENT-OUTPUT for coder [agent: Coder Alpha].',
+        )
+        ->not->toContain('Coder Beta');
+});
+
+test('worker command keeps Coder Agent observability non fatal when the Agent is unavailable', function () {
+    $project = p10003Project('Unavailable Coder Agent observability');
+
+    p10003Worker(
+        $project,
+        AgentRole::Coder,
+        1,
+    );
+
+    p10003Task(
+        $project,
+        'TASK-MISSING-AGENT',
+        1,
+        TaskStatus::Coding,
+    );
+
+    $this->mock(
+        RunCoderTask::class,
+        function (MockInterface $mock): void {
+            $mock->shouldReceive('handle')
+                ->once()
+                ->andReturn(new TaskAttempt);
+        },
+    );
+
+    expect(
+        Artisan::call('aios:work', ['--once' => true]),
+    )->toBe(0);
+
+    expect(Artisan::output())
+        ->toContain(
+            'Processing TASK-MISSING-AGENT for coder [agent: unavailable].',
+        );
 });

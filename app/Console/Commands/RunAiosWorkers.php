@@ -12,6 +12,7 @@ use App\Actions\RunTaskPlanningRevision;
 use App\Actions\RunTicketTriage;
 use App\Actions\SetProjectStatus;
 use App\AgentRole;
+use App\Models\Agent;
 use App\Models\AgentWorker;
 use App\Models\Project;
 use App\Models\Roadmap;
@@ -222,9 +223,18 @@ class RunAiosWorkers extends Command
                     $task ??= $claimTask->handle($project, $role);
 
                     if ($task !== null) {
-                        $this->info(
-                            "Processing {$task->key} for {$role->value}.",
-                        );
+                        if ($role === AgentRole::Coder) {
+                            $agentName = $this->coderAgentName($lease)
+                                ?? 'unavailable';
+
+                            $this->info(
+                                "Processing {$task->key} for {$role->value} [agent: {$agentName}].",
+                            );
+                        } else {
+                            $this->info(
+                                "Processing {$task->key} for {$role->value}.",
+                            );
+                        }
 
                         try {
                             if ($role === AgentRole::Coder) {
@@ -411,6 +421,33 @@ class RunAiosWorkers extends Command
             && $taskCompletedAt
                 ->addSeconds($cooldownSeconds)
                 ->isFuture();
+    }
+
+    /**
+     * Resolve the human-readable Agent name from the exact currently owned Coder worker lease.
+     */
+    private function coderAgentName(WorkerLease $lease): ?string
+    {
+        try {
+            $worker = AgentWorker::query()
+                ->with('agent:id,name')
+                ->whereKey($lease->workerId)
+                ->where('role', AgentRole::Coder)
+                ->where('worker_instance_id', $lease->workerInstanceId)
+                ->where('lease_id', $lease->leaseId)
+                ->first();
+
+            $agent = $worker?->getRelation('agent');
+            $name = $agent instanceof Agent
+                ? $agent->getAttribute('name')
+                : null;
+
+            return is_string($name) && trim($name) !== ''
+                ? $name
+                : null;
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     /**
