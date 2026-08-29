@@ -31,11 +31,17 @@ final readonly class CodexHarness implements AgentHarness
         private ContextBudgetedAgentHarness $contextBudget,
     ) {}
 
+    /**
+     * Return the Codex harness identifier used by persisted Agent configuration.
+     */
     public function identifier(): AgentHarnessIdentifier
     {
         return AgentHarnessIdentifier::Codex;
     }
 
+    /**
+     * Return the approved Codex model, reasoning, execution, and capacity contract.
+     */
     public function capabilities(): HarnessCapabilities
     {
         return new HarnessCapabilities(
@@ -72,6 +78,13 @@ final readonly class CodexHarness implements AgentHarness
         );
     }
 
+    /**
+     * Apply AIOS Context Budget policy, then execute Codex at the exact AIOS-selected workspace when supplied.
+     *
+     * @param  (Closure(string, string): void)|null  $onOutput
+     * @param  (Closure(): mixed)|null  $onHeartbeat
+     * @param  array<string, mixed>  $executionSettings
+     */
     public function execute(
         Project $project,
         Agent $agent,
@@ -79,6 +92,7 @@ final readonly class CodexHarness implements AgentHarness
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         array $executionSettings = [],
+        ?string $executionPath = null,
     ): NormalizedExecutionResult {
         $this->capabilities()->assertSupports(
             $agent,
@@ -102,6 +116,7 @@ final readonly class CodexHarness implements AgentHarness
                 $outputCallback,
                 $heartbeatCallback,
                 $approvedExecutionSettings,
+                $executionPath,
             ),
             $onOutput,
             $onHeartbeat,
@@ -109,6 +124,13 @@ final readonly class CodexHarness implements AgentHarness
         );
     }
 
+    /**
+     * Dispatch the budget-approved prompt to the Codex runner without allowing the provider to choose its workspace.
+     *
+     * @param  (Closure(string, string): void)|null  $onOutput
+     * @param  (Closure(): mixed)|null  $onHeartbeat
+     * @param  array<string, mixed>  $executionSettings
+     */
     private function executeProvider(
         Project $project,
         Agent $agent,
@@ -116,15 +138,25 @@ final readonly class CodexHarness implements AgentHarness
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         array $executionSettings = [],
+        ?string $executionPath = null,
     ): NormalizedExecutionResult {
-        $result = $this->runner->runForAgent(
-            $project,
-            $agent,
-            $prompt,
-            $onOutput,
-            $onHeartbeat,
-            $executionSettings,
-        );
+        $result = $executionPath === null
+            ? $this->runner->runForAgent(
+                $project,
+                $agent,
+                $prompt,
+                $onOutput,
+                $onHeartbeat,
+                $executionSettings,
+            )
+            : $this->runner->runAtPath(
+                $executionPath,
+                $prompt,
+                $onOutput,
+                $onHeartbeat,
+                $agent,
+                $executionSettings,
+            );
 
         return new NormalizedExecutionResult(
             exitCode: $result['exit_code'],

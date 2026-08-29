@@ -29,9 +29,11 @@ use App\Services\StaleWorkerRecovery;
 use App\Services\TaskCommitter;
 use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskContractGuard;
+use App\Services\TaskGitIntegrator;
 use App\Services\TaskPlanningDefectPreflight;
 use App\Services\TaskPlanningEscalationWorkflow;
 use App\Services\TaskWorkflow;
+use App\Services\TaskWorktreeManager;
 use App\Services\WorkerHeartbeat;
 use App\Services\WorkflowBoundaryHandoffRecorder;
 use App\Services\WorkspacePathResolver;
@@ -43,7 +45,7 @@ use Throwable;
 class RunCoderTask
 {
     /**
-     * Inject the existing Coder execution, validation, Git, workflow, and handoff boundaries.
+     * Inject the existing Coder execution, validation, Git, workflow, handoff, and Task-worktree boundaries.
      */
     public function __construct(
         private CodexCliRunner $runner,
@@ -68,10 +70,12 @@ class RunCoderTask
         private ExecutionBudgetPolicy $executionBudget,
         private WorkflowBoundaryHandoffRecorder $boundaryHandoffs,
         private StaleWorkerRecovery $staleRecovery,
+        private TaskWorktreeManager $worktrees,
+        private TaskGitIntegrator $gitIntegration,
     ) {}
 
     /**
-     * Execute one claimed Coder task through AIOS-owned validation, commit, and review readiness.
+     * Execute one claimed Coder task through an AIOS-owned attempt workspace and serialized repository integration.
      */
     public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
     {
@@ -84,11 +88,25 @@ class RunCoderTask
             return $this->blockUnsafeProjectPath($task, $exception);
         }
 
+        $recoveredFinalization = $this->recoverDurableGitFinalization($task, $lease);
+
+        if ($recoveredFinalization !== null) {
+            return $recoveredFinalization;
+        }
+
         if ($this->staleRecovery->recoverAbandonedCoderFinalization($task)) {
-            return $task->attempts()
+            $interruptedAttempt = $task->attempts()
                 ->where('status', 'interrupted')
                 ->latest('number')
                 ->firstOrFail();
+
+            try {
+                $this->worktrees->release($task, $interruptedAttempt);
+            } catch (Throwable $throwable) {
+                report($throwable);
+            }
+
+            return $interruptedAttempt;
         }
 
         $activeAttempt = $this->activeCoderAttempt($task);
@@ -118,10 +136,8 @@ class RunCoderTask
             $contract = $this->contracts->evaluate($task, $context, $preflight['recovery_attempt']);
         } catch (Throwable $throwable) {
             // Preflight/capsule/contract evaluation runs inside the persistent aios:work loop
-            // (App\Console\Commands\RunAiosWorkers) before any harness call. An uncaught
-            // exception here previously escaped this Action entirely and killed the worker
-            // process for every project (see the TaskContractGuard regex-delimiter incident).
-            // Fail this attempt the same way other pre-execution blocks do instead of throwing.
+            // before any harness call. Fail durably instead of allowing one setup exception to
+            // terminate the worker process for every project.
             return $this->blockUnexpectedFailure($task, $throwable);
         }
 
@@ -143,9 +159,9 @@ class RunCoderTask
         $assembled = $assembled?->withExecutionSettings($executionSettings);
 
         $recoveryInstruction = $preflight['mode'] === 'recovery'
-            ? 'AIOS has verified that the current working-tree changes are task-owned recovery state tied to the supplied prior attempt. Inspect and continue from them; do not stop solely because the worktree is dirty. Do not stage or commit; AIOS independently validates and commits only verified task files. '
+            ? 'AIOS has verified that the current working-tree changes are task-owned recovery state tied to the supplied prior attempt. Inspect and continue from them; do not stop solely because the working tree is dirty. Do not stage or commit; AIOS independently validates and commits only verified task files. '
             : '';
-        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and the task's relevant documentation first. Start with the supplied relevant paths and verification commands; do not scan unrelated areas, run broad test suites, or refactor speculatively unless the task evidence requires it. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Do not run git add, git commit, git reset, git stash, git checkout, git switch, git merge, git rebase, git cherry-pick, git clean, or any other Git mutation. AIOS independently validates and commits only verified task files. {$recoveryInstruction}Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
+        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and the task's relevant documentation first. Start with the supplied relevant paths and verification commands; do not scan unrelated areas, run broad test suites, or refactor speculatively unless the task evidence requires it. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Do not run git add, git commit, git reset, git stash, git checkout, git switch, git merge, git rebase, git cherry-pick, git clean, git worktree, or any other Git mutation. AIOS independently validates and commits only verified task files. {$recoveryInstruction}Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
         $attempt = TaskAttempt::create([
             'task_id' => $task->id,
             'number' => $task->attempts()->max('number') + 1,
@@ -162,9 +178,18 @@ class RunCoderTask
             'started_at' => now(),
         ]);
         $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt, $lease, $context['retrieval_manifest'], $agent, $assembled);
+        $worktreePath = null;
 
         try {
             $this->databaseProtection->guard($task->project);
+
+            // Preserve the pre-P10 dirty-recovery contract only for already-existing task-owned
+            // recovery state. Every normal P10 attempt executes in its own AIOS-selected worktree.
+            $legacyRecovery = $preflight['mode'] === 'recovery';
+            $executionPath = $legacyRecovery
+                ? $projectPath
+                : $worktreePath = $this->worktrees->acquire($task, $attempt);
+
             $onOutput = function (string $type, string $output) use ($run, $task, $lease): void {
                 $this->runs->appendLiveOutput($run, $type, $output);
                 if ($lease === null) {
@@ -173,8 +198,8 @@ class RunCoderTask
             };
             $onHeartbeat = $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease);
             $execution = $harness !== null && $agent !== null
-                ? $harness->execute($task->project, $agent, $prompt, $onOutput, $onHeartbeat, $executionSettings)->toArray()
-                : $this->runner->run($task->project, $prompt, $onOutput, $onHeartbeat, $executionSettings);
+                ? $harness->execute($task->project, $agent, $prompt, $onOutput, $onHeartbeat, $executionSettings, $executionPath)->toArray()
+                : $this->runner->runAtPath($executionPath, $prompt, $onOutput, $onHeartbeat, executionSettings: $executionSettings);
             $this->runs->complete($run, $execution);
 
             if ($execution['exit_code'] === 0) {
@@ -202,123 +227,86 @@ class RunCoderTask
                 return $attempt->refresh();
             }
 
-            $managedProcesses = [];
-            // AIOS no longer re-validates a Coder attempt with its own subprocess gate (secret
-            // scan, forbidden-file check, git diff --check, re-run verification commands): a
-            // successful Coder execution proceeds directly to Review, which independently judges
-            // the change. A non-zero Coder exit code still fails the attempt outright.
-            $validation = $execution['exit_code'] === 0
-                ? ['passed' => true, 'checks' => [], 'evidence' => []]
-                : ['passed' => false, 'checks' => ['codex_execution' => false]];
-            if ($renewLease !== null) {
-                $renewLease();
-            }
-            $changedFiles = $this->git->changedFilesFromBase($projectPath, $baseSha);
-            $headUnchanged = $this->git->baseMatchesCurrentHead($projectPath, $baseSha);
-            $validation['checks']['git_change_set'] = $changedFiles !== null;
-            $validation['checks']['git_head_unchanged'] = $headUnchanged;
-            $validation['evidence'] = is_array($validation['evidence'] ?? null) ? $validation['evidence'] : [];
-            $validation['evidence']['git_change_set'] = [
-                'name' => 'git_change_set',
-                'passed' => $changedFiles !== null,
-                'verification_identifier' => 'git diff --name-only',
-                'exit_code' => $changedFiles === null ? 1 : 0,
-                'files' => $changedFiles ?? [],
-                'summary' => $changedFiles === null ? 'The changed-file set could not be determined from the attempt base.' : null,
-            ];
-            $validation['evidence']['git_head_unchanged'] = [
-                'name' => 'git_head_unchanged',
-                'passed' => $headUnchanged,
-                'verification_identifier' => 'git rev-parse HEAD',
-                'exit_code' => $headUnchanged ? 0 : 1,
-                'summary' => $headUnchanged ? null : 'The repository HEAD changed during validation.',
-            ];
-            $validation['base_sha'] = $baseSha;
-            $validation['candidate_changed_files'] = $changedFiles ?? [];
-            $validation['repository_preflight'] = [
-                'mode' => $preflight['mode'],
-                'recovery_attempt_number' => $preflight['recovery_attempt']?->number,
-            ];
-            $validation['task_contract'] = $contractEvidence;
-            $validation['managed_processes'] = $managedProcesses;
-            $validationPassed = $validation['passed'] && $changedFiles !== null && $headUnchanged;
-            $alreadyImplemented = $validationPassed && $changedFiles === [];
-            $commitSha = $validationPassed && ! $alreadyImplemented ? $this->committer->commit($task, $changedFiles, $baseSha) : null;
-            if ($renewLease !== null) {
-                $renewLease();
-            }
-            $passed = $alreadyImplemented || ($validationPassed && $commitSha !== null);
-
-            if ($validationPassed) {
-                $validation['checks']['task_commit'] = $alreadyImplemented || $commitSha !== null;
-                $validation['evidence']['task_commit'] = [
-                    'name' => 'task_commit',
-                    'passed' => $alreadyImplemented || $commitSha !== null,
-                    'verification_identifier' => 'git commit',
-                    'exit_code' => ($alreadyImplemented || $commitSha !== null) ? 0 : 1,
-                    'summary' => match (true) {
-                        $alreadyImplemented => 'No changes were required; the repository already satisfies this task, so nothing was committed.',
-                        $commitSha === null => 'The validated task changes could not be committed.',
-                        default => null,
-                    },
-                ];
+            if (
+                $execution['exit_code'] === 0
+                && TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Coding
+            ) {
+                $task = $this->workflow->transition($task, TaskStatus::Validating);
             }
 
-            $validation['passed'] = $passed;
-            $state = $this->git->inspect($projectPath);
-            $this->syncProjectGitState($task, $state);
-            $candidateFiles = $changedFiles ?? [];
-            $attempt->update([
-                'head_sha' => $state['head_sha'],
-                'commit_sha' => $commitSha,
-                'status' => $passed ? 'completed' : 'failed',
-                'validation_results' => $validation,
-                'changed_files' => $candidateFiles,
-                'finished_at' => now(),
-            ]);
-            if ($renewLease !== null) {
-                $renewLease();
-            }
-            $this->audit->record('task.validated', [
-                'attempt_number' => $attempt->number,
-                'passed' => $passed,
-                'checks' => $validation['checks'],
-                'commit_sha' => $commitSha,
-                'base_sha' => $baseSha,
-                'changed_files' => $candidateFiles,
-            ], $task->project, $task);
-
-            if ($execution['exit_code'] === 0) {
-                $transitionedTask = $this->workflow->transition(
+            if ($execution['exit_code'] !== 0) {
+                return $this->failExecutionAttempt(
                     $task,
-                    $passed ? TaskStatus::ReadyForReview : $this->retryStatus($task, $attempt),
-                );
-
-                if ($passed) {
-                    $this->boundaryHandoffs->recordImplementationReady(
-                        $transitionedTask,
-                        $attempt->refresh(),
-                        $run->refresh(),
-                    );
-                }
-            } else {
-                $this->workflow->transition(
-                    $task,
-                    $this->retryStatus($task, $attempt),
+                    $attempt,
+                    $baseSha,
+                    $executionPath,
+                    $preflight,
+                    $contractEvidence,
+                    (int) $execution['exit_code'],
                 );
             }
+
+            if ($legacyRecovery) {
+                return $this->finalizeLegacyRecovery(
+                    $task,
+                    $attempt,
+                    $run,
+                    $baseSha,
+                    $projectPath,
+                    $preflight,
+                    $contractEvidence,
+                    $renewLease,
+                );
+            }
+
+            $candidate = $this->gitIntegration->createCandidate($task, $attempt, $executionPath);
+            if ($renewLease !== null) {
+                $renewLease();
+            }
+            $integration = $this->gitIntegration->integrate($task, $attempt, $candidate);
+            if ($renewLease !== null) {
+                $renewLease();
+            }
+
+            return $this->finalizeIntegratedAttempt(
+                $task,
+                $attempt,
+                $run,
+                $candidate,
+                $integration,
+                $preflight,
+                $contractEvidence,
+            );
         } catch (Throwable $throwable) {
-            $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
-            $this->runs->complete($run, $execution);
-            $changedFiles = $this->git->changedFilesFromBase($projectPath, $baseSha) ?? [];
+            report($throwable);
+            $freshRun = $run->fresh();
+
+            if (AgentRunStatus::from($freshRun->getRawOriginal('status')) === AgentRunStatus::Running) {
+                $this->runs->complete($freshRun, [
+                    'exit_code' => -1,
+                    'output' => '',
+                    'error_output' => $throwable->getMessage(),
+                ]);
+            }
+
+            $evidencePath = $worktreePath ?? $projectPath;
+            $changedFiles = $this->git->changedFilesFromBase($evidencePath, $baseSha) ?? [];
             $state = $this->git->inspect($projectPath);
-            $this->syncProjectGitState($task, $state);
             $attempt->update([
                 'head_sha' => $state['head_sha'],
                 'status' => 'failed',
                 'validation_results' => [
                     'passed' => false,
                     'checks' => ['execution_exception' => false],
+                    'evidence' => [
+                        'execution_exception' => [
+                            'name' => 'execution_exception',
+                            'passed' => false,
+                            'verification_identifier' => 'coder_finalization',
+                            'exit_code' => -1,
+                            'summary' => $throwable->getMessage(),
+                        ],
+                    ],
                     'base_sha' => $baseSha,
                     'candidate_changed_files' => $changedFiles,
                     'repository_preflight' => [
@@ -338,9 +326,427 @@ class RunCoderTask
                 'changed_files' => $changedFiles,
             ], $task->project, $task);
             $this->workflow->transition($task, $this->retryStatus($task, $attempt));
+
+            return $attempt->refresh();
+        } finally {
+            if ($worktreePath !== null) {
+                try {
+                    $this->worktrees->release($task, $attempt);
+                } catch (Throwable $throwable) {
+                    report($throwable);
+                }
+            }
+        }
+    }
+
+    /**
+     * Reconcile a durable candidate left by an interrupted post-harness finalization before stale recovery creates a new attempt.
+     */
+    private function recoverDurableGitFinalization(Task $task, ?WorkerLease $lease): ?TaskAttempt
+    {
+        $attempt = $task->attempts()
+            ->whereIn('status', ['running', 'failed'])
+            ->whereNotNull('base_sha')
+            ->latest('number')
+            ->first();
+
+        if ($attempt === null) {
+            return null;
+        }
+
+        $validation = $attempt->getAttribute('validation_results');
+        $validation = is_array($validation) ? $validation : [];
+        $integrationStatus = is_array($validation['git_integration'] ?? null)
+            ? $validation['git_integration']['status'] ?? null
+            : null;
+
+        if (
+            $attempt->getAttribute('status') === 'failed'
+            && $integrationStatus !== null
+            && ! in_array($integrationStatus, ['lock_timeout', 'integration_uncertain'], true)
+        ) {
+            return null;
+        }
+
+        $run = AgentRun::query()
+            ->whereBelongsTo($task)
+            ->where('role', AgentRole::Coder)
+            ->where('attempt_number', $attempt->number)
+            ->where('status', AgentRunStatus::Completed)
+            ->where('exit_code', 0)
+            ->latest('id')
+            ->first();
+
+        if ($run === null) {
+            return null;
+        }
+
+        try {
+            $candidate = $this->gitIntegration->recoverCandidate($task, $attempt);
+
+            if ($candidate === null) {
+                return null;
+            }
+
+            if ($lease !== null && ! $this->heartbeat->renew($lease)) {
+                return null;
+            }
+
+            if (TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::Coding) {
+                $task = $this->workflow->transition($task, TaskStatus::Validating);
+            }
+
+            $integration = $this->gitIntegration->integrate($task, $attempt, $candidate);
+            $preflight = is_array($validation['repository_preflight'] ?? null)
+                ? $validation['repository_preflight']
+                : ['mode' => 'normal', 'recovery_attempt_number' => null];
+            $contractEvidence = is_array($validation['task_contract'] ?? null)
+                ? $validation['task_contract']
+                : [];
+
+            $result = $this->finalizeIntegratedAttempt(
+                $task,
+                $attempt,
+                $run,
+                $candidate,
+                $integration,
+                [
+                    'mode' => $preflight['mode'] ?? 'normal',
+                    'recovery_attempt' => null,
+                ],
+                $contractEvidence,
+                recovered: true,
+            );
+
+            $this->worktrees->release($task, $attempt);
+
+            return $result;
+        } catch (Throwable $throwable) {
+            report($throwable);
+
+            return null;
+        }
+    }
+
+    /**
+     * Finalize the compatibility-only pre-P10 dirty-recovery path without changing its existing task-only commit contract.
+     *
+     * @param  array<string, mixed>  $preflight
+     * @param  array<string, mixed>  $contractEvidence
+     * @param  (\Closure(): mixed)|null  $renewLease
+     */
+    private function finalizeLegacyRecovery(
+        Task $task,
+        TaskAttempt $attempt,
+        AgentRun $run,
+        string $baseSha,
+        string $projectPath,
+        array $preflight,
+        array $contractEvidence,
+        ?\Closure $renewLease,
+    ): TaskAttempt {
+        $changedFiles = $this->git->changedFilesFromBase($projectPath, $baseSha);
+        $headUnchanged = $this->git->baseMatchesCurrentHead($projectPath, $baseSha);
+        $validationPassed = $changedFiles !== null && $headUnchanged;
+        $alreadyImplemented = $validationPassed && $changedFiles === [];
+        $commitSha = $validationPassed && ! $alreadyImplemented
+            ? $this->committer->commit($task, $changedFiles, $baseSha)
+            : null;
+        $passed = $alreadyImplemented || ($validationPassed && $commitSha !== null);
+        $state = $this->git->inspect($projectPath);
+
+        $validation = [
+            'passed' => $passed,
+            'checks' => [
+                'git_change_set' => $changedFiles !== null,
+                'git_head_unchanged' => $headUnchanged,
+                'task_commit' => $passed,
+            ],
+            'evidence' => [
+                'git_change_set' => [
+                    'name' => 'git_change_set',
+                    'passed' => $changedFiles !== null,
+                    'verification_identifier' => 'git diff --name-only',
+                    'exit_code' => $changedFiles === null ? 1 : 0,
+                    'files' => $changedFiles ?? [],
+                    'summary' => $changedFiles === null ? 'The changed-file set could not be determined from the recovery attempt base.' : null,
+                ],
+                'task_commit' => [
+                    'name' => 'task_commit',
+                    'passed' => $passed,
+                    'verification_identifier' => 'legacy AIOS task-only commit',
+                    'exit_code' => $passed ? 0 : 1,
+                    'summary' => $passed ? null : 'The verified legacy recovery state could not be committed safely.',
+                ],
+            ],
+            'base_sha' => $baseSha,
+            'candidate_changed_files' => $changedFiles ?? [],
+            'repository_preflight' => [
+                'mode' => $preflight['mode'],
+                'recovery_attempt_number' => $preflight['recovery_attempt']?->number,
+            ],
+            'task_contract' => $contractEvidence,
+            'managed_processes' => [],
+        ];
+
+        if ($passed) {
+            $this->syncProjectGitState($task, $state);
+        }
+
+        $attempt->update([
+            'head_sha' => $state['head_sha'],
+            'commit_sha' => $commitSha,
+            'status' => $passed ? 'completed' : 'failed',
+            'validation_results' => $validation,
+            'changed_files' => $changedFiles ?? [],
+            'finished_at' => now(),
+        ]);
+
+        if ($renewLease !== null) {
+            $renewLease();
+        }
+
+        $this->recordValidationAudit($task, $attempt, $validation, $commitSha, $baseSha, $changedFiles ?? []);
+        $transitionedTask = $this->workflow->transition(
+            $task,
+            $passed ? TaskStatus::ReadyForReview : $this->retryStatus($task, $attempt),
+        );
+
+        if ($passed) {
+            $this->boundaryHandoffs->recordImplementationReady(
+                $transitionedTask,
+                $attempt->refresh(),
+                $run->refresh(),
+            );
         }
 
         return $attempt->refresh();
+    }
+
+    /**
+     * Persist one candidate/integration outcome and cross the review boundary only after verified canonical success.
+     *
+     * @param  array<string, mixed>  $candidate
+     * @param  array<string, mixed>  $integration
+     * @param  array<string, mixed>  $preflight
+     * @param  array<string, mixed>  $contractEvidence
+     */
+    private function finalizeIntegratedAttempt(
+        Task $task,
+        TaskAttempt $attempt,
+        AgentRun $run,
+        array $candidate,
+        array $integration,
+        array $preflight,
+        array $contractEvidence,
+        bool $recovered = false,
+    ): TaskAttempt {
+        $passed = ($integration['passed'] ?? false) === true;
+        $changedFiles = is_array($candidate['changed_files'] ?? null) ? $candidate['changed_files'] : [];
+        $headAfter = is_string($integration['canonical_head_after'] ?? null)
+            ? $integration['canonical_head_after']
+            : null;
+        $commitSha = is_string($integration['integrated_sha'] ?? null)
+            ? $integration['integrated_sha']
+            : null;
+        $candidateEvidence = [
+            'name' => 'git_candidate',
+            'passed' => true,
+            'verification_identifier' => 'AIOS Task candidate commit/ref',
+            'exit_code' => 0,
+            'base_sha' => $candidate['base_sha'],
+            'candidate_sha' => $candidate['candidate_sha'],
+            'candidate_ref' => $candidate['candidate_ref'],
+            'candidate_diff_sha256' => $candidate['candidate_diff_sha256'],
+            'files' => $changedFiles,
+            'summary' => ($candidate['no_changes'] ?? false) === true
+                ? 'The isolated Task worktree produced no candidate changes.'
+                : 'AIOS created and verified a durable Task-only candidate commit.',
+        ];
+        $integrationEvidence = [
+            'name' => 'git_integration',
+            'passed' => $passed,
+            'verification_identifier' => 'AIOS serialized canonical Git integration',
+            'exit_code' => $passed ? 0 : 1,
+            'status' => $integration['status'] ?? 'unknown',
+            'base_sha' => $integration['base_sha'] ?? $attempt->base_sha,
+            'candidate_sha' => $integration['candidate_sha'] ?? null,
+            'candidate_ref' => $integration['candidate_ref'] ?? null,
+            'candidate_diff_sha256' => $integration['candidate_diff_sha256'] ?? null,
+            'canonical_head_before' => $integration['canonical_head_before'] ?? null,
+            'canonical_head_after' => $headAfter,
+            'integrated_sha' => $commitSha,
+            'conflict_paths' => is_array($integration['conflict_paths'] ?? null) ? $integration['conflict_paths'] : [],
+            'files' => $changedFiles,
+            'summary' => (string) ($integration['summary'] ?? 'AIOS could not verify canonical integration.'),
+        ];
+        $validation = $attempt->getAttribute('validation_results');
+        $validation = is_array($validation) ? $validation : [];
+        $validation = [
+            ...$validation,
+            'passed' => $passed,
+            'checks' => [
+                ...((is_array($validation['checks'] ?? null)) ? $validation['checks'] : []),
+                'git_candidate' => true,
+                'git_integration' => $passed,
+            ],
+            'evidence' => [
+                ...((is_array($validation['evidence'] ?? null)) ? $validation['evidence'] : []),
+                'git_candidate' => $candidateEvidence,
+                'git_integration' => $integrationEvidence,
+            ],
+            'base_sha' => $attempt->base_sha,
+            'candidate_changed_files' => $changedFiles,
+            'git_integration' => $integration,
+            'repository_preflight' => [
+                'mode' => $preflight['mode'] ?? 'normal',
+                'recovery_attempt_number' => isset($preflight['recovery_attempt'])
+                    && $preflight['recovery_attempt'] instanceof TaskAttempt
+                    ? $preflight['recovery_attempt']->number
+                    : ($preflight['recovery_attempt_number'] ?? null),
+            ],
+            'task_contract' => $contractEvidence,
+            'managed_processes' => [],
+        ];
+
+        if ($passed) {
+            $state = $this->git->inspect((string) $task->project->path);
+
+            if (
+                ! $state['inspectable']
+                || ! $state['clean']
+                || ! is_string($state['head_sha'])
+                || ! is_string($headAfter)
+                || ! hash_equals($headAfter, $state['head_sha'])
+            ) {
+                $passed = false;
+                $validation['passed'] = false;
+                $validation['checks']['git_integration'] = false;
+                $validation['evidence']['git_integration']['passed'] = false;
+                $validation['evidence']['git_integration']['exit_code'] = 1;
+                $validation['evidence']['git_integration']['summary'] = 'Canonical integration returned success but AIOS could not independently verify the final clean HEAD.';
+            } else {
+                $this->syncProjectGitState($task, $state);
+            }
+        }
+
+        $attempt->update([
+            'head_sha' => $headAfter,
+            'commit_sha' => $passed ? $commitSha : null,
+            'status' => $passed ? 'completed' : 'failed',
+            'validation_results' => $validation,
+            'changed_files' => $changedFiles,
+            'finished_at' => now(),
+        ]);
+        $this->recordValidationAudit(
+            $task,
+            $attempt,
+            $validation,
+            $passed ? $commitSha : null,
+            (string) $attempt->base_sha,
+            $changedFiles,
+        );
+
+        if ($recovered) {
+            $this->audit->record('task.git_integration_recovered', [
+                'attempt_number' => $attempt->number,
+                'candidate_sha' => $candidate['candidate_sha'],
+                'integration_status' => $integration['status'] ?? null,
+                'integrated_sha' => $passed ? $commitSha : null,
+            ], $task->project, $task);
+        }
+
+        $transitionedTask = $this->workflow->transition(
+            $task,
+            $passed ? TaskStatus::ReadyForReview : $this->retryStatus($task, $attempt),
+        );
+
+        if ($passed) {
+            $this->boundaryHandoffs->recordImplementationReady(
+                $transitionedTask,
+                $attempt->refresh(),
+                $run->refresh(),
+            );
+        }
+
+        return $attempt->refresh();
+    }
+
+    /**
+     * Persist one non-zero Coder execution as a failed attempt without integrating its disposable workspace state.
+     *
+     * @param  array<string, mixed>  $preflight
+     * @param  array<string, mixed>  $contractEvidence
+     */
+    private function failExecutionAttempt(
+        Task $task,
+        TaskAttempt $attempt,
+        string $baseSha,
+        string $executionPath,
+        array $preflight,
+        array $contractEvidence,
+        int $exitCode,
+    ): TaskAttempt {
+        $changedFiles = $this->git->changedFilesFromBase($executionPath, $baseSha) ?? [];
+        $state = $this->git->inspect((string) $task->project->path);
+        $validation = [
+            'passed' => false,
+            'checks' => ['coder_execution' => false],
+            'evidence' => [
+                'coder_execution' => [
+                    'name' => 'coder_execution',
+                    'passed' => false,
+                    'verification_identifier' => 'Coder harness exit code',
+                    'exit_code' => $exitCode,
+                    'summary' => 'The Coder harness did not complete successfully, so AIOS did not create or integrate a Task candidate.',
+                ],
+            ],
+            'base_sha' => $baseSha,
+            'candidate_changed_files' => $changedFiles,
+            'repository_preflight' => [
+                'mode' => $preflight['mode'],
+                'recovery_attempt_number' => $preflight['recovery_attempt']?->number,
+            ],
+            'task_contract' => $contractEvidence,
+            'managed_processes' => [],
+        ];
+
+        $attempt->update([
+            'head_sha' => $state['head_sha'],
+            'status' => 'failed',
+            'validation_results' => $validation,
+            'changed_files' => $changedFiles,
+            'finished_at' => now(),
+        ]);
+        $this->recordValidationAudit($task, $attempt, $validation, null, $baseSha, $changedFiles);
+        $this->workflow->transition($task, $this->retryStatus($task, $attempt));
+
+        return $attempt->refresh();
+    }
+
+    /**
+     * Record the existing task.validated audit contract with candidate and integration evidence already persisted on the attempt.
+     *
+     * @param  array<string, mixed>  $validation
+     * @param  list<string>  $changedFiles
+     */
+    private function recordValidationAudit(
+        Task $task,
+        TaskAttempt $attempt,
+        array $validation,
+        ?string $commitSha,
+        string $baseSha,
+        array $changedFiles,
+    ): void {
+        $this->audit->record('task.validated', [
+            'attempt_number' => $attempt->number,
+            'passed' => (bool) ($validation['passed'] ?? false),
+            'checks' => is_array($validation['checks'] ?? null) ? $validation['checks'] : [],
+            'commit_sha' => $commitSha,
+            'base_sha' => $baseSha,
+            'changed_files' => $changedFiles,
+            'git_integration' => is_array($validation['git_integration'] ?? null) ? $validation['git_integration'] : null,
+        ], $task->project, $task);
     }
 
     /**

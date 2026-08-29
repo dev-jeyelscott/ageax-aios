@@ -36,11 +36,17 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         private ContextBudgetedAgentHarness $contextBudget,
     ) {}
 
+    /**
+     * Return the Claude Code harness identifier used by persisted Agent configuration.
+     */
     public function identifier(): AgentHarnessIdentifier
     {
         return AgentHarnessIdentifier::ClaudeCode;
     }
 
+    /**
+     * Return the approved Claude Code model, reasoning, execution, and capacity contract.
+     */
     public function capabilities(): HarnessCapabilities
     {
         return new HarnessCapabilities(
@@ -80,6 +86,13 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         );
     }
 
+    /**
+     * Apply AIOS Context Budget policy, then execute Claude Code at the exact AIOS-selected workspace when supplied.
+     *
+     * @param  (Closure(string, string): void)|null  $onOutput
+     * @param  (Closure(): mixed)|null  $onHeartbeat
+     * @param  array<string, mixed>  $executionSettings
+     */
     public function execute(
         Project $project,
         Agent $agent,
@@ -87,6 +100,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         array $executionSettings = [],
+        ?string $executionPath = null,
     ): NormalizedExecutionResult {
         $this->capabilities()->assertSupports(
             $agent,
@@ -110,6 +124,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 $outputCallback,
                 $heartbeatCallback,
                 $approvedExecutionSettings,
+                $executionPath,
             ),
             $onOutput,
             $onHeartbeat,
@@ -117,6 +132,13 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         );
     }
 
+    /**
+     * Dispatch the budget-approved prompt to the Claude Code runner without allowing the provider to choose its workspace.
+     *
+     * @param  (Closure(string, string): void)|null  $onOutput
+     * @param  (Closure(): mixed)|null  $onHeartbeat
+     * @param  array<string, mixed>  $executionSettings
+     */
     private function executeProvider(
         Project $project,
         Agent $agent,
@@ -124,15 +146,25 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         array $executionSettings = [],
+        ?string $executionPath = null,
     ): NormalizedExecutionResult {
-        $execution = $this->runner->run(
-            $project,
-            $agent,
-            $prompt,
-            $onOutput,
-            $onHeartbeat,
-            $executionSettings,
-        );
+        $execution = $executionPath === null
+            ? $this->runner->run(
+                $project,
+                $agent,
+                $prompt,
+                $onOutput,
+                $onHeartbeat,
+                $executionSettings,
+            )
+            : $this->runner->runAtPath(
+                $executionPath,
+                $agent,
+                $prompt,
+                $onOutput,
+                $onHeartbeat,
+                $executionSettings,
+            );
 
         if (
             $execution['failure_type'] !== null
@@ -155,8 +187,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 ? 'authentication_unavailable'
                 : 'process_failure';
 
-            $message =
-                $failureType === 'authentication_unavailable'
+            $message = $failureType === 'authentication_unavailable'
                 ? 'Claude Code authentication failed. Run "claude auth login" outside AIOS using the same OS user, then retry.'
                 : 'Claude Code process exited with code '
                     .$execution['exit_code']
@@ -174,8 +205,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         }
 
         // Claude Code can emit a non-stream diagnostic alongside a complete result event. The
-        // final result is the authoritative execution outcome; only reject malformed output
-        // when it prevents us from obtaining that result.
+        // final result is authoritative; malformed side output is ignored unless no result exists.
         if ($result === null) {
             return $this->failure(
                 exitCode: self::NormalizationFailureExitCode,
@@ -189,7 +219,6 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         $subtype = is_string($result['subtype'] ?? null)
             ? $result['subtype']
             : null;
-
         $sessionId = is_string($result['session_id'] ?? null)
             ? $result['session_id']
             : null;
@@ -215,8 +244,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 ? 'authentication_unavailable'
                 : 'provider_failure';
 
-            $message =
-                $failureType === 'authentication_unavailable'
+            $message = $failureType === 'authentication_unavailable'
                 ? 'Claude Code authentication failed. Run "claude auth login" outside AIOS using the same OS user, then retry.'
                 : 'Claude Code ended with result subtype ['
                     .$subtype
@@ -260,6 +288,8 @@ final readonly class ClaudeCodeHarness implements AgentHarness
     }
 
     /**
+     * Parse Claude Code stream-json output into the normalized result metadata AIOS persists.
+     *
      * @return array{
      *     result: ?array<string, mixed>,
      *     session_id: ?string,
@@ -303,9 +333,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 && is_string($event['error'] ?? null)
             ) {
                 $apiErrorCategory = $event['error'];
-                $apiErrorStatus = is_int(
-                    $event['error_status'] ?? null,
-                )
+                $apiErrorStatus = is_int($event['error_status'] ?? null)
                     ? $event['error_status']
                     : null;
             }
@@ -324,11 +352,10 @@ final readonly class ClaudeCodeHarness implements AgentHarness
     }
 
     /**
-     * $rawOutput is only accepted for malformed-stream failures: content AIOS could not parse
-     * into structured provider events in the first place, so there is no extracted "error"
-     * field to leak and the raw transcript is the only available diagnostic evidence. Other
-     * failure branches deliberately keep output blank because the parsed result may carry
-     * provider-authored error text not covered by AgentRunRecorder's redaction patterns.
+     * Build one normalized failure result without leaking provider-authored sensitive diagnostics.
+     *
+     * Raw output is retained only when the provider stream cannot be parsed at all and therefore
+     * there is no extracted structured error field available for safe diagnostics.
      *
      * @param  array<string, mixed>|null  $result
      */
@@ -350,8 +377,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
                 $resolvedExternalRunId === null
                 && is_string($result['session_id'] ?? null)
             ) {
-                $resolvedExternalRunId =
-                    $result['session_id'];
+                $resolvedExternalRunId = $result['session_id'];
             }
 
             if (is_array($result['usage'] ?? null)) {
@@ -385,6 +411,8 @@ final readonly class ClaudeCodeHarness implements AgentHarness
     }
 
     /**
+     * Extract bounded provider metadata from a parsed Claude Code result event.
+     *
      * @param  array<string, mixed>|null  $result
      * @return array<string, int|float|string>
      */
@@ -421,9 +449,11 @@ final readonly class ClaudeCodeHarness implements AgentHarness
         return $metadata;
     }
 
-    private function isAuthenticationFailure(
-        ?string $category,
-    ): bool {
+    /**
+     * Classify provider API categories that mean Claude Code authentication is unavailable.
+     */
+    private function isAuthenticationFailure(?string $category): bool
+    {
         return in_array(
             $category,
             [

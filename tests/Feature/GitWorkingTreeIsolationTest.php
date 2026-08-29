@@ -17,6 +17,9 @@ use Illuminate\Support\Facades\Process;
 
 use function Pest\Laravel\mock;
 
+/**
+ * Create one clean Git-backed managed project for working-tree isolation tests.
+ */
 function gitIsolationProject(): Project
 {
     $path = sys_get_temp_dir().'/aios-git-isolation-'.fake()->uuid();
@@ -38,6 +41,9 @@ function gitIsolationProject(): Project
     ]);
 }
 
+/**
+ * Create one Task using the existing Coder workflow contract for Git isolation tests.
+ */
 function gitIsolationTask(Project $project, TaskStatus $status = TaskStatus::Queued): Task
 {
     return Task::create([
@@ -116,16 +122,18 @@ test('task committer rejects an unexpected staged file before staging task files
         ->and(Process::path($project->path)->run(['git', 'status', '--porcelain'])->output())->toContain('?? task.txt');
 });
 
-test('a clean coder attempt stores its base and commits exactly its own files', function () {
+test('a clean coder attempt executes in an isolated worktree and integrates exactly its own files', function () {
     $project = gitIsolationProject();
     $task = gitIsolationTask($project);
     $baseSha = $project->git_head_sha;
 
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->once()
-        ->andReturnUsing(function (Project $runProject): array {
-            File::put($runProject->path.'/task.txt', 'task-owned change');
+        ->andReturnUsing(function (string $path) use ($project): array {
+            expect($path)->not->toBe($project->path)
+                ->and($path)->toContain('.aios-task-worktrees');
+            File::put($path.'/task.txt', 'task-owned change');
 
             return [
                 'exit_code' => 0,
@@ -137,11 +145,17 @@ test('a clean coder attempt stores its base and commits exactly its own files', 
     $claimed = app(ClaimTask::class)->handle($project, AgentRole::Coder);
     $attempt = app(RunCoderTask::class)->handle($claimed);
     $committedFiles = array_values(array_filter(preg_split('/\R/', trim(Process::path($project->path)->run(['git', 'show', '--format=', '--name-only', 'HEAD'])->output())) ?: []));
+    $validation = $attempt->validation_results;
+    $integration = is_array($validation) ? $validation['git_integration'] ?? null : null;
 
     expect($attempt->base_sha)->toBe($baseSha)
         ->and($attempt->commit_sha)->not->toBeNull()
         ->and($attempt->changed_files)->toBe(['task.txt'])
         ->and($committedFiles)->toBe(['task.txt'])
+        ->and($integration)->toBeArray()
+        ->and($integration['status'])->toBe('integrated')
+        ->and($integration['candidate_sha'])->not->toBeNull()
+        ->and($integration['candidate_ref'])->toContain('refs/aios/projects/')
         ->and(trim(Process::path($project->path)->run(['git', 'status', '--porcelain'])->output()))->toBe('')
         ->and($task->refresh()->status)->toBe(TaskStatus::ReadyForReview);
 });
