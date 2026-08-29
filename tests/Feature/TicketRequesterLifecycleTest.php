@@ -38,16 +38,28 @@ final class P3RequesterLifecycleHarness implements AgentHarnessContract
         public NormalizedExecutionResult $result,
     ) {}
 
+    /**
+     * Return the harness identifier represented by this deterministic test double.
+     */
     public function identifier(): AgentHarnessIdentifier
     {
         return AgentHarnessIdentifier::Codex;
     }
 
+    /**
+     * Return the capabilities exposed by this deterministic test double.
+     */
     public function capabilities(): HarnessCapabilities
     {
         return new HarnessCapabilities;
     }
 
+    /**
+     * Execute the deterministic fake while accepting the complete AgentHarness contract.
+     *
+     * The optional execution path is AIOS orchestration input. Ticket triage does not use an
+     * isolated Task worktree, so this test double intentionally does not act on that value.
+     */
     public function execute(
         Project $project,
         Agent $agent,
@@ -55,6 +67,7 @@ final class P3RequesterLifecycleHarness implements AgentHarnessContract
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         array $executionSettings = [],
+        ?string $executionPath = null,
     ): NormalizedExecutionResult {
         $this->executions++;
         $this->prompts[] = $prompt;
