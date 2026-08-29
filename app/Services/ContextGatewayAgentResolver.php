@@ -3,55 +3,74 @@
 namespace App\Services;
 
 use App\AgentRole;
-use App\Contracts\Context\AgentIdentity;
-use App\Exceptions\AgentResolutionFailed;
 use App\Models\Agent;
+use App\Models\Project;
 
-/**
- * Resolves the approved durable logical Agent identity a standalone Context Gateway caller may
- * use to scope memory and context retrieval, inside exactly one already-resolved AIOS Project
- * scope. Reuses the existing Agent ownership, enabled-state, and role invariants; never consults
- * AgentWorker leases, harness/model configuration, process IDs, or session IDs, so the resolved
- * identity remains distinct from AgentWorker runtime state and grants no workflow authority.
- */
-class ContextGatewayAgentResolver
+final class ContextGatewayAgentResolver
 {
     /**
-     * Project-scoped workflow roles a standalone Context Gateway caller may resolve. Matches
-     * the existing Agent::ProjectRoles invariant so an Agent record cannot exist outside this
-     * set for a project-scoped Agent, but is enforced independently here so retrieval fails
-     * closed even if that invariant is ever bypassed.
+     * Resolve the active project Agent for one supported retrieval role.
      */
-    private const array SupportedRoles = [
-        AgentRole::ProjectManager,
-        AgentRole::Coder,
-        AgentRole::Reviewer,
-    ];
-
-    public function resolve(int $projectId, int $agentId): AgentIdentity
-    {
-        $agent = Agent::query()->find($agentId);
-
-        if ($agent === null) {
-            throw new AgentResolutionFailed("No registered Agent matches the Agent ID [{$agentId}].");
+    public function resolve(
+        Project $project,
+        AgentRole $role,
+    ): ?ContextGatewayAgentIdentity {
+        if (
+            ! in_array(
+                $role,
+                [
+                    AgentRole::ProjectManager,
+                    AgentRole::Coder,
+                    AgentRole::Reviewer,
+                ],
+                true,
+            )
+        ) {
+            return null;
         }
 
-        if ($agent->project_id === null) {
-            throw new AgentResolutionFailed('A global system Agent cannot be resolved as a Project-scoped logical Agent identity.');
+        $agents = Agent::query()
+            ->whereBelongsTo($project)
+            ->where('role', $role)
+            ->where('is_enabled', true)
+            ->orderBy('priority')
+            ->orderBy('id')
+            ->limit(2)
+            ->get();
+
+        if ($agents->isEmpty()) {
+            return null;
         }
 
-        if ($agent->project_id !== $projectId) {
-            throw new AgentResolutionFailed('This Agent identity does not belong to the resolved Project.');
+        if ($agents->count() !== 1) {
+            throw ContextGatewayAgentResolutionFailed::ambiguous(
+                $project,
+                $role,
+            );
         }
 
-        if (! $agent->enabled) {
-            throw new AgentResolutionFailed('This Agent identity is disabled and cannot be resolved for retrieval.');
+        $agent = $agents->firstOrFail();
+        $resolvedRole = $agent->getAttribute('role');
+
+        if (
+            ! $resolvedRole instanceof AgentRole
+            || ! in_array(
+                $resolvedRole,
+                [
+                    AgentRole::ProjectManager,
+                    AgentRole::Coder,
+                    AgentRole::Reviewer,
+                ],
+                true,
+            )
+        ) {
+            return null;
         }
 
-        if (! in_array($agent->role, self::SupportedRoles, true)) {
-            throw new AgentResolutionFailed('This Agent role is not supported for Context Gateway retrieval.');
-        }
-
-        return new AgentIdentity($agent->id, $agent->project_id, $agent->role->value, $agent->configuration_version);
+        return new ContextGatewayAgentIdentity(
+            id: $agent->id,
+            role: $resolvedRole->value,
+            name: $agent->name,
+        );
     }
 }

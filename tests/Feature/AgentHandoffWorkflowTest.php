@@ -228,12 +228,12 @@ test('a successfully validated Coder boundary creates exactly one implementation
     $task = p8002Task($project, TaskStatus::Coding);
 
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->once()
-        ->andReturnUsing(function () use ($path): array {
-            File::ensureDirectoryExists($path.'/app');
+        ->andReturnUsing(function (string $executionPath): array {
+            File::ensureDirectoryExists($executionPath.'/app');
             File::put(
-                $path.'/app/Example.php',
+                $executionPath.'/app/Example.php',
                 "<?php\n\nreturn true;\n",
             );
 
@@ -296,7 +296,7 @@ test('a valid already-implemented Coder outcome still creates one implementation
     $task = p8002Task($project, TaskStatus::Coding);
 
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->once()
         ->andReturn([
             'exit_code' => 0,
@@ -329,7 +329,7 @@ test('failed Coder execution creates no implementation handoff', function (): vo
     $task = p8002Task($project, TaskStatus::Coding);
 
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->once()
         ->andReturn([
             'exit_code' => 1,
@@ -355,7 +355,7 @@ test('a failed Coder execution creates no implementation handoff', function (): 
     $task = p8002Task($project, TaskStatus::Coding);
 
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->once()
         ->andReturn([
             'exit_code' => 1,
