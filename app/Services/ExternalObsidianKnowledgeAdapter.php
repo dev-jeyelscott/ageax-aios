@@ -143,7 +143,11 @@ class ExternalObsidianKnowledgeAdapter
             return $this->indexEvidence($indexedSources, $indexedSections, 'index_write_failed');
         }
 
-        $this->purgeStaleSections($project, $currentManifestIds);
+        try {
+            $this->purgeStaleSections($project, $currentManifestIds);
+        } catch (Throwable) {
+            return $this->indexEvidence($indexedSources, $indexedSections, 'index_cleanup_failed');
+        }
 
         return $this->indexEvidence($indexedSources, $indexedSections, 'success');
     }

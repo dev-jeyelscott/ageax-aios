@@ -5,6 +5,8 @@ use App\Models\KnowledgeSourceManifest;
 use App\Models\Project;
 use App\ProjectStatus;
 use App\Services\ExternalObsidianKnowledgeAdapter;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 
@@ -769,6 +771,37 @@ MD, $project);
     expect($result['sections'])->toHaveCount(2)
         ->and(array_column($result['sections'], 'source_reference'))
         ->toBe(['File1.md', 'Subdirectory/File2.md']);
+});
+
+test('returns bounded failure evidence when stale-section cleanup fails', function (): void {
+    $project = externalKnowledgeProject('Cleanup Failure');
+    $directory = externalKnowledgeVault();
+
+    externalKnowledgeNote($directory, 'Cleanup.md', <<<'MD'
+---
+scope: project
+project_id: {project_id}
+status: active
+approved: true
+---
+
+# Cleanup Knowledge
+
+This cleanup knowledge is indexed before the purge fails.
+MD, $project);
+
+    DB::listen(function (QueryExecuted $query): void {
+        if (Str::contains($query->sql, 'external_knowledge_sections') && Str::contains($query->sql, 'not in')) {
+            throw new RuntimeException('index unavailable');
+        }
+    });
+
+    $index = externalKnowledgeAdapter()->indexExternalKnowledge($project);
+
+    expect($index['index_status'])->toBe('index_cleanup_failed')
+        ->and($index['indexed_sources'])->toBe(1)
+        ->and($index['indexed_sections'])->toBe(1)
+        ->and(File::get($directory.'/Cleanup.md'))->toContain('This cleanup knowledge is indexed before the purge fails.');
 });
 
 test('does not mutate indexed source notes', function (): void {
