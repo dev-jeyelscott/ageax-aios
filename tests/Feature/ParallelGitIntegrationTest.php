@@ -21,15 +21,23 @@ use Illuminate\Support\Facades\Process;
 /**
  * Create one clean Git-backed managed project for P10-005 integration tests.
  *
+ * Every repository created during one test remains inside the single authoritative
+ * AIOS workspace root established by the feature-test bootstrap. Creating another
+ * repository must never replace that root because previously created Projects still
+ * need to pass WorkspacePathResolver validation during integration and cleanup.
+ *
  * @return array{0: Project, 1: string}
  */
 function parallelGitProject(): array
 {
-    $workspaceRoot = sys_get_temp_dir().'/aios-parallel-git-root-'.fake()->uuid();
-    $path = $workspaceRoot.'/project';
+    $workspaceRoot = (string) config('aios.workspace_root');
+    File::ensureDirectoryExists($workspaceRoot);
+
+    $path = $workspaceRoot
+        .'/aios-parallel-git-project-'
+        .fake()->uuid();
 
     File::ensureDirectoryExists($path);
-    config()->set('aios.workspace_root', $workspaceRoot);
 
     Process::path($path)->run(['git', 'init']);
     Process::path($path)->run(['git', 'config', 'user.email', 'aios@example.test']);
