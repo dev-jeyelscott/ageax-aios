@@ -49,7 +49,7 @@ function reconciliationQueuedRun(Project $project): ProjectReconciliationRun
 /**
  * Bind a deterministic Codex runner fake for Project Reconciliation tests.
  *
- * @param array{exit_code: int, output: string, error_output: string} $execution
+ * @param  array{exit_code: int, output: string, error_output: string}  $execution
  */
 function bindReconciliationHarness(array $execution): void
 {
@@ -59,14 +59,14 @@ function bindReconciliationHarness(array $execution): void
             /**
              * Store the deterministic provider execution returned by the fake runner.
              *
-             * @param array{exit_code: int, output: string, error_output: string} $execution
+             * @param  array{exit_code: int, output: string, error_output: string}  $execution
              */
             public function __construct(private array $execution) {}
 
             /**
              * Return deterministic provider output while preserving the current Codex runner contract.
              *
-             * @param array<string, mixed> $executionSettings
+             * @param  array<string, mixed>  $executionSettings
              * @return array{exit_code: int, output: string, error_output: string}
              */
             public function run(

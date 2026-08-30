@@ -28,6 +28,9 @@ use RuntimeException;
 
 use function Pest\Laravel\mock;
 
+/**
+ * Create one review-ready Task fixture for Reviewer workflow tests.
+ */
 function reviewTask(Project $project): Task
 {
     return Task::create([
@@ -43,14 +46,38 @@ function reviewTask(Project $project): Task
     ]);
 }
 
+/**
+ * Create one running managed Project backed by a committed Git repository for isolated Coder execution tests.
+ */
+function coderExecutionProject(string $name = 'Example'): Project
+{
+    $path = sys_get_temp_dir().'/aios-coder-execution-'.fake()->uuid();
+
+    File::ensureDirectoryExists($path);
+    Process::path($path)->run(['git', 'init']);
+    Process::path($path)->run(['git', 'config', 'user.email', 'aios@example.test']);
+    Process::path($path)->run(['git', 'config', 'user.name', 'AIOS Test']);
+    File::put($path.'/baseline.txt', "baseline\n");
+    Process::path($path)->run(['git', 'add', 'baseline.txt']);
+    Process::path($path)->run(['git', 'commit', '-m', 'Baseline']);
+
+    return Project::create([
+        'name' => $name,
+        'path' => $path,
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+    ]);
+}
+
 test('the task validator allows the committed environment template', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     File::ensureDirectoryExists($project->path);
     $task = reviewTask($project);
-    Process::fake(['*' => Process::sequence()
-        ->push(Process::result())
-        ->push(Process::result(exitCode: 1))
-        ->push(Process::result(output: '?? .env.example')),
+    Process::fake([
+        '*' => Process::sequence()
+            ->push(Process::result())
+            ->push(Process::result(exitCode: 1))
+            ->push(Process::result(output: '?? .env.example')),
     ]);
 
     $validation = app(TaskValidator::class)->validate($task);
@@ -63,10 +90,11 @@ test('the task validator blocks environment files that may contain secrets', fun
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     File::ensureDirectoryExists($project->path);
     $task = reviewTask($project);
-    Process::fake(['*' => Process::sequence()
-        ->push(Process::result())
-        ->push(Process::result(exitCode: 1))
-        ->push(Process::result(output: '?? .env.local')),
+    Process::fake([
+        '*' => Process::sequence()
+            ->push(Process::result())
+            ->push(Process::result(exitCode: 1))
+            ->push(Process::result(output: '?? .env.local')),
     ]);
 
     $validation = app(TaskValidator::class)->validate($task);
@@ -79,11 +107,12 @@ test('the task validator runs safe task-specific verification commands', functio
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = reviewTask($project);
     $task->update(['verification_commands' => ['php artisan test --compact']]);
-    Process::fake(['*' => Process::sequence()
-        ->push(Process::result())
-        ->push(Process::result(exitCode: 1))
-        ->push(Process::result())
-        ->push(Process::result()),
+    Process::fake([
+        '*' => Process::sequence()
+            ->push(Process::result())
+            ->push(Process::result(exitCode: 1))
+            ->push(Process::result())
+            ->push(Process::result()),
     ]);
 
     $validation = app(TaskValidator::class)->validate($task);
@@ -112,10 +141,11 @@ test('the task validator rejects unsafe verification commands without executing 
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = reviewTask($project);
     $task->update(['verification_commands' => ['php artisan test; rm -rf /']]);
-    Process::fake(['*' => Process::sequence()
-        ->push(Process::result())
-        ->push(Process::result(exitCode: 1))
-        ->push(Process::result()),
+    Process::fake([
+        '*' => Process::sequence()
+            ->push(Process::result())
+            ->push(Process::result(exitCode: 1))
+            ->push(Process::result()),
     ]);
 
     $validation = app(TaskValidator::class)->validate($task);
@@ -129,11 +159,12 @@ test('a fresh Coder context receives bounded redacted evidence from failed verif
     File::ensureDirectoryExists($project->path);
     $task = reviewTask($project);
     $task->update(['verification_commands' => ['php artisan test --compact']]);
-    Process::fake(['*' => Process::sequence()
-        ->push(Process::result())
-        ->push(Process::result(exitCode: 1))
-        ->push(Process::result())
-        ->push(Process::result('Tests: 1 failed.', "APP_KEY=super-secret\nExpected 200, received 500.", 1)),
+    Process::fake([
+        '*' => Process::sequence()
+            ->push(Process::result())
+            ->push(Process::result(exitCode: 1))
+            ->push(Process::result())
+            ->push(Process::result('Tests: 1 failed.', "APP_KEY=super-secret\nExpected 200, received 500.", 1)),
     ]);
 
     $validation = app(TaskValidator::class)->validate($task);
@@ -485,7 +516,16 @@ test('a failed coder execution is persisted and becomes eligible for a fresh att
         'context_capsule' => [],
         'status' => TaskStatus::Coding,
     ]);
-    Process::fake(['*' => Process::result(exitCode: 1, errorOutput: 'Codex failed.')]);
+    $project = coderExecutionProject();
+
+    mock(CodexCliRunner::class)
+        ->shouldReceive('runAtPath')
+        ->once()
+        ->andReturn([
+            'exit_code' => 1,
+            'output' => '',
+            'error_output' => 'Codex failed.',
+        ]);
 
     app(RunCoderTask::class)->handle($task);
 
@@ -517,9 +557,13 @@ test('a coder execution that makes no changes because the task is already implem
         'status' => TaskStatus::Coding,
     ]);
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->once()
-        ->andReturn(['exit_code' => 0, 'output' => '{"summary":"The feature already exists; no changes were needed."}', 'error_output' => '']);
+        ->andReturn([
+            'exit_code' => 0,
+            'output' => '{"summary":"The feature already exists; no changes were needed."}',
+            'error_output' => '',
+        ]);
 
     app(RunCoderTask::class)->handle($task);
 
@@ -555,9 +599,13 @@ test('a successful Coder run goes straight to Review with no deterministic valid
         'status' => TaskStatus::Coding,
     ]);
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->once()
-        ->andReturn(['exit_code' => 0, 'output' => '{"summary":"The feature already exists."}', 'error_output' => '']);
+        ->andReturn([
+            'exit_code' => 0,
+            'output' => '{"summary":"The feature already exists."}',
+            'error_output' => '',
+        ]);
     mock(TaskValidator::class)->shouldNotReceive('validate');
 
     app(RunCoderTask::class)->handle($task);

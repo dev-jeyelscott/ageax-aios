@@ -9,6 +9,9 @@ use App\Services\AgentContextAssembler;
 use App\Services\ContextCostEstimator;
 use Illuminate\Support\Str;
 
+/**
+ * Create one Project fixture for deterministic AgentContextAssembler tests.
+ */
 function assemblerProject(string $name): Project
 {
     return Project::factory()->create([
@@ -24,9 +27,10 @@ test('the assembled context follows the approved precedence order and carries a 
     $assembled = app(AgentContextAssembler::class)->assemble($agent, AgentRole::Coder, ['task_key' => 'TASK-001']);
     $payload = $assembled->toArray();
 
-    expect(array_keys($payload))->toBe(['context_schema_version', 'context_hash', 'system_rules', 'agent', 'skills', 'task_context'])
+    expect(array_keys($payload))->toBe(['context_schema_version', 'context_hash', 'system_rules', 'agent', 'skills', 'task_context', 'execution_settings'])
         ->and($payload['context_schema_version'])->toBe(AgentContextAssembler::ContextSchemaVersion)
         ->and($payload['task_context'])->toBe(['task_key' => 'TASK-001'])
+        ->and($payload['execution_settings'])->toBe([])
         ->and($payload['agent']['default_context'])->toBe('Prefer small, focused diffs.');
 });
 

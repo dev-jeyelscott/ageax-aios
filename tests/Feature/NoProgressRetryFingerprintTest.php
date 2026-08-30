@@ -21,7 +21,11 @@ use Illuminate\Support\Facades\Process;
 
 use function Pest\Laravel\mock;
 
-/** @return array{0: Project, 1: string, 2: string} */
+/**
+ * Create one Git-backed managed Project and return its canonical path and baseline HEAD.
+ *
+ * @return array{0: Project, 1: string, 2: string}
+ */
 function noProgressGitProject(): array
 {
     $path = sys_get_temp_dir().'/aios-no-progress-'.fake()->uuid();
@@ -43,6 +47,9 @@ function noProgressGitProject(): array
     return [$project, $path, $head];
 }
 
+/**
+ * Create one Task fixture for deterministic Coder or Reviewer retry handling.
+ */
 function noProgressTask(Project $project, string $key, int $position, TaskStatus $status): Task
 {
     return Task::create([
@@ -58,6 +65,9 @@ function noProgressTask(Project $project, string $key, int $position, TaskStatus
     ]);
 }
 
+/**
+ * Create one completed implementation attempt used as Reviewer evidence.
+ */
 function noProgressCompletedAttempt(Task $task, string $head): TaskAttempt
 {
     return TaskAttempt::create([
@@ -80,7 +90,7 @@ test('identical coder failures stop at the no-progress threshold before another 
     [$project] = noProgressGitProject();
     $task = noProgressTask($project, 'TASK-001', 1, TaskStatus::Coding);
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->twice()
         ->andReturn(
             ['exit_code' => 1, 'output' => '', 'error_output' => 'The same deterministic harness failure occurred.'],
@@ -117,7 +127,7 @@ test('a materially changed coder failure signature continues the normal fresh re
     [$project] = noProgressGitProject();
     $task = noProgressTask($project, 'TASK-001', 1, TaskStatus::Coding);
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->twice()
         ->andReturn(
             ['exit_code' => 1, 'output' => '', 'error_output' => 'First deterministic failure signature.'],
@@ -136,20 +146,31 @@ test('a materially changed coder failure signature continues the normal fresh re
         ->and(AgentRun::query()->whereBelongsTo($task)->where('role', AgentRole::Coder->value)->count())->toBe(2);
 });
 
-test('repository content progress resets the coder repeat count even when the same files still fail', function () {
+test('disposable failed coder worktree changes do not count as durable repository progress', function () {
     config()->set('aios.max_coder_attempts', 5);
     config()->set('aios.no_progress_repeat_threshold', 1);
     [$project, $path] = noProgressGitProject();
     $task = noProgressTask($project, 'TASK-001', 1, TaskStatus::Coding);
     $runNumber = 0;
-    mock(CodexCliRunner::class)
-        ->shouldReceive('run')
-        ->twice()
-        ->andReturnUsing(function () use (&$runNumber, $path): array {
-            $runNumber++;
-            File::put($path.'/feature.txt', $runNumber === 1 ? 'first draft' : 'second draft with progress');
 
-            return ['exit_code' => 1, 'output' => '', 'error_output' => 'The same harness failure occurred after editing.'];
+    mock(CodexCliRunner::class)
+        ->shouldReceive('runAtPath')
+        ->twice()
+        ->andReturnUsing(function (string $executionPath) use (&$runNumber): array {
+            // Simulate different disposable worktree contents without mutating canonical Git state.
+            $runNumber++;
+            File::put(
+                $executionPath.'/feature.txt',
+                $runNumber === 1
+                    ? 'first draft'
+                    : 'second draft with progress',
+            );
+
+            return [
+                'exit_code' => 1,
+                'output' => '',
+                'error_output' => 'The same harness failure occurred after editing.',
+            ];
         });
 
     app(RunCoderTask::class)->handle($task);
@@ -159,13 +180,16 @@ test('repository content progress resets the coder repeat count even when the sa
 
     $attempts = $task->attempts()->orderBy('number')->get();
 
-    expect($task->refresh()->status)->toBe(TaskStatus::Failed)
+    expect($task->refresh()->status)->toBe(TaskStatus::Blocked)
         ->and($attempts[0]->changed_files)->toBe(['feature.txt'])
         ->and($attempts[1]->changed_files)->toBe(['feature.txt'])
-        ->and($attempts[0]->validation_results['no_progress']['repository_fingerprint'])->not->toBe($attempts[1]->validation_results['no_progress']['repository_fingerprint'])
-        ->and($attempts[1]->validation_results['no_progress']['consecutive_repeat_count'])->toBe(0)
-        ->and($task->auditEvents()->where('event_type', 'task.no_progress_detected')->exists())->toBeFalse()
-        ->and(File::get($path.'/feature.txt'))->toBe('second draft with progress');
+        ->and($attempts[0]->validation_results['no_progress']['repository_fingerprint'])
+        ->toBe($attempts[1]->validation_results['no_progress']['repository_fingerprint'])
+        ->and($attempts[1]->validation_results['no_progress']['failure_fingerprint'])
+        ->toBe($attempts[0]->validation_results['no_progress']['failure_fingerprint'])
+        ->and($attempts[1]->validation_results['no_progress']['consecutive_repeat_count'])->toBe(1)
+        ->and($task->auditEvents()->where('event_type', 'task.no_progress_detected')->exists())->toBeTrue()
+        ->and(File::exists($path.'/feature.txt'))->toBeFalse();
 });
 
 test('the existing coder maximum attempt ceiling remains authoritative', function () {
@@ -174,7 +198,7 @@ test('the existing coder maximum attempt ceiling remains authoritative', functio
     [$project] = noProgressGitProject();
     $task = noProgressTask($project, 'TASK-001', 1, TaskStatus::Coding);
     mock(CodexCliRunner::class)
-        ->shouldReceive('run')
+        ->shouldReceive('runAtPath')
         ->once()
         ->andReturn(['exit_code' => 1, 'output' => '', 'error_output' => 'One failed execution.']);
 
