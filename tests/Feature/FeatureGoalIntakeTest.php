@@ -121,6 +121,13 @@ test('feature goal contract rejects provider-specific labels and scalar role req
         ->toThrow(ValidationException::class);
 });
 
+test('feature goal planning falls back to persisted stream output when a harness returns no normalized output', function () {
+    $source = file_get_contents(app_path('Actions/PlanFeatureGoal.php'));
+
+    expect($source)
+        ->toContain('$this->parser->parseAgentMessage((string) $run->fresh()->live_output)');
+});
+
 function featureGoalProject(): Project
 {
     return Project::create(['name' => 'Feature Goal', 'path' => sys_get_temp_dir().'/feature-goal-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);

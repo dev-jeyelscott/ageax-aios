@@ -56,6 +56,9 @@ class PlanFeatureGoal
         }
         $this->runs->complete($run, $execution);
         $output = $this->parser->parse($execution['output']);
+        if ($output === null) {
+            $output = $this->parser->parseAgentMessage((string) $run->fresh()->live_output);
+        }
         if ($execution['exit_code'] !== 0 || ! is_array($output)) {
             $featureSpec->update(['status' => 'planning_failed']);
             $this->audit->record('feature_goal.planning_failed', ['feature_spec_id' => $featureSpec->id, 'agent_run_id' => $run->id], $featureSpec->project);
