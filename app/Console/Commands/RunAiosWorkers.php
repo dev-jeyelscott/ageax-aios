@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Actions\ClaimTask;
 use App\Actions\ClaimTicketForTriage;
 use App\Actions\ConvertTicketToTask;
+use App\Actions\PlanFeatureGoal;
 use App\Actions\RunCoderTask;
 use App\Actions\RunProjectManager;
 use App\Actions\RunReviewerTask;
@@ -14,6 +15,7 @@ use App\Actions\SetProjectStatus;
 use App\AgentRole;
 use App\Models\Agent;
 use App\Models\AgentWorker;
+use App\Models\FeatureSpec;
 use App\Models\GoalRun;
 use App\Models\Project;
 use App\Models\Roadmap;
@@ -44,6 +46,7 @@ class RunAiosWorkers extends Command
      */
     public function handle(
         ClaimTask $claimTask,
+        PlanFeatureGoal $planFeatureGoal,
         ClaimTicketForTriage $claimTicketForTriage,
         ConvertTicketToTask $convertTicketToTask,
         RunCoderTask $runCoderTask,
@@ -133,6 +136,30 @@ class RunAiosWorkers extends Command
 
                     if ($this->stopRequested($project, $setProjectStatus)) {
                         continue;
+                    }
+                }
+
+                if (! $this->hasPendingRoadmapWork($project)) {
+                    $featureSpec = FeatureSpec::query()
+                        ->whereBelongsTo($project)
+                        ->whereIn('status', ['uploaded', 'planning_failed'])
+                        ->oldest()
+                        ->first();
+
+                    if ($featureSpec !== null) {
+                        $lease = $heartbeat->acquire($project, AgentRole::ProjectManager, $workerInstanceId, slot: self::PrimaryWorkerSlot);
+
+                        if ($lease !== null) {
+                            try {
+                                $this->info("Planning feature specification {$featureSpec->id} for project_manager.");
+                                $planFeatureGoal->handle($featureSpec, $lease);
+                                $this->markTaskCompleted($lease);
+                            } catch (Throwable $throwable) {
+                                report($throwable);
+                            } finally {
+                                $heartbeat->release($lease);
+                            }
+                        }
                     }
                 }
 

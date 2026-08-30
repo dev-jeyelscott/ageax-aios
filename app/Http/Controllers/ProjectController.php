@@ -6,7 +6,6 @@ use App\Actions\ApproveFeatureGoal;
 use App\Actions\ClearProjectTasks;
 use App\Actions\CreateProject;
 use App\Actions\DeleteProject;
-use App\Actions\PlanFeatureGoal;
 use App\Actions\ProvisionDefaultProjectAgents;
 use App\Actions\RecordProjectManagerMessage;
 use App\Actions\RecordTaskOperatorMessage;
@@ -272,10 +271,9 @@ class ProjectController extends Controller
         return $project;
     }
 
-    public function storeFeatureSpec(Project $project, StoreFeatureSpecRequest $request, StoreFeatureSpec $store, PlanFeatureGoal $planner): RedirectResponse
+    public function storeFeatureSpec(Project $project, StoreFeatureSpecRequest $request, StoreFeatureSpec $store): RedirectResponse
     {
         $featureSpec = $store->handle($project, $request->file('feature'), $request->user());
-        $planner->handle($featureSpec);
 
         return to_route('projects.show', $project);
     }
