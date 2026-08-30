@@ -142,7 +142,7 @@ class RunAiosWorkers extends Command
                 if (! $this->hasPendingRoadmapWork($project)) {
                     $featureSpec = FeatureSpec::query()
                         ->whereBelongsTo($project)
-                        ->whereIn('status', ['uploaded', 'planning_failed'])
+                        ->where('status', 'uploaded')
                         ->oldest()
                         ->first();
 

@@ -104,6 +104,14 @@ test('goal UI exposes editable approval, isolated session states, and durable ev
         ->not->toContain('provider_session_id');
 });
 
+test('failed feature planning requires an explicit retry instead of looping the PM worker', function () {
+    $source = file_get_contents(app_path('Console/Commands/RunAiosWorkers.php'));
+
+    expect($source)
+        ->toContain("->where('status', 'uploaded')")
+        ->not->toContain("->whereIn('status', ['uploaded', 'planning_failed'])");
+});
+
 function featureGoalProject(): Project
 {
     return Project::create(['name' => 'Feature Goal', 'path' => sys_get_temp_dir().'/feature-goal-'.fake()->uuid(), 'status' => ProjectStatus::Paused, 'git_status' => 'clean']);
