@@ -132,9 +132,12 @@ test('two same-base independent candidates integrate serially and the second rec
     $attemptB = parallelGitAttempt($taskB, $baseSha);
     $candidateA = parallelGitCandidate($taskA, $attemptA, 'task-a.txt', "A\n");
     $candidateB = parallelGitCandidate($taskB, $attemptB, 'task-b.txt', "B\n");
+    $candidateSubject = trim(Process::path($project->path)->run(['git', 'show', '-s', '--format=%s', (string) $candidateA['candidate_sha']])->output());
     $integrator = app(TaskGitIntegrator::class);
 
     try {
+        expect($candidateSubject)->toBe('chore(P10-005-A): Parallel Git task 1');
+
         $resultA = $integrator->integrate($taskA, $attemptA, $candidateA);
         $resultB = $integrator->integrate($taskB, $attemptB, $candidateB);
 

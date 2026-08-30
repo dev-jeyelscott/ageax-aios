@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttempt;
+use App\TaskCommitMessage;
 use Illuminate\Cache\Lock;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\LockTimeoutException;
@@ -30,6 +31,7 @@ final class TaskGitIntegrator
         private WorkspacePathResolver $paths,
         private ProjectGitState $git,
         private IsolatedGitWorktreeManager $worktrees,
+        private TaskCommitMessage $messages,
     ) {}
 
     /**
@@ -658,7 +660,7 @@ final class TaskGitIntegrator
      */
     private function candidateMessage(Task $task, TaskAttempt $attempt): string
     {
-        return "{$task->key}: {$task->title}\n\n{$this->attemptTrailer($task, $attempt)}\n";
+        return "{$this->messages->for($task)}\n\n{$this->attemptTrailer($task, $attempt)}\n";
     }
 
     /**

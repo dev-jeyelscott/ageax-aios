@@ -3,11 +3,12 @@
 namespace App\Services;
 
 use App\Models\Task;
+use App\TaskCommitMessage;
 use Illuminate\Support\Facades\Process;
 
 class TaskCommitter
 {
-    public function __construct(private WorkspacePathResolver $paths, private ProjectGitState $git) {}
+    public function __construct(private WorkspacePathResolver $paths, private ProjectGitState $git, private TaskCommitMessage $messages) {}
 
     /** @param array<int, string> $changedFiles */
     public function commit(Task $task, array $changedFiles, ?string $baseSha = null): ?string
@@ -48,7 +49,7 @@ class TaskCommitter
             return null;
         }
 
-        $commit = Process::path($projectPath)->run(['git', '--literal-pathspecs', 'commit', '--only', '-m', "{$task->key}: {$task->title}", '--', ...$changedFiles]);
+        $commit = Process::path($projectPath)->run(['git', '--literal-pathspecs', 'commit', '--only', '-m', $this->messages->for($task), '--', ...$changedFiles]);
 
         if ($commit->failed()) {
             return null;

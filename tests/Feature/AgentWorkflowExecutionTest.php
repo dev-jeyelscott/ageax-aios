@@ -177,11 +177,13 @@ test('the task committer excludes files that existed before the agent attempt', 
 
     $commit = app(TaskCommitter::class)->commit($task, ['task.txt']);
     $committedFiles = Process::path($path)->run(['git', 'show', '--format=', '--name-only', 'HEAD']);
+    $commitSubject = trim(Process::path($path)->run(['git', 'show', '-s', '--format=%s', 'HEAD'])->output());
     $status = Process::path($path)->run(['git', 'status', '--porcelain']);
 
     expect($commit)->not->toBeNull()
         ->and($committedFiles->output())->toContain('task.txt')
         ->and($committedFiles->output())->not->toContain('unrelated.txt')
+        ->and($commitSubject)->toBe('chore(TASK-001): Reviewable task')
         ->and($status->output())->toContain('unrelated.txt')
         ->and($project->refresh()->git_head_sha)->toBe($commit)
         ->and($project->git_status)->toBe('dirty');
