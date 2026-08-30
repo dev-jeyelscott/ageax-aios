@@ -31,6 +31,7 @@ final readonly class ContextBudgetedAgentHarness
         private AgentHandoffContextSelector $handoffs,
         private ConsumeAgentHandoffs $consumeHandoffs,
         private AuditLogger $audit,
+        private AgentExecutionProfile $profiles,
     ) {}
 
     /**
@@ -216,10 +217,27 @@ final readonly class ContextBudgetedAgentHarness
                 ],
         ];
 
+        $runResult = $this->arrayAttribute($run, 'result');
+        $recoverySnapshot = $recoverySource === null
+            ? null
+            : $this->arrayAttribute($recoverySource, 'configuration_snapshot');
+        $recoveryProfile = $recoverySnapshot['execution_profile'] ?? null;
+
         $run->update([
             'prompt_hash' => $evidence['final_prompt_hash'],
-            'configuration_snapshot' => $finalContext
-                ->configurationSnapshot(),
+            'configuration_snapshot' => [
+                ...$finalContext->configurationSnapshot(),
+                'execution_profile' => is_array($recoveryProfile)
+                    ? $recoveryProfile
+                    : $this->profiles->resolve(
+                        $agent,
+                        $this->role($run),
+                        $finalContext,
+                        $decision->prompt,
+                        $harness,
+                        $runResult['retrieval_manifest'] ?? null,
+                    ),
+            ],
             'context_schema_version' => $finalContext
                 ->contextSchemaVersion,
             'context_cost_estimate' => $finalContext
@@ -403,13 +421,31 @@ final readonly class ContextBudgetedAgentHarness
 
         if (
             $candidateSnapshot === null
-            || $candidateSnapshot
-                !== $configurationSnapshot
+            || ! $this->sameConfigurationSnapshot(
+                $candidateSnapshot,
+                $configurationSnapshot,
+            )
         ) {
             return null;
         }
 
         return $candidate;
+    }
+
+    /**
+     * An execution profile contains the role prompt hash, which can legitimately differ while
+     * AIOS resumes the same persisted context after adding recovery instructions. The immutable
+     * context/model/skills/settings snapshot remains the recovery identity; final profile evidence
+     * is copied from the interrupted run once that identity has been proven.
+     *
+     * @param  array<string, mixed>  $left
+     * @param  array<string, mixed>  $right
+     */
+    private function sameConfigurationSnapshot(array $left, array $right): bool
+    {
+        unset($left['execution_profile'], $right['execution_profile']);
+
+        return $left === $right;
     }
 
     /**

@@ -45,6 +45,17 @@ export type ConfigurationSnapshot = {
     context_hash: string;
     agent: ConfigurationSnapshotAgent;
     skills: ConfigurationSnapshotSkill[];
+    execution_profile?: {
+        schema_version: number;
+        context: { hash: string; retrieval_manifest_hash: string | null };
+        prompt: { hash: string; source: string; raw_prompt_persisted: boolean };
+        tools: {
+            capabilities_resolved: boolean;
+            workspace_boundary: string;
+            write_boundary: string;
+            command_boundary: string;
+        };
+    };
 };
 
 export type ContextCostMeasurement = {
@@ -596,6 +607,44 @@ export function ConfigurationEvidenceCard({
                                 {snapshot.context_hash}
                             </p>
                         </div>
+
+                        {snapshot.execution_profile && (
+                            <div className="grid gap-2 sm:grid-cols-2">
+                                <div className="panel-recessed p-2.5">
+                                    <p className="font-mono text-2xs tracking-[0.08em] text-muted-foreground uppercase">
+                                        Prompt evidence
+                                    </p>
+                                    <p className="mt-1 font-mono text-2xs leading-5 break-all text-primary">
+                                        {snapshot.execution_profile.prompt.hash}
+                                    </p>
+                                    <p className="mt-1 text-2xs text-muted-foreground">
+                                        {
+                                            snapshot.execution_profile.prompt
+                                                .source
+                                        }
+                                        ; raw prompt not persisted
+                                    </p>
+                                </div>
+
+                                <div className="panel-recessed p-2.5">
+                                    <p className="font-mono text-2xs tracking-[0.08em] text-muted-foreground uppercase">
+                                        Tool boundary
+                                    </p>
+                                    <p className="mt-1 text-xs text-foreground">
+                                        {snapshot.execution_profile.tools
+                                            .capabilities_resolved
+                                            ? 'Harness capabilities validated'
+                                            : 'Awaiting harness capability resolution'}
+                                    </p>
+                                    <p className="mt-1 font-mono text-2xs text-muted-foreground">
+                                        {snapshot.execution_profile.tools.write_boundary.replaceAll(
+                                            '_',
+                                            ' ',
+                                        )}
+                                    </p>
+                                </div>
+                            </div>
+                        )}
 
                         {agentRun.external_run_id && (
                             <div className="panel-recessed p-2.5">

@@ -25,6 +25,7 @@ class AgentRunRecorder
         private AuditLogger $audit,
         private TokenUsageObservability $tokens,
         private TokenUsageNormalizer $usage,
+        private AgentExecutionProfile $profiles,
     ) {}
 
     /**
@@ -49,7 +50,9 @@ class AgentRunRecorder
             'attempt_number' => $attempt?->number,
             'prompt_hash' => hash('sha256', $prompt),
             'result' => $retrievalManifest === null ? null : ['retrieval_manifest' => $retrievalManifest],
-            'configuration_snapshot' => $context?->configurationSnapshot(),
+            'configuration_snapshot' => $context === null || $agent === null
+                ? null
+                : [...$context->configurationSnapshot(), 'execution_profile' => $this->profiles->resolve($agent, $role, $context, $prompt, retrievalManifest: $retrievalManifest)],
             'context_schema_version' => $context?->contextSchemaVersion,
             'context_cost_estimate' => $context?->contextCostEstimate,
             'context_cost_schema_version' => $context?->contextCostSchemaVersion,

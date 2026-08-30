@@ -39,6 +39,9 @@ class TaskContextCapsuleFactory
             $retrievalManifest['review_risk_map'] = $this->reviewRiskMap($task, $previousAttempt);
         }
 
+        $planning = $task->getAttribute('context_capsule');
+        $planning = is_array($planning) ? $planning : [];
+
         return [
             'task_key' => $task->key,
             'title' => $task->title,
@@ -50,6 +53,12 @@ class TaskContextCapsuleFactory
             'dependencies' => $task->dependencies()->pluck('key')->all(),
             'relevant_paths' => $task->relevant_paths,
             'verification_commands' => $task->verification_commands,
+            'planning' => array_filter([
+                'slice_classification' => $planning['slice_classification'] ?? null,
+                'observable_behavior' => $planning['observable_behavior'] ?? null,
+                'verification_boundary' => $planning['verification_boundary'] ?? null,
+                'acceptance_contract' => $planning['acceptance_contract'] ?? null,
+            ], fn (mixed $value): bool => is_string($value) && $value !== ''),
             'project_runtime_capabilities' => $this->runtime->detect($task->project),
             'previous_attempt' => $this->previousAttemptContext($previousAttempt, $recipientRole),
             'obsidian_project_knowledge' => $retrieval['notes'],

@@ -11,6 +11,8 @@ use App\Models\Skill;
 use App\Models\Task;
 use App\ProjectStatus;
 use App\Services\AgentContextAssembler;
+use App\Services\AgentExecutionProfile;
+use App\Services\CodexHarness;
 use App\TaskStatus;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
@@ -60,7 +62,15 @@ test('a run bound to an agent persists an immutable configuration snapshot', fun
         ->and($run->configuration_snapshot['agent']['configuration_version'])->toBe($agent->configuration_version)
         ->and(collect($run->configuration_snapshot['skills'])->pluck('slug')->all())->toBe(['style-skill'])
         ->and($run->configuration_snapshot['skills'][0]['version'])->toBe($skill->version)
-        ->and($run->configuration_snapshot)->toHaveKey('context_hash');
+        ->and($run->configuration_snapshot)->toHaveKey('context_hash')
+        ->and($run->configuration_snapshot['execution_profile']['schema_version'])->toBe(1)
+        ->and($run->configuration_snapshot['execution_profile']['context']['hash'])->toBe($run->configuration_snapshot['context_hash'])
+        ->and($run->configuration_snapshot['execution_profile']['model']['agent_id'])->toBe($agent->id)
+        ->and($run->configuration_snapshot['execution_profile']['model']['harness'])->toBe('codex')
+        ->and($run->configuration_snapshot['execution_profile']['prompt']['hash'])->toBe($run->prompt_hash)
+        ->and($run->configuration_snapshot['execution_profile']['prompt']['raw_prompt_persisted'])->toBeFalse()
+        ->and($run->configuration_snapshot['execution_profile']['tools']['capabilities_resolved'])->toBeFalse()
+        ->and($run->configuration_snapshot['execution_profile']['tools']['workspace_boundary'])->toBe('aios_owned_project_scoped');
 });
 
 test('editing the agent or skill afterward never changes an already persisted run snapshot', function () {
@@ -81,6 +91,29 @@ test('editing the agent or skill afterward never changes an already persisted ru
         ->and($run->refresh()->configuration_snapshot)->toBe($originalSnapshot)
         ->and($run->configuration_snapshot['agent']['configuration_version'])->toBe($originalConfigurationVersion)
         ->and($run->configuration_snapshot['agent']['model'])->toBeNull();
+});
+
+test('execution profile evidence redacts sensitive execution settings', function () {
+    $project = snapshotProject('Profile redaction project');
+    $agent = Agent::factory()->for($project)->create(['role' => AgentRole::Coder]);
+    $context = app(AgentContextAssembler::class)
+        ->assemble($agent, AgentRole::Coder, ['task_key' => 'TASK-001'])
+        ->withExecutionSettings(['max_execution_seconds' => 60, 'api_token' => 'never-persist-this']);
+
+    $profile = app(AgentExecutionProfile::class)->resolve(
+        $agent,
+        AgentRole::Coder,
+        $context,
+        'Implement the bounded task.',
+        app(CodexHarness::class),
+    );
+
+    expect($profile['tools']['execution_settings'])->toBe([
+        'max_execution_seconds' => 60,
+        'api_token' => '[REDACTED]',
+    ])
+        ->and($profile['tools']['capabilities_resolved'])->toBeTrue()
+        ->and(json_encode($profile, JSON_THROW_ON_ERROR))->not->toContain('never-persist-this');
 });
 
 test('a run for an unbound legacy project remains a legacy run without a snapshot', function () {
