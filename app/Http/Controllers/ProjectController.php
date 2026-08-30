@@ -14,6 +14,7 @@ use App\Actions\RequeueBlockedTask;
 use App\Actions\SetProjectStatus;
 use App\Actions\SkipBlockedTask;
 use App\Actions\StoreRoadmap;
+use App\Actions\UpdateProjectCoderConcurrency;
 use App\AgentHarness;
 use App\AgentRole;
 use App\Http\Requests\SkipBlockedTaskRequest;
@@ -21,6 +22,7 @@ use App\Http\Requests\StoreProjectManagerMessageRequest;
 use App\Http\Requests\StoreProjectRequest;
 use App\Http\Requests\StoreRoadmapRequest;
 use App\Http\Requests\StoreTaskOperatorMessageRequest;
+use App\Http\Requests\UpdateProjectCoderConcurrencyRequest;
 use App\Http\Requests\UpdateProjectStatusRequest;
 use App\Http\Requests\UpdateProjectStewardshipPolicyRequest;
 use App\Models\AgentRun;
@@ -478,6 +480,7 @@ class ProjectController extends Controller
      * @return array<int, array{
      *     id: int,
      *     role: string,
+     *     slot: int,
      *     status: string,
      *     last_heartbeat_at: ?string,
      *     cooldown_ends_at: ?string,
@@ -518,12 +521,14 @@ class ProjectController extends Controller
                 'id',
                 'project_id',
                 'role',
+                'slot',
                 'status',
                 'last_heartbeat_at',
                 'lease_expires_at',
                 'task_completed_at',
             ])
             ->orderBy('role')
+            ->orderBy('slot')
             ->with([
                 'runs' => fn ($query) => $query
                     ->select([
@@ -612,6 +617,7 @@ class ProjectController extends Controller
                 'role' => $worker->getRawOriginal(
                     'role',
                 ),
+                'slot' => (int) $worker->slot,
                 'status' => $workerStatus,
                 'last_heartbeat_at' => $this->serializeDateAttribute(
                     $worker,
@@ -1205,6 +1211,20 @@ class ProjectController extends Controller
         $policy['automatic_task_creation'] = $request->boolean('automatic_task_creation');
         $project->update(['stewardship_policy' => $policy]);
         $audit->record('stewardship.policy_updated', ['automatic_task_creation' => $policy['automatic_task_creation']], $project);
+
+        return to_route('projects.show', $project);
+    }
+
+    /** Persist the authorized, validated per-project Coder concurrency bound of 1 or 2. */
+    public function updateCoderConcurrency(
+        UpdateProjectCoderConcurrencyRequest $request,
+        Project $project,
+        UpdateProjectCoderConcurrency $updateCoderConcurrency,
+    ): RedirectResponse {
+        $updateCoderConcurrency->handle(
+            $project,
+            $request->integer('coder_concurrency'),
+        );
 
         return to_route('projects.show', $project);
     }

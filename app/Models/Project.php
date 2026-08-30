@@ -10,10 +10,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['name', 'path', 'status', 'git_status', 'git_head_sha', 'obsidian_path', 'paused_at', 'roadmap_scanned_at', 'stewardship_policy'])]
+#[Fillable(['name', 'path', 'status', 'git_status', 'git_head_sha', 'obsidian_path', 'paused_at', 'roadmap_scanned_at', 'stewardship_policy', 'coder_concurrency'])]
 /**
  * @property ProjectStatus $status
  * @property CarbonImmutable|null $roadmap_scanned_at
+ * @property int $coder_concurrency
  */
 class Project extends Model
 {
@@ -22,7 +23,17 @@ class Project extends Model
 
     protected function casts(): array
     {
-        return ['status' => ProjectStatus::class, 'paused_at' => 'immutable_datetime', 'roadmap_scanned_at' => 'immutable_datetime', 'stewardship_policy' => 'array'];
+        return ['status' => ProjectStatus::class, 'paused_at' => 'immutable_datetime', 'roadmap_scanned_at' => 'immutable_datetime', 'stewardship_policy' => 'array', 'coder_concurrency' => 'integer'];
+    }
+
+    /**
+     * Return the authorized, validated, bounded number of concurrent Coder execution slots for this project.
+     */
+    public function coderConcurrency(): int
+    {
+        $concurrency = (int) $this->getAttribute('coder_concurrency');
+
+        return in_array($concurrency, [1, 2], true) ? $concurrency : 1;
     }
 
     /** @return HasMany<Roadmap, $this> */

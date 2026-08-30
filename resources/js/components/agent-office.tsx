@@ -37,6 +37,7 @@ type RunConfiguration = {
 export type OfficeWorker = {
     id: number;
     role: string;
+    slot: number;
     status: string;
     last_heartbeat_at: string | null;
     cooldown_ends_at: string | null;

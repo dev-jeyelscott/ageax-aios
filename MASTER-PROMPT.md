@@ -159,7 +159,7 @@ It must **not directly mutate arbitrary application/database state** and must no
 
 ### Coder
 
-The Coder works on exactly **one eligible task at a time**.
+The Coder works on exactly **one eligible task at a time per worker slot**. A project's authorized Coder concurrency (1 by default, at most 2) bounds how many worker slots — and therefore how many Coder tasks — may be active for that project at once; each slot still works one task at a time.
 
 Required flow:
 
@@ -181,7 +181,7 @@ changes_required
 
 Within the current phase, reaching `ready_for_review` completes the Coder's implementation work for that task. AIOS may then allow the Coder to claim the next eligible task in the same phase without waiting for the previous task to become `done`, provided persisted dependency rules allow that task to start.
 
-This phase batching does not permit parallel coding. Only one Coder task may be actively claimed or executed at a time.
+This phase batching does not by itself permit parallel coding. Only one Coder task may be actively claimed or executed per worker slot at a time; a project configured at the default concurrency of 1 has exactly one slot and therefore exactly one active Coder task, matching the historical serial behavior exactly.
 
 The Coder must:
 
@@ -623,7 +623,7 @@ Agents must not arbitrarily change task state.
 
 ### Serial Phase Execution
 
-Execution remains strictly serial. Serial means AIOS permits only one active Coder task and one active Reviewer task according to the authoritative workflow rules; it does **not** require every Coder task to become `done` before the next same-phase implementation may begin.
+Project Manager and Reviewer execution remain strictly serial: AIOS permits only one active Reviewer task at a time according to the authoritative workflow rules. Coder execution is serial by default and supports an authorized bounded exception of at most 2 concurrent active Coder tasks per project, each on its own durable worker slot and lease, admitted only when the deterministic dependency-safety evaluation proves the candidate Tasks are independent. It does **not** require every Coder task to become `done` before the next eligible implementation may begin.
 
 AIOS runs separate role-scoped worker processes (`aios:work --role=project_manager`, `--role=coder`, and `--role=reviewer`). The Coder and Reviewer processes may overlap after a Task reaches `ready_for_review`; durable per-role leases retain the authoritative single-task boundary for each role.
 
@@ -1056,7 +1056,7 @@ Keep execution contexts disposable, system state durable, prompts targeted, exec
 
 ## Phase 4+ Architectural Governance Contract
 
-Phase 4+ may introduce additional advisory roles and bounded capabilities only through separately approved implementation tasks. This governance contract records future authority boundaries; it does not activate the Orchestrator, Knowledge Architect, voice, Agent handoffs, parallel execution, custom workflows, or automatic routing, and it does not change the current serial Project Manager/Coder/Reviewer runtime.
+Phase 4+ may introduce additional advisory roles and bounded capabilities only through separately approved implementation tasks. This governance contract records future authority boundaries; it does not activate the Orchestrator, Knowledge Architect, voice, Agent handoffs, additional parallel execution beyond the implemented bounded Coder concurrency described below, custom workflows, or automatic routing, and it does not change the current serial Project Manager/Reviewer runtime or the serial-by-default Coder runtime.
 
 Historical Phase 2 and Phase 3 statements remain true for those phases. They must not be read as permission to bypass this contract when a later approved phase introduces a governed capability.
 
@@ -1127,9 +1127,9 @@ A handoff is evidence. It never grants permissions, selects a worker, claims wor
 
 ### Parallel execution requires isolated Git workspaces
 
-Current Coder and Reviewer execution remains serial until a separately approved parallelism phase implements otherwise. Future parallel Coder execution is an explicitly controlled exception and must preserve Task dependencies, phase eligibility, authorization, worker leases, Context Budget enforcement, deterministic validation, recovery, and auditing.
+Coder execution supports bounded per-project concurrency of 1 or 2, defaulting every project to 1. An authorized operator may raise a project to concurrency 2; only then may AIOS admit a second independent Coder Task onto a second durable worker slot. Every admission — whether concurrency is 1 or 2 — must preserve Task dependencies, phase eligibility, authorization, worker leases, Context Budget enforcement, deterministic validation, recovery, and auditing. Unknown or unsafe dependency/resource impact always defaults to serial execution with a durable safety decision and reason, regardless of the configured concurrency bound. Project Manager and Reviewer execution remain strictly serial with no additional worker lanes; concurrency never applies to those roles.
 
-Each concurrent implementation must run in its own AIOS-owned isolated Git worktree or equivalent isolated workspace from a known base. Multiple Coders must never edit the same mutable checkout. Repository integration remains serialized per repository and AIOS-owned. Agents and harnesses must never merge or integrate concurrent work themselves. Unknown or unsafe dependency/resource impact defaults to serial execution.
+Each concurrent Coder implementation must run in its own AIOS-owned isolated Git worktree or equivalent isolated workspace from a known base. Multiple Coders must never edit the same mutable checkout. Git integration and repository merging remain serialized per repository and AIOS-owned; Agents and harnesses must never merge or integrate concurrent work themselves. Lowering concurrency back to 1 stops new admission onto the second slot but must never interrupt or invalidate already active work still holding that slot's lease.
 
 ### Custom workflows are bounded declarative topology
 

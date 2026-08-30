@@ -40,7 +40,9 @@ class RunAiosWorkers extends Command
     private const int PrimaryWorkerSlot = 1;
 
     /**
-     * Execute the durable AIOS worker loop using only primary slot 1 until parallel claiming is separately enabled.
+     * Execute the durable AIOS worker loop. Project Manager and Reviewer remain pinned to primary
+     * slot 1. Coder uses primary slot 1 alone unless the project's authorized concurrency is 2, in
+     * which case every Coder slot up to that bound uses the lease-bound dependency-safe claim primitive.
      */
     public function handle(
         ClaimTask $claimTask,
@@ -232,74 +234,21 @@ class RunAiosWorkers extends Command
                 }
 
                 foreach ($this->taskRoles($requestedRole) as $role) {
-                    $task = $workflow->claimedTask($project, $role);
-
                     if (
-                        $task === null
-                        && $this->onTaskCooldown($project, $role)
-                    ) {
-                        continue;
-                    }
-
-                    // P10-003 only introduces durable slot capacity. P10-004 owns concurrent task
-                    // claiming, so the normal worker loop remains explicitly pinned to slot 1.
-                    $lease = $heartbeat->acquire(
-                        $project,
-                        $role,
-                        $workerInstanceId,
-                        slot: self::PrimaryWorkerSlot,
-                    );
-
-                    if ($lease === null) {
-                        continue;
-                    }
-
-                    $task ??= $claimTask->handle($project, $role);
-
-                    if ($task !== null) {
-                        $agentName = $this->agentNameForLease(
-                            $lease,
+                        $this->runRoleSlots(
+                            $project,
                             $role,
-                        );
-
-                        $this->info(
-                            "Processing {$task->key} for {$role->value} [agent: {$agentName}].",
-                        );
-
-                        try {
-                            if ($role === AgentRole::Coder) {
-                                $runCoderTask->handle($task, $lease);
-                            } else {
-                                $attempt = $task->attempts()
-                                    ->latest('number')
-                                    ->firstOrFail();
-
-                                $runReviewerTask->run(
-                                    $task,
-                                    $attempt,
-                                    $lease,
-                                );
-                            }
-                        } catch (Throwable $throwable) {
-                            report($throwable);
-                        } finally {
-                            $this->markTaskCompleted($lease);
-                            $heartbeat->release($lease);
-                        }
-
-                        if (
-                            $this->stopRequested(
-                                $project,
-                                $setProjectStatus,
-                            )
-                        ) {
-                            continue 2;
-                        }
-
-                        continue;
+                            $workerInstanceId,
+                            $workflow,
+                            $heartbeat,
+                            $claimTask,
+                            $runCoderTask,
+                            $runReviewerTask,
+                            $setProjectStatus,
+                        )
+                    ) {
+                        continue 2;
                     }
-
-                    $heartbeat->release($lease);
                 }
             }
 
@@ -395,6 +344,187 @@ class RunAiosWorkers extends Command
     }
 
     /**
+     * Process every worker slot configured for one role, returning whether an operator stop was observed.
+     */
+    private function runRoleSlots(
+        Project $project,
+        AgentRole $role,
+        string $workerInstanceId,
+        TaskWorkflow $workflow,
+        WorkerHeartbeat $heartbeat,
+        ClaimTask $claimTask,
+        RunCoderTask $runCoderTask,
+        RunReviewerTask $runReviewerTask,
+        SetProjectStatus $setProjectStatus,
+    ): bool {
+        if ($role !== AgentRole::Coder || $project->coderConcurrency() === 1) {
+            return $this->runPrimarySlot(
+                $project,
+                $role,
+                $workerInstanceId,
+                $workflow,
+                $heartbeat,
+                $claimTask,
+                $runCoderTask,
+                $runReviewerTask,
+                $setProjectStatus,
+            );
+        }
+
+        foreach (range(1, $project->coderConcurrency()) as $slot) {
+            if (
+                $this->runConcurrentCoderSlot(
+                    $project,
+                    $slot,
+                    $workerInstanceId,
+                    $workflow,
+                    $heartbeat,
+                    $claimTask,
+                    $runCoderTask,
+                    $setProjectStatus,
+                )
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Run the legacy single-slot serial path pinned to slot 1, unchanged for concurrency-1 projects
+     * and for the always-serial Reviewer role.
+     */
+    private function runPrimarySlot(
+        Project $project,
+        AgentRole $role,
+        string $workerInstanceId,
+        TaskWorkflow $workflow,
+        WorkerHeartbeat $heartbeat,
+        ClaimTask $claimTask,
+        RunCoderTask $runCoderTask,
+        RunReviewerTask $runReviewerTask,
+        SetProjectStatus $setProjectStatus,
+    ): bool {
+        // Resolve slot-1 resumption through the slot-aware lookup so a Task actively owned by
+        // another live Coder slot (e.g. after concurrency was lowered while it was still coding)
+        // is never re-driven under the wrong worker/lease.
+        $task = $role === AgentRole::Coder
+            ? $workflow->claimedCoderTaskForSlot($project, self::PrimaryWorkerSlot)
+            : $workflow->claimedTask($project, $role);
+
+        if ($task === null && $this->onTaskCooldown($project, $role)) {
+            return false;
+        }
+
+        $lease = $heartbeat->acquire(
+            $project,
+            $role,
+            $workerInstanceId,
+            slot: self::PrimaryWorkerSlot,
+        );
+
+        if ($lease === null) {
+            return false;
+        }
+
+        $task ??= $claimTask->handle($project, $role);
+
+        if ($task === null) {
+            $heartbeat->release($lease);
+
+            return false;
+        }
+
+        $agentName = $this->agentNameForLease($lease, $role);
+
+        $this->info(
+            "Processing {$task->key} for {$role->value} [agent: {$agentName}].",
+        );
+
+        try {
+            if ($role === AgentRole::Coder) {
+                $runCoderTask->handle($task, $lease);
+            } else {
+                $attempt = $task->attempts()
+                    ->latest('number')
+                    ->firstOrFail();
+
+                $runReviewerTask->run($task, $attempt, $lease);
+            }
+        } catch (Throwable $throwable) {
+            report($throwable);
+        } finally {
+            $this->markTaskCompleted($lease);
+            $heartbeat->release($lease);
+        }
+
+        return $this->stopRequested($project, $setProjectStatus);
+    }
+
+    /**
+     * Run one bounded concurrent Coder worker slot using the lease-bound dependency-safe claim primitive.
+     *
+     * Every slot uses the concurrent primitive once a project is configured above concurrency 1, so
+     * admission across all its Coder slots shares one consistent, dependency-safe evaluation path.
+     */
+    private function runConcurrentCoderSlot(
+        Project $project,
+        int $slot,
+        string $workerInstanceId,
+        TaskWorkflow $workflow,
+        WorkerHeartbeat $heartbeat,
+        ClaimTask $claimTask,
+        RunCoderTask $runCoderTask,
+        SetProjectStatus $setProjectStatus,
+    ): bool {
+        $task = $workflow->claimedCoderTaskForSlot($project, $slot);
+
+        if (
+            $task === null
+            && $this->onTaskCooldown($project, AgentRole::Coder, $slot)
+        ) {
+            return false;
+        }
+
+        $lease = $heartbeat->acquire(
+            $project,
+            AgentRole::Coder,
+            $workerInstanceId,
+            slot: $slot,
+        );
+
+        if ($lease === null) {
+            return false;
+        }
+
+        $task ??= $claimTask->handle($project, AgentRole::Coder, $lease);
+
+        if ($task === null) {
+            $heartbeat->release($lease);
+
+            return false;
+        }
+
+        $agentName = $this->agentNameForLease($lease, AgentRole::Coder);
+
+        $this->info(
+            "Processing {$task->key} for coder [agent: {$agentName}, slot: {$slot}].",
+        );
+
+        try {
+            $runCoderTask->handle($task, $lease);
+        } catch (Throwable $throwable) {
+            report($throwable);
+        } finally {
+            $this->markTaskCompleted($lease);
+            $heartbeat->release($lease);
+        }
+
+        return $this->stopRequested($project, $setProjectStatus);
+    }
+
+    /**
      * Determine whether roadmap work still owns Project Manager scheduling precedence.
      */
     private function hasPendingRoadmapWork(Project $project): bool
@@ -448,16 +578,18 @@ class RunAiosWorkers extends Command
     }
 
     /**
-     * Determine whether primary slot 1 is still within the configured Coder or Reviewer cooldown.
+     * Determine whether the exact requested Coder or Reviewer worker slot is still within its cooldown.
      */
     private function onTaskCooldown(
         Project $project,
         AgentRole $role,
+        int $slot = self::PrimaryWorkerSlot,
     ): bool {
         return $this->onCooldown(
             $project,
             $role,
             (int) config('aios.worker_task_cooldown_seconds'),
+            $slot,
         );
     }
 
@@ -474,12 +606,13 @@ class RunAiosWorkers extends Command
     }
 
     /**
-     * Evaluate the cooldown timestamp for the exact primary role slot used by the serial scheduler.
+     * Evaluate the cooldown timestamp for the exact role and worker slot used by the scheduler.
      */
     private function onCooldown(
         Project $project,
         AgentRole $role,
         int $cooldownSeconds,
+        int $slot = self::PrimaryWorkerSlot,
     ): bool {
         $cooldownSeconds = max(0, $cooldownSeconds);
 
@@ -490,7 +623,7 @@ class RunAiosWorkers extends Command
         $worker = AgentWorker::query()
             ->whereBelongsTo($project)
             ->where('role', $role)
-            ->where('slot', self::PrimaryWorkerSlot)
+            ->where('slot', $slot)
             ->first();
 
         $taskCompletedAt = $worker?->getAttribute('task_completed_at');

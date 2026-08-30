@@ -187,6 +187,42 @@ class TaskWorkflow
     }
 
     /**
+     * Return the currently claimed non-cleared Coder Task durably attributed to one exact worker slot.
+     *
+     * Slot 1 also matches legacy Coder claims made through the non-concurrent path, which never
+     * attribute a `coder_worker_id`. Higher slots only resume Tasks this exact slot's worker claimed.
+     */
+    public function claimedCoderTaskForSlot(Project $project, int $slot): ?Task
+    {
+        $worker = AgentWorker::query()
+            ->whereBelongsTo($project)
+            ->where('role', AgentRole::Coder)
+            ->where('slot', $slot)
+            ->first();
+
+        $workerId = $worker === null ? null : (int) $worker->getKey();
+
+        return $project->tasks()
+            ->notCleared()
+            ->whereIn('status', [TaskStatus::Coding, TaskStatus::Validating])
+            ->where(function ($query) use ($workerId, $slot): void {
+                if ($slot === 1) {
+                    $query->whereNull('coder_worker_id');
+
+                    if ($workerId !== null) {
+                        $query->orWhere('coder_worker_id', $workerId);
+                    }
+
+                    return;
+                }
+
+                $query->where('coder_worker_id', $workerId ?? 0);
+            })
+            ->orderBy('position')
+            ->first();
+    }
+
+    /**
      * Block repeated rejected Reviews that show no implementation progress.
      */
     public function blockRepeatedRejectedReviews(Task $task): bool

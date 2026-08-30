@@ -25,6 +25,7 @@ import {
     show as showProject,
     showAgentRun,
     showTask,
+    updateCoderConcurrency,
     updateStatus,
 } from '@/actions/App/Http/Controllers/ProjectController';
 import type { OfficeWorkflow, OfficeWorker } from '@/components/agent-office';
@@ -182,6 +183,7 @@ type Project = {
     git_evidence: GitEvidence | null;
     reconciliation: Reconciliation;
     stewardship: Stewardship;
+    coder_concurrency: number;
     recent_agent_runs: AgentRun[];
     audit_events: {
         id: number;
@@ -1258,6 +1260,28 @@ function HarnessUsageOverviewCard({ project }: { project: Project }) {
 }
 
 function WorkerStateCard({ project }: { project: Project }) {
+    const coderWorkers = project.office_workers
+        .filter((candidate) => candidate.role === 'coder')
+        .sort((a, b) => a.slot - b.slot);
+
+    const slots = [
+        ...['project_manager'].map((role) => ({
+            role,
+            worker: project.office_workers.find(
+                (candidate) => candidate.role === role,
+            ),
+        })),
+        ...(coderWorkers.length > 0
+            ? coderWorkers.map((worker) => ({ role: 'coder', worker }))
+            : [{ role: 'coder', worker: undefined }]),
+        ...['reviewer'].map((role) => ({
+            role,
+            worker: project.office_workers.find(
+                (candidate) => candidate.role === role,
+            ),
+        })),
+    ];
+
     return (
         <OverviewCard
             title="Workflow agents"
@@ -1265,16 +1289,17 @@ function WorkerStateCard({ project }: { project: Project }) {
             icon={<Bot className="size-4" />}
         >
             <div className="grid gap-2">
-                {['project_manager', 'coder', 'reviewer'].map((role) => {
-                    const worker = project.office_workers.find(
-                        (candidate) => candidate.role === role,
-                    );
+                {slots.map(({ role, worker }, index) => {
                     const blocked = worker ? isWorkerBlocked(worker) : false;
                     const active = worker ? isWorkerActive(worker) : false;
+                    const label =
+                        role === 'coder' && coderWorkers.length > 1
+                            ? `Coder · Slot ${worker?.slot ?? index + 1}`
+                            : humanize(role);
 
                     return (
                         <div
-                            key={role}
+                            key={`${role}-${worker?.id ?? index}`}
                             className={`rounded-lg border px-3 py-2 transition ${
                                 active
                                     ? 'border-primary/30 bg-primary/5 shadow-glow-sm'
@@ -1285,7 +1310,7 @@ function WorkerStateCard({ project }: { project: Project }) {
                         >
                             <div className="flex items-center justify-between gap-2">
                                 <span className="truncate text-xs font-medium text-foreground">
-                                    {humanize(role)}
+                                    {label}
                                 </span>
                                 <span
                                     className={`size-1.5 shrink-0 rounded-full ${
@@ -1307,6 +1332,78 @@ function WorkerStateCard({ project }: { project: Project }) {
                     );
                 })}
             </div>
+        </OverviewCard>
+    );
+}
+
+function CoderConcurrencyCard({ project }: { project: Project }) {
+    const coderWorkers = project.office_workers
+        .filter((candidate) => candidate.role === 'coder')
+        .sort((a, b) => a.slot - b.slot);
+    const activeSlots = coderWorkers.filter(isWorkerActive).length;
+    const configured = project.coder_concurrency;
+    const fellBackToSerial = configured > 1 && activeSlots <= 1;
+
+    return (
+        <OverviewCard
+            title="Coder concurrency"
+            eyebrow="Bounded parallel execution"
+            icon={<Cpu className="size-4" />}
+        >
+            <dl className="grid grid-cols-2 gap-2">
+                <div className="min-w-0 rounded-lg border border-border-subtle bg-foreground/2 px-2 py-2">
+                    <dt className="font-mono text-2xs text-muted-foreground uppercase">
+                        Configured
+                    </dt>
+                    <dd className="mt-1 text-xs text-foreground">
+                        {configured} slot{configured === 1 ? '' : 's'}
+                    </dd>
+                </div>
+                <div className="min-w-0 rounded-lg border border-border-subtle bg-foreground/2 px-2 py-2">
+                    <dt className="font-mono text-2xs text-muted-foreground uppercase">
+                        Active
+                    </dt>
+                    <dd className="mt-1 text-xs text-foreground">
+                        {activeSlots} / {coderWorkers.length || configured}
+                    </dd>
+                </div>
+            </dl>
+
+            <p className="mt-3 text-2xs text-muted-foreground">
+                {configured === 1
+                    ? 'Serial: only one Coder Task may be actively claimed at a time.'
+                    : fellBackToSerial
+                      ? 'Up to 2 slots authorized; currently running serially because a second dependency-safe Task is not eligible.'
+                      : 'Running 2 independent, dependency-safe Coder Tasks concurrently in isolated worktrees.'}
+            </p>
+
+            <Form
+                {...updateCoderConcurrency.form(project.id)}
+                className="mt-3 flex items-center gap-2"
+            >
+                {({ processing, errors }) => (
+                    <>
+                        <select
+                            name="coder_concurrency"
+                            defaultValue={configured}
+                            className="h-8 rounded-md border border-border bg-card/60 px-2 text-xs text-foreground"
+                        >
+                            <option value={1}>1 (serial)</option>
+                            <option value={2}>2 (bounded parallel)</option>
+                        </select>
+                        <Button
+                            size="sm"
+                            type="submit"
+                            variant="outline"
+                            disabled={processing}
+                            className="h-8 border-border bg-card/50 px-2 text-xs"
+                        >
+                            Update
+                        </Button>
+                        <InputError message={errors.coder_concurrency} />
+                    </>
+                )}
+            </Form>
         </OverviewCard>
     );
 }
@@ -1491,6 +1588,7 @@ function OverviewDashboard({
                     <ReconciliationOverviewCard project={project} />
                     <HarnessUsageOverviewCard project={project} />
                     <WorkerStateCard project={project} />
+                    <CoderConcurrencyCard project={project} />
                     <RecentSignalsCard project={project} />
                 </div>
             </div>

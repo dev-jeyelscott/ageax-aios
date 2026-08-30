@@ -146,6 +146,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         [ProjectController::class, 'updateStewardshipPolicy'],
     )->name('projects.stewardship-policy.update');
 
+    Route::patch(
+        'projects/{project}/coder-concurrency',
+        [ProjectController::class, 'updateCoderConcurrency'],
+    )->name('projects.coder-concurrency.update');
+
     Route::get(
         'projects/{project}/tickets',
         [TicketController::class, 'index'],
