@@ -33,6 +33,7 @@ class StaleWorkerRecovery
         private AuditLogger $audit,
         private WorkspacePathResolver $paths,
         private WorkerHeartbeat $heartbeat,
+        private TaskWorktreeManager $worktrees,
     ) {}
 
     /**
@@ -229,6 +230,10 @@ class StaleWorkerRecovery
             $this->storeRecoveryEvidence($task, $evidence);
 
             if ($role === AgentRole::Coder) {
+                $abandonedAttempts = $task->attempts()
+                    ->where('status', 'running')
+                    ->get();
+
                 $task->attempts()
                     ->where('status', 'running')
                     ->update([
@@ -240,6 +245,8 @@ class StaleWorkerRecovery
                     $task,
                     TaskStatus::Failed,
                 );
+
+                $this->releaseAbandonedWorktrees($task, $abandonedAttempts);
             } else {
                 $this->workflow->recordReviewerOperationalFailure(
                     $task,
@@ -399,6 +406,8 @@ class StaleWorkerRecovery
                     $lockedTask,
                     TaskStatus::Failed,
                 );
+
+                $this->releaseAbandonedWorktrees($lockedTask, collect([$attempt]));
             } elseif (
                 $this->workflow->reconcileExistingReviewerDecision(
                     $lockedTask,
@@ -495,6 +504,10 @@ class StaleWorkerRecovery
                 $this->storeRecoveryEvidence($task, $evidence);
 
                 if ($role === AgentRole::Coder) {
+                    $abandonedAttempts = $task->attempts()
+                        ->where('status', 'running')
+                        ->get();
+
                     $task->attempts()
                         ->where('status', 'running')
                         ->update([
@@ -506,6 +519,8 @@ class StaleWorkerRecovery
                         $task,
                         TaskStatus::Failed,
                     );
+
+                    $this->releaseAbandonedWorktrees($task, $abandonedAttempts);
                 } else {
                     $this->workflow->recordReviewerOperationalFailure(
                         $task,
@@ -1043,6 +1058,25 @@ class StaleWorkerRecovery
             ->where('role', $role)
             ->limit(2)
             ->count() === 1;
+    }
+
+    /**
+     * Idempotently destroy the isolated worktrees left behind by interrupted Coder attempts.
+     *
+     * Worktree removal never touches canonical repository history; a missing or already-removed
+     * worktree is a no-op, and a failure here must not block the durable workflow recovery it follows.
+     *
+     * @param  iterable<int, TaskAttempt>  $attempts
+     */
+    private function releaseAbandonedWorktrees(Task $task, iterable $attempts): void
+    {
+        foreach ($attempts as $attempt) {
+            try {
+                $this->worktrees->release($task, $attempt);
+            } catch (Throwable $throwable) {
+                report($throwable);
+            }
+        }
     }
 
     /**
