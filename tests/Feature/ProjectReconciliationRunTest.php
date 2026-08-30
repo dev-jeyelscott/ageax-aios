@@ -17,6 +17,9 @@ use Closure;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 
+/**
+ * Create an isolated Git-backed project fixture for Project Reconciliation tests.
+ */
 function reconciliationGitProject(): Project
 {
     $path = sys_get_temp_dir().'/aios-reconciliation-'.fake()->uuid();
@@ -31,6 +34,9 @@ function reconciliationGitProject(): Project
     return Project::create(['name' => 'Reconciliation', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
 }
 
+/**
+ * Create one queued manual Project Reconciliation run.
+ */
 function reconciliationQueuedRun(Project $project): ProjectReconciliationRun
 {
     return ProjectReconciliationRun::create([
@@ -40,24 +46,47 @@ function reconciliationQueuedRun(Project $project): ProjectReconciliationRun
     ]);
 }
 
-/** @param array{exit_code: int, output: string, error_output: string} $execution */
+/**
+ * Bind a deterministic Codex runner fake for Project Reconciliation tests.
+ *
+ * @param array{exit_code: int, output: string, error_output: string} $execution
+ */
 function bindReconciliationHarness(array $execution): void
 {
     app()->bind(CodexCliRunner::class, function () use ($execution): CodexCliRunner {
         return new class($execution) extends CodexCliRunner
         {
-            /** @param array{exit_code: int, output: string, error_output: string} $execution */
+            /**
+             * Store the deterministic provider execution returned by the fake runner.
+             *
+             * @param array{exit_code: int, output: string, error_output: string} $execution
+             */
             public function __construct(private array $execution) {}
 
-            public function run(Project $project, string $prompt, ?Closure $onOutput = null, ?Closure $onHeartbeat = null): array
-            {
+            /**
+             * Return deterministic provider output while preserving the current Codex runner contract.
+             *
+             * @param array<string, mixed> $executionSettings
+             * @return array{exit_code: int, output: string, error_output: string}
+             */
+            public function run(
+                Project $project,
+                string $prompt,
+                ?Closure $onOutput = null,
+                ?Closure $onHeartbeat = null,
+                array $executionSettings = [],
+            ): array {
                 return $this->execution;
             }
         };
     });
 }
 
-/** @return array<string, mixed> */
+/**
+ * Build one valid structured Project Reconciliation provider result.
+ *
+ * @return array<string, mixed>
+ */
 function validReconciliationOutput(): array
 {
     return [
