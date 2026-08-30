@@ -64,6 +64,7 @@ final class P3TicketTriageTestHarness implements AgentHarnessContract
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         array $executionSettings = [],
+        ?string $executionPath = null,
     ): NormalizedExecutionResult {
         $this->executions++;
         $this->prompts[] = $prompt;
