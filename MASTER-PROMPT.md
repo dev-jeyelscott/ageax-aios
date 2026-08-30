@@ -97,9 +97,9 @@ correctness
 
 ## Agent Execution
 
-Every roadmap analysis, Project Manager `ticket_triage` execution, implementation attempt, retry/fix attempt, and review must use a **fresh execution context**, regardless of whether the selected harness is Codex or Claude Code.
+Every roadmap analysis, Project Manager `ticket_triage` execution, implementation attempt, retry/fix attempt, and review must use a **fresh execution context**, except the Phase 14 single-feature GoalRun path. A GoalRun may resume only an isolated same-role provider session scoped to that GoalRun.
 
-Do not maintain persistent Codex or Claude Code conversations between executions, and never use provider conversation history as durable project or workflow state.
+Warm GoalRun sessions are disposable runtime references, not durable authority. Do not use provider conversation history as durable project or workflow state; AIOS persists the GoalRun, Task, snapshots, validation, Git, review, audit, and recovery evidence independently. Backend Engineer, Project Manager, and Reviewer sessions remain role-isolated, and reviewer decisions must remain independent of Backend Engineer hidden memory. Legacy Coder, Roadmap, and Ticket execution remain fresh-context paths.
 
 Project Agent configuration is project-scoped and describes execution identity and behavior, including the workflow role, selected harness, supported model/reasoning settings, default context, assigned Skills, enabled state, and bounded execution settings where applicable.
 

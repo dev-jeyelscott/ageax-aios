@@ -17,6 +17,7 @@ class ProvisionDefaultProjectAgents
         return [
             AgentRole::ProjectManager->value => 'Project Manager',
             AgentRole::Coder->value => 'Coder',
+            AgentRole::BackendEngineer->value => 'Backend Engineer',
             AgentRole::Reviewer->value => 'Reviewer',
         ];
     }
@@ -29,6 +30,7 @@ class ProvisionDefaultProjectAgents
                 [
                     'role' => $definition['role'],
                     'harness' => AgentHarness::Codex,
+                    ...$this->nativeDefinition($definition['role']),
                     'enabled' => true,
                 ],
             );
@@ -53,7 +55,28 @@ class ProvisionDefaultProjectAgents
         return [
             ['name' => 'Project Manager', 'role' => AgentRole::ProjectManager],
             ['name' => 'Coder', 'role' => AgentRole::Coder],
+            ['name' => 'Backend Engineer', 'role' => AgentRole::BackendEngineer],
             ['name' => 'Reviewer', 'role' => AgentRole::Reviewer],
         ];
+    }
+
+    /** @return array{provider_definition_path:?string, provider_definition_hash:?string, provider_definition_version:?string} */
+    private function nativeDefinition(AgentRole $role): array
+    {
+        $name = match ($role) {
+            AgentRole::ProjectManager => 'project-manager-goal',
+            AgentRole::BackendEngineer => 'backend-engineer-goal',
+            AgentRole::Reviewer => 'reviewer-goal',
+            default => null,
+        };
+
+        if ($name === null) {
+            return ['provider_definition_path' => null, 'provider_definition_hash' => null, 'provider_definition_version' => null];
+        }
+
+        $path = '.codex/agents/'.$name.'.md';
+        $absolutePath = base_path($path);
+
+        return ['provider_definition_path' => $path, 'provider_definition_hash' => is_file($absolutePath) ? hash_file('sha256', $absolutePath) : null, 'provider_definition_version' => 'phase-14-v1'];
     }
 }

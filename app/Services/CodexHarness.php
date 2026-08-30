@@ -49,6 +49,7 @@ final readonly class CodexHarness implements AgentHarness
             reasoningSettings: self::ReasoningSettings,
             executionOptions: [
                 'ephemeral',
+                'resumable_session',
                 'streaming',
                 'heartbeat',
             ],

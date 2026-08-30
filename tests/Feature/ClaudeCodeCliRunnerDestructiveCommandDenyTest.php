@@ -70,6 +70,24 @@ test('denies destructive database and filesystem commands for the Recovery Engin
     });
 });
 
+test('allows Backend Engineer edits and resumes only the persisted Goal session', function () {
+    $project = destructiveDenyProject();
+    $agent = Agent::factory()->for($project)->create(['role' => AgentRole::BackendEngineer, 'harness' => AgentHarnessIdentifier::ClaudeCode]);
+    Process::fake(['*' => Process::result(output: '')]);
+
+    app(ClaudeCodeCliRunner::class)->run($project, $agent, 'Continue the approved feature goal.', executionSettings: ['provider_session_id' => 'goal-session-id']);
+
+    Process::assertRan(function (PendingProcess $process): bool {
+        $command = (new ReflectionProperty($process, 'command'))->getValue($process);
+
+        return in_array('--resume', $command, true)
+            && in_array('goal-session-id', $command, true)
+            && ! in_array('--no-session-persistence', $command, true)
+            && str_contains((string) $command[array_search('--tools', $command, true) + 1], 'Edit')
+            && str_contains(deniedTools($command), 'Bash(rm -rf *)');
+    });
+});
+
 test('stops Claude Code when its AIOS worker lease is lost', function () {
     $binary = tempnam(sys_get_temp_dir(), 'aios-claude-lease-');
     expect($binary)->not->toBeFalse();

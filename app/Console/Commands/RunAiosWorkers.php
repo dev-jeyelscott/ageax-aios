@@ -14,11 +14,13 @@ use App\Actions\SetProjectStatus;
 use App\AgentRole;
 use App\Models\Agent;
 use App\Models\AgentWorker;
+use App\Models\GoalRun;
 use App\Models\Project;
 use App\Models\Roadmap;
 use App\Models\TaskPlanningEscalation;
 use App\Models\TicketTriageAttempt;
 use App\ProjectStatus;
+use App\Services\GoalSessionRecorder;
 use App\Services\TaskPlanningEscalationWorkflow;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
@@ -52,6 +54,7 @@ class RunAiosWorkers extends Command
         SetProjectStatus $setProjectStatus,
         WorkerHeartbeat $heartbeat,
         TaskPlanningEscalationWorkflow $planningEscalations,
+        GoalSessionRecorder $goalSessions,
         TaskWorkflow $workflow,
     ): int {
         $workerInstanceId = (string) Str::uuid();
@@ -256,7 +259,14 @@ class RunAiosWorkers extends Command
 
                         try {
                             if ($role === AgentRole::Coder) {
-                                $runCoderTask->handle($task, $lease);
+                                $goalRun = $task->goalRun;
+                                if ($goalRun instanceof GoalRun) {
+                                    $goalRun->update(['status' => 'implementing']);
+                                    $runCoderTask->handle($task, $lease, AgentRole::BackendEngineer);
+                                    $goalSessions->recordLatest($goalRun, AgentRole::BackendEngineer);
+                                } else {
+                                    $runCoderTask->handle($task, $lease);
+                                }
                             } else {
                                 $attempt = $task->attempts()
                                     ->latest('number')
@@ -267,6 +277,12 @@ class RunAiosWorkers extends Command
                                     $attempt,
                                     $lease,
                                 );
+                                $goalRun = $task->goalRun;
+                                if ($goalRun instanceof GoalRun) {
+                                    $goalSessions->recordLatest($goalRun, AgentRole::Reviewer);
+                                    $goalRun->refresh();
+                                    $goalRun->update(['status' => $task->fresh()?->status->value === 'done' ? 'completed' : 'implementing', 'completed_at' => $task->fresh()?->status->value === 'done' ? now() : null]);
+                                }
                             }
                         } catch (Throwable $throwable) {
                             report($throwable);

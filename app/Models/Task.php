@@ -201,4 +201,10 @@ class Task extends Model
     {
         return $this->hasMany(TaskPlanningEscalation::class);
     }
+
+    /** @return HasOne<GoalRun, $this> */
+    public function goalRun(): HasOne
+    {
+        return $this->hasOne(GoalRun::class);
+    }
 }

@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\ApproveFeatureGoal;
 use App\Actions\ClearProjectTasks;
 use App\Actions\CreateProject;
 use App\Actions\DeleteProject;
+use App\Actions\PlanFeatureGoal;
 use App\Actions\ProvisionDefaultProjectAgents;
 use App\Actions\RecordProjectManagerMessage;
 use App\Actions\RecordTaskOperatorMessage;
@@ -13,18 +15,22 @@ use App\Actions\RequeueBlockedRoadmap;
 use App\Actions\RequeueBlockedTask;
 use App\Actions\SetProjectStatus;
 use App\Actions\SkipBlockedTask;
+use App\Actions\StoreFeatureSpec;
 use App\Actions\StoreRoadmap;
 use App\AgentHarness;
 use App\AgentRole;
 use App\Http\Requests\SkipBlockedTaskRequest;
+use App\Http\Requests\StoreFeatureSpecRequest;
 use App\Http\Requests\StoreProjectManagerMessageRequest;
 use App\Http\Requests\StoreProjectRequest;
 use App\Http\Requests\StoreRoadmapRequest;
 use App\Http\Requests\StoreTaskOperatorMessageRequest;
+use App\Http\Requests\UpdateGoalRunRequest;
 use App\Http\Requests\UpdateProjectStatusRequest;
 use App\Http\Requests\UpdateProjectStewardshipPolicyRequest;
 use App\Models\AgentRun;
 use App\Models\AgentWorker;
+use App\Models\GoalRun;
 use App\Models\Project;
 use App\Models\ProjectReconciliationRun;
 use App\Models\Roadmap;
@@ -120,6 +126,8 @@ class ProjectController extends Controller
         TokenUsageNormalizer $usageNormalizer,
     ): Project {
         $project->load([
+            'featureSpecs' => fn ($query) => $query->latest(),
+            'goalRuns' => fn ($query) => $query->latest()->with(['task', 'sessions.agent']),
             'roadmaps' => fn ($query) => $query->latest(),
             'tasks' => fn ($query) => $query
                 ->notCleared()
@@ -259,6 +267,22 @@ class ProjectController extends Controller
         );
 
         return $project;
+    }
+
+    public function storeFeatureSpec(Project $project, StoreFeatureSpecRequest $request, StoreFeatureSpec $store, PlanFeatureGoal $planner): RedirectResponse
+    {
+        $featureSpec = $store->handle($project, $request->file('feature'), $request->user());
+        $planner->handle($featureSpec);
+
+        return to_route('projects.show', $project);
+    }
+
+    public function approveFeatureGoal(Project $project, GoalRun $goalRun, UpdateGoalRunRequest $request, ApproveFeatureGoal $approve): RedirectResponse
+    {
+        abort_unless($goalRun->project_id === $project->id, 404);
+        $approve->handle($goalRun, $request->validated('goal_text'));
+
+        return to_route('projects.show', $project);
     }
 
     /**

@@ -54,6 +54,7 @@ final readonly class ClaudeCodeHarness implements AgentHarness
             reasoningSettings: self::ReasoningSettings,
             executionOptions: [
                 'ephemeral',
+                'resumable_session',
                 'streaming',
                 'heartbeat',
             ],

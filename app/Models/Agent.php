@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Collection;
 use LogicException;
 
-#[Fillable(['project_id', 'name', 'role', 'harness', 'model', 'reasoning_setting', 'default_context', 'enabled'])]
+#[Fillable(['project_id', 'name', 'role', 'harness', 'model', 'reasoning_setting', 'default_context', 'provider_definition_path', 'provider_definition_hash', 'provider_definition_version', 'enabled'])]
 /**
  * @property AgentRole $role
  * @property AgentHarness $harness
@@ -36,6 +36,9 @@ class Agent extends Model
         'model',
         'reasoning_setting',
         'default_context',
+        'provider_definition_path',
+        'provider_definition_hash',
+        'provider_definition_version',
         'enabled',
     ];
 
@@ -146,6 +149,7 @@ class Agent extends Model
     private const array ProjectRoles = [
         AgentRole::ProjectManager,
         AgentRole::Coder,
+        AgentRole::BackendEngineer,
         AgentRole::Reviewer,
     ];
 

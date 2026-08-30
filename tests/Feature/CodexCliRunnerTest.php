@@ -149,6 +149,26 @@ test('uses the persisted AIOS execution setting when supplied', function () {
     });
 });
 
+test('resumes only the AIOS-supplied durable Goal session without enabling unrestricted execution', function () {
+    Process::fake(['*' => Process::result(output: 'completed')]);
+
+    app(CodexCliRunner::class)->runAtPath(
+        base_path(),
+        'Continue the approved feature goal.',
+        executionSettings: ['provider_session_id' => 'goal-session-id'],
+    );
+
+    Process::assertRan(function (PendingProcess $process): bool {
+        $command = (new ReflectionProperty($process, 'command'))->getValue($process);
+
+        return in_array('resume', $command, true)
+            && in_array('goal-session-id', $command, true)
+            && ! in_array('--ephemeral', $command, true)
+            && ! in_array('--approve-for-me', $command, true)
+            && ! in_array('--dangerously-bypass-approvals-and-sandbox', $command, true);
+    });
+});
+
 test('converts an externally signaled process into a normalized failure result instead of throwing', function () {
     $binary = tempnam(sys_get_temp_dir(), 'aios-codex-signaled-');
     expect($binary)->not->toBeFalse();

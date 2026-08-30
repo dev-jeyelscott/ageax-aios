@@ -131,6 +131,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
         [ProjectController::class, 'storeRoadmap'],
     )->name('projects.roadmaps.store');
 
+    Route::post('projects/{project}/feature-specs', [ProjectController::class, 'storeFeatureSpec'])->name('projects.feature-specs.store');
+    Route::patch('projects/{project}/goal-runs/{goalRun}/approve', [ProjectController::class, 'approveFeatureGoal'])->scopeBindings()->name('projects.goal-runs.approve');
+
     Route::post(
         'projects/{project}/roadmaps/{roadmap}/requeue',
         [ProjectController::class, 'requeueRoadmap'],

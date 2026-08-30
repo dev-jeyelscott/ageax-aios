@@ -40,12 +40,15 @@ test('new projects receive exactly one default Codex agent for each core role', 
     try {
         $project = app(CreateProject::class)->handle('Default Agent Project', 'example');
 
-        expect($project->agents()->count())->toBe(3)
+        expect($project->agents()->count())->toBe(4)
             ->and($project->workers()->count())->toBe(3)
             ->and($project->agents()->where('name', 'Project Manager')->where('role', AgentRole::ProjectManager->value)->where('harness', AgentHarness::Codex->value)->where('enabled', true)->count())->toBe(1)
             ->and($project->agents()->where('name', 'Coder')->where('role', AgentRole::Coder->value)->where('harness', AgentHarness::Codex->value)->where('enabled', true)->count())->toBe(1)
+            ->and($project->agents()->where('name', 'Backend Engineer')->where('role', AgentRole::BackendEngineer->value)->where('harness', AgentHarness::Codex->value)->where('enabled', true)->count())->toBe(1)
+            ->and($project->agents()->where('name', 'Backend Engineer')->value('provider_definition_path'))->toBe('.codex/agents/backend-engineer-goal.md')
+            ->and($project->agents()->where('name', 'Backend Engineer')->value('provider_definition_hash'))->toBe(hash_file('sha256', base_path('.codex/agents/backend-engineer-goal.md')))
             ->and($project->agents()->where('name', 'Reviewer')->where('role', AgentRole::Reviewer->value)->where('harness', AgentHarness::Codex->value)->where('enabled', true)->count())->toBe(1)
-            ->and($project->agents()->where('configuration_version', 1)->count())->toBe(3);
+            ->and($project->agents()->where('configuration_version', 1)->count())->toBe(4);
     } finally {
         File::deleteDirectory($workspace);
         File::deleteDirectory($vault);
@@ -63,9 +66,10 @@ test('default agent provisioning is idempotent and does not overwrite later conf
 
     $provisioner->handle($project);
 
-    expect($project->agents()->count())->toBe(3)
+    expect($project->agents()->count())->toBe(4)
         ->and($project->agents()->where('name', 'Project Manager')->count())->toBe(1)
         ->and($project->agents()->where('name', 'Coder')->count())->toBe(1)
+        ->and($project->agents()->where('name', 'Backend Engineer')->count())->toBe(1)
         ->and($project->agents()->where('name', 'Reviewer')->count())->toBe(1)
         ->and($coder->refresh()->harness)->toBe(AgentHarness::ClaudeCode)
         ->and($coder->configuration_version)->toBe(2);

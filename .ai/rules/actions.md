@@ -38,7 +38,7 @@ Project Agent configuration is project-scoped execution configuration and must r
 
 Project Manager, Coder, and Reviewer remain the executable core workflow roles. Task execution remains serial and dependency ordered under AIOS control; same-phase implementation may accumulate validated `ready_for_review` tasks before phase review begins, but additional configured Agents must not create worker lanes, self-schedule, or bypass persisted workflow ordering.
 
-Every new roadmap-analysis, Project Manager `ticket_triage`, implementation, fix/retry, or review attempt must start a fresh harness execution context and capture a new immutable effective configuration snapshot before execution. Recovery of the same interrupted attempt must continue from its persisted snapshot, Git state, run evidence, and audit evidence rather than resolving mutable current Agent, Skill, or harness configuration into that existing attempt.
+Every new roadmap-analysis, Project Manager `ticket_triage`, implementation, fix/retry, or review attempt must start a fresh harness execution context and capture a new immutable effective configuration snapshot before execution. The single Feature Goal path may resume a same-role isolated provider session only within the same durable GoalRun; it remains disposable runtime state and cannot replace persisted snapshots, Git state, run evidence, or audit evidence. Recovery otherwise continues from persisted evidence rather than mutable configuration.
 
 ## Ticket triage and conversion remain AIOS-owned Actions
 

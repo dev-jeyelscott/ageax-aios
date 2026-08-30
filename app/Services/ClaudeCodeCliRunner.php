@@ -85,10 +85,10 @@ class ClaudeCodeCliRunner
 
         try {
             if ($onHeartbeat === null) {
-                return $this->result($pending->run($this->command($agent), $onOutput));
+                return $this->result($pending->run($this->command($agent, $executionSettings), $onOutput));
             }
 
-            $process = $pending->start($this->command($agent), $onOutput);
+            $process = $pending->start($this->command($agent, $executionSettings), $onOutput);
             $interval = max(1, (int) config('aios.worker_heartbeat_interval_seconds'));
             $nextHeartbeatAt = now();
 
@@ -146,19 +146,28 @@ class ClaudeCodeCliRunner
      *
      * @return list<string>
      */
-    private function command(Agent $agent): array
+    private function command(Agent $agent, array $executionSettings = []): array
     {
         $role = AgentRole::from((string) $agent->getRawOriginal('role'));
-        $canEdit = in_array($role, [AgentRole::Coder, AgentRole::RecoveryEngineer], true);
+        $canEdit = in_array($role, [AgentRole::Coder, AgentRole::BackendEngineer, AgentRole::RecoveryEngineer], true);
         $tools = $canEdit ? self::CoderTools : self::InspectionTools;
         $allowedTools = $canEdit ? self::CoderTools : self::InspectionAllowedTools;
 
         $command = [
-            (string) config('aios.claude_code_binary'), '--safe-mode', '-p', '--no-session-persistence', '--no-chrome',
+            (string) config('aios.claude_code_binary'), '--safe-mode', '-p', '--no-chrome',
             '--strict-mcp-config', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
             '--permission-mode', 'dontAsk', '--tools', implode(',', $tools), '--allowedTools', implode(',', $allowedTools),
             '--disallowedTools', implode(',', [...self::DeniedGitMutations, ...self::DeniedDestructiveCommands]),
         ];
+
+        $sessionId = $executionSettings['provider_session_id'] ?? null;
+
+        if (is_string($sessionId) && $sessionId !== '') {
+            $command[] = '--resume';
+            $command[] = $sessionId;
+        } elseif (($executionSettings['persist_provider_session'] ?? false) !== true) {
+            $command[] = '--no-session-persistence';
+        }
 
         if (filled($agent->model)) {
             $command[] = '--model';

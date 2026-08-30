@@ -106,4 +106,16 @@ class Project extends Model
     {
         return $this->hasMany(ProjectReconciliationRun::class);
     }
+
+    /** @return HasMany<FeatureSpec, $this> */
+    public function featureSpecs(): HasMany
+    {
+        return $this->hasMany(FeatureSpec::class);
+    }
+
+    /** @return HasMany<GoalRun, $this> */
+    public function goalRuns(): HasMany
+    {
+        return $this->hasMany(GoalRun::class);
+    }
 }

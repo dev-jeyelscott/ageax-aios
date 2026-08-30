@@ -747,7 +747,8 @@ class TaskWorkflow
                     'status',
                     ['pending', 'running'],
                 ),
-            );
+            )
+            ->whereDoesntHave('goalRun', fn ($goalRun) => $goalRun->whereNotIn('status', ['approved', 'implementing', 'reviewing']));
 
         if ($phase !== null) {
             $query->where('phase_id', $phase->id);

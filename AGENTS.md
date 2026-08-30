@@ -33,8 +33,9 @@ Priority: correctness → security → data integrity → deterministic workflow
 
 ## Agent execution
 
-- Every roadmap analysis, Project Manager `ticket_triage` attempt, implementation attempt, fix/retry attempt, and review uses a fresh, ephemeral execution context regardless of whether the selected harness is Codex or Claude Code.
-- Never depend on a persistent Codex or Claude Code conversation for project or workflow state.
+- Every roadmap analysis, Project Manager `ticket_triage` attempt, implementation attempt, fix/retry attempt, and review uses a fresh, ephemeral execution context, except the Phase 14 Feature Goal path where AIOS may resume an isolated same-role provider session for the same GoalRun.
+- Warm GoalRun sessions are disposable runtime optimization only. Never depend on a persistent Codex or Claude Code conversation for project or workflow state; AIOS persists every durable decision, transition, configuration snapshot, validation result, Git fact, and audit fact outside provider memory.
+- Legacy Coder, Roadmap, and Ticket execution remain fresh-context paths.
 - AIOS resolves the project Agent bound to the required workflow role and validates its harness, model, reasoning/effort setting, and bounded execution settings before execution.
 - Project Agent configuration is not worker state. Agent configuration describes identity and execution behavior; `AgentWorker` remains the durable AIOS-controlled workflow slot and lease/runtime state for a core role.
 - AIOS-managed Agent Skills are project-scoped, declarative context/capability packages only. They may provide instructions, constraints, and guidance, but they are non-executable and must never introduce shell hooks, arbitrary code execution, package installation, or workflow control. They are separate from repository/harness tooling such as `.agents/skills/**` and `.claude/skills/**`, which AIOS must not automatically mutate.
@@ -51,6 +52,7 @@ Priority: correctness → security → data integrity → deterministic workflow
 | --- | --- | --- |
 | Project Manager | Turn uploaded roadmaps into ordered, dependency-aware phases and tasks with criteria, prompts, safe verification commands, and concise project knowledge. Perform fresh-context `ticket_triage` using the bound PM Agent/harness and return structured classification, reply, escalation, and at most one bounded Task proposal where eligible. | Mutate arbitrary app/database state; directly claim/transition Tickets; create/reorder Tasks or phases; bypass escalation. AIOS validates and persists all durable outcomes. |
 | Coder | Claim one eligible task at a time; inspect, implement, validate, secret-check, and return structured results. Within the current phase, AIOS may advance to the next eligible task after the previous task reaches `ready_for_review` when persisted dependencies permit. | Mark a task done or execute multiple coding tasks concurrently. |
+| Backend Engineer | Implement one approved Feature Goal through the existing Coder security, worktree, validation, Git, and Task lifecycle boundaries. May resume only its isolated same-GoalRun provider session. | Create a worker lane, alter legacy Coder interpretation, own durable transitions, or rely on another role's hidden session memory. |
 | Reviewer | Independently review one task at a time, only after the current phase reaches its review barrier. Review ready tasks in deterministic position order using their criteria, exact diffs, SHAs, changed files, implementation, and verification evidence. | Review a phase prematurely, reject for taste, redesign valid work, or expand scope. |
 
 Ticket-origin metadata and Context Budget evidence may be consumed by Coder/Reviewer as relevant context, but neither changes the existing Coder or Reviewer workflow contract.

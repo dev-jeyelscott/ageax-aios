@@ -180,6 +180,14 @@ type Project = {
         original_filename: string;
         status: string;
     }[];
+    feature_specs: { id: number; original_filename: string; status: string }[];
+    goal_runs: {
+        id: number;
+        goal_text: string | null;
+        status: string;
+        approval_mode: string;
+        task: { key: string; status: string } | null;
+    }[];
     office_workers: OfficeWorker[];
     office_workflow: OfficeWorkflow | null;
     tasks: Task[];
@@ -1395,6 +1403,7 @@ function OverviewDashboard({
         project.office_workflow?.mode === 'current'
             ? project.office_workflow
             : null;
+    const latestGoal = project.goal_runs[0] ?? null;
 
     return (
         <div
@@ -1485,6 +1494,27 @@ function OverviewDashboard({
                             pulse={hasAttention}
                         />
                     </div>
+                </section>
+
+                <section className="panel-surface p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <p className="font-mono text-2xs tracking-[0.14em] text-primary uppercase">Single-feature goal</p>
+                            <h2 className="mt-1 text-sm font-semibold">Warm PM → Backend Engineer → Reviewer</h2>
+                        </div>
+                        <Badge variant="outline">{latestGoal?.status ?? 'ready for upload'}</Badge>
+                    </div>
+                    <Form action={`/projects/${project.id}/feature-specs`} method="post" encType="multipart/form-data" className="mt-3 flex flex-wrap items-center gap-2">
+                        <input name="feature" type="file" accept=".md,.markdown,.txt,text/plain,text/markdown" required className="max-w-xs text-xs" />
+                        <Button type="submit" size="sm"><FileUp className="size-3.5" />Plan /goal</Button>
+                    </Form>
+                    {latestGoal && (
+                        <div className="mt-4 rounded-lg border border-border-subtle bg-foreground/2 p-3">
+                            <div className="flex flex-wrap justify-between gap-2 text-xs"><span>Task: {latestGoal.task?.key ?? 'materializing'}</span><span>{latestGoal.task?.status ?? latestGoal.status}</span></div>
+                            {latestGoal.goal_text && <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap font-sans text-xs text-muted-foreground">{latestGoal.goal_text}</pre>}
+                            {latestGoal.status === 'awaiting_approval' && <Form action={`/projects/${project.id}/goal-runs/${latestGoal.id}/approve`} method="post" className="mt-3"><input type="hidden" name="_method" value="patch" /><textarea name="goal_text" defaultValue={latestGoal.goal_text ?? ''} className="sr-only" /><Button type="submit" size="sm"><CheckCircle2 className="size-3.5" />Approve and run</Button></Form>}
+                        </div>
+                    )}
                 </section>
 
                 <div className="grid gap-3 xl:grid-cols-4">

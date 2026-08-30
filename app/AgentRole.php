@@ -6,6 +6,11 @@ enum AgentRole: string
 {
     case ProjectManager = 'project_manager';
     case Coder = 'coder';
+    /**
+     * The warm single-feature implementation role. Legacy roadmap and Ticket work continues
+     * to resolve Coder and is never reinterpreted as Backend Engineer work.
+     */
+    case BackendEngineer = 'backend_engineer';
     case Reviewer = 'reviewer';
     case KnowledgeArchitect = 'knowledge_architect';
 

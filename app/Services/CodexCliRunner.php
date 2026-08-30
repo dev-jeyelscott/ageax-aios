@@ -94,14 +94,14 @@ class CodexCliRunner
             if ($onHeartbeat === null) {
                 return $this->result(
                     $pending->run(
-                        $this->command($agent, $path),
+                        $this->command($agent, $path, $executionSettings),
                         $onOutput,
                     ),
                 );
             }
 
             $process = $pending->start(
-                $this->command($agent, $path),
+                $this->command($agent, $path, $executionSettings),
                 $onOutput,
             );
 
@@ -166,15 +166,27 @@ class CodexCliRunner
      *
      * @return list<string>
      */
-    private function command(?Agent $agent = null, ?string $path = null): array
+    private function command(?Agent $agent = null, ?string $path = null, array $executionSettings = []): array
     {
+        $sessionId = $executionSettings['provider_session_id'] ?? null;
+        $resume = is_string($sessionId) && $sessionId !== '';
         $command = [
             (string) config('aios.codex_binary'),
             'exec',
-            '--ephemeral',
-            '--json',
-            '--approve-for-me',
         ];
+
+        if ($resume) {
+            $command[] = 'resume';
+            $command[] = $sessionId;
+        } elseif (($executionSettings['persist_provider_session'] ?? false) !== true) {
+            $command[] = '--ephemeral';
+        }
+
+        $command[] = '--json';
+
+        if (! $resume) {
+            $command[] = '--approve-for-me';
+        }
 
         // Advisory-only execution (e.g. Knowledge Architect advisories, Project Manager
         // reconciliation) runs in an AIOS-created disposable directory so the provider cannot

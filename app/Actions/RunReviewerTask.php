@@ -20,6 +20,7 @@ use App\Services\AgentRunRecorder;
 use App\Services\AuditLogger;
 use App\Services\CodexCliRunner;
 use App\Services\DatabaseProtectionGuard;
+use App\Services\GoalSessionExecutionSettings;
 use App\Services\StructuredResultParser;
 use App\Services\TaskContextCapsuleFactory;
 use App\Services\TaskContractGuard;
@@ -51,6 +52,7 @@ class RunReviewerTask
         private AuditLogger $audit,
         private DatabaseProtectionGuard $databaseProtection,
         private WorkflowBoundaryHandoffRecorder $boundaryHandoffs,
+        private GoalSessionExecutionSettings $goalSessions,
     ) {}
 
     /**
@@ -140,6 +142,12 @@ class RunReviewerTask
         }
 
         $assembled = $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Reviewer, $context);
+        $goalRun = $task->goalRun;
+        $executionSettings = $goalRun === null ? [] : $this->goalSessions->for($goalRun, AgentRole::Reviewer);
+        $assembled = $assembled?->withExecutionSettings([
+            ...($assembled?->executionSettings ?? []),
+            ...$executionSettings,
+        ]);
         $prompt = "You are the Reviewer. This is a read-only task review: independently inspect this task, repository documentation, current implementation, verification results, and exact Git diffs. Never edit files, create tests, format code, commit, or otherwise mutate the project. Use Git to inspect the recorded base and head SHAs, but run verification commands only from the managed project checkout provided as your working directory. Do not create temporary checkouts, copy repositories or tests, or invoke Artisan/Pest from another directory: those environments do not have the managed runtime, dependencies, or assets and their failures are invalid evidence. Approve only when this task meets its acceptance criteria; approval completes this task alone. If changes are needed, return findings so the Coder can correct this task in a fresh attempt. Return exactly one JSON object with `outcome` (`approved` or `changes_required`) and `summary`. For `changes_required`, include a non-empty `findings` array. Every finding must contain these string fields: `severity`, `location`, `current_implementation`, `expected_implementation`, `why_incorrect`, `required_fix`, `verification_requirement`, and `implementation_fix_context`. Do not use `actionable_findings`, `task_key`, `path`, `lines`, `finding`, or `required_action` as substitutes. When approved, make summary a concise, concrete implementation summary suitable for an Obsidian project record, covering the task's changes and verification.\n\n".json_encode(['task' => $assembled?->toArray() ?? $context, 'attempt' => $attempt->only(['number', 'base_sha', 'head_sha', 'commit_sha', 'validation_results', 'changed_files'])], JSON_THROW_ON_ERROR);
         $run = $this->runs->start($task->project, AgentRole::Reviewer, $prompt, $task, $attempt, $lease, $context['retrieval_manifest'], $agent, $assembled);
 
@@ -154,8 +162,8 @@ class RunReviewerTask
             };
             $onHeartbeat = $lease === null ? null : fn (): bool => $this->heartbeat->renew($lease);
             $execution = $harness !== null && $agent !== null
-                ? $harness->execute($task->project, $agent, $prompt, $onOutput, $onHeartbeat)->toArray()
-                : $this->runner->run($task->project, $prompt, $onOutput, $onHeartbeat);
+                ? $harness->execute($task->project, $agent, $prompt, $onOutput, $onHeartbeat, $executionSettings)->toArray()
+                : $this->runner->run($task->project, $prompt, $onOutput, $onHeartbeat, $executionSettings);
         } catch (Throwable $throwable) {
             $execution = ['exit_code' => -1, 'output' => '', 'error_output' => $throwable->getMessage()];
         }

@@ -22,6 +22,7 @@ use App\Services\CoderRepositoryGuard;
 use App\Services\CodexCliRunner;
 use App\Services\DatabaseProtectionGuard;
 use App\Services\ExecutionBudgetPolicy;
+use App\Services\GoalSessionExecutionSettings;
 use App\Services\ManagedValidationProcessCleanup;
 use App\Services\NoProgressRetryGuard;
 use App\Services\ProjectGitState;
@@ -44,6 +45,8 @@ use Throwable;
 
 class RunCoderTask
 {
+    private AgentRole $executionRole;
+
     /**
      * Inject the existing Coder execution, validation, Git, workflow, handoff, and Task-worktree boundaries.
      */
@@ -72,13 +75,15 @@ class RunCoderTask
         private StaleWorkerRecovery $staleRecovery,
         private TaskWorktreeManager $worktrees,
         private TaskGitIntegrator $gitIntegration,
+        private GoalSessionExecutionSettings $goalSessions,
     ) {}
 
     /**
      * Execute one claimed Coder task through an AIOS-owned attempt workspace and serialized repository integration.
      */
-    public function handle(Task $task, ?WorkerLease $lease = null): TaskAttempt
+    public function handle(Task $task, ?WorkerLease $lease = null, AgentRole $role = AgentRole::Coder): TaskAttempt
     {
+        $this->executionRole = $role;
         abort_unless(in_array(TaskStatus::from($task->getRawOriginal('status')), [TaskStatus::Coding, TaskStatus::Validating], true), 409, 'Only claimed coding tasks may execute.');
         $task->loadMissing('project');
 
@@ -132,7 +137,7 @@ class RunCoderTask
             }
 
             $baseSha = $preflight['base_sha'];
-            $context = $this->capsules->make($task);
+            $context = $this->capsules->make($task, $this->executionRole);
             $contract = $this->contracts->evaluate($task, $context, $preflight['recovery_attempt']);
         } catch (Throwable $throwable) {
             // Preflight/capsule/contract evaluation runs inside the persistent aios:work loop
@@ -155,13 +160,18 @@ class RunCoderTask
             return $this->blockMisconfiguredAgent($task, $exception);
         }
 
-        $executionSettings = $assembled->executionSettings ?? $this->executionBudget->forCoderTask($task);
+        $goalRun = $task->goalRun;
+        $executionSettings = [
+            ...($assembled->executionSettings ?? $this->executionBudget->forCoderTask($task)),
+            ...($goalRun === null ? [] : $this->goalSessions->for($goalRun, $this->executionRole)),
+        ];
         $assembled = $assembled?->withExecutionSettings($executionSettings);
 
         $recoveryInstruction = $preflight['mode'] === 'recovery'
             ? 'AIOS has verified that the current working-tree changes are task-owned recovery state tied to the supplied prior attempt. Inspect and continue from them; do not stop solely because the working tree is dirty. Do not stage or commit; AIOS independently validates and commits only verified task files. '
             : '';
-        $prompt = "You are the Coder role. Work only on this task. Read AGENTS.md and the task's relevant documentation first. Start with the supplied relevant paths and verification commands; do not scan unrelated areas, run broad test suites, or refactor speculatively unless the task evidence requires it. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Do not run git add, git commit, git reset, git stash, git checkout, git switch, git merge, git rebase, git cherry-pick, git clean, git worktree, or any other Git mutation. AIOS independently validates and commits only verified task files. {$recoveryInstruction}Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
+        $roleLabel = $this->executionRole === AgentRole::BackendEngineer ? 'Backend Engineer' : 'Coder';
+        $prompt = "You are the {$roleLabel} role. Work only on this task. Read AGENTS.md and the task's relevant documentation first. Start with the supplied relevant paths and verification commands; do not scan unrelated areas, run broad test suites, or refactor speculatively unless the task evidence requires it. The roadmap constraints in the context capsule are authoritative; do not substitute another stack or add technology outside that scope. Do not run git add, git commit, git reset, git stash, git checkout, git switch, git merge, git rebase, git cherry-pick, git clean, git worktree, or any other Git mutation. AIOS independently validates and commits only verified task files. {$recoveryInstruction}Return a concise JSON summary.\n\n".json_encode($assembled?->toArray() ?? $context, JSON_THROW_ON_ERROR);
         $attempt = TaskAttempt::create([
             'task_id' => $task->id,
             'number' => $task->attempts()->max('number') + 1,
@@ -177,7 +187,7 @@ class RunCoderTask
             ],
             'started_at' => now(),
         ]);
-        $run = $this->runs->start($task->project, AgentRole::Coder, $prompt, $task, $attempt, $lease, $context['retrieval_manifest'], $agent, $assembled);
+        $run = $this->runs->start($task->project, $this->executionRole, $prompt, $task, $attempt, $lease, $context['retrieval_manifest'], $agent, $assembled);
         $worktreePath = null;
 
         try {
@@ -217,7 +227,7 @@ class RunCoderTask
             }
 
             if ($execution['exit_code'] === 0) {
-                $task->operatorMessages()->where('recipient_role', AgentRole::Coder)->whereNull('delivered_at')->update(['delivered_at' => now()]);
+                $task->operatorMessages()->where('recipient_role', $this->executionRole)->whereNull('delivered_at')->update(['delivered_at' => now()]);
             }
 
             $reportedPlanningDefect = $this->reportedPlanningDefect($execution['output']);
@@ -370,7 +380,7 @@ class RunCoderTask
 
         $run = AgentRun::query()
             ->whereBelongsTo($task)
-            ->where('role', AgentRole::Coder)
+            ->where('role', $this->executionRole)
             ->where('attempt_number', $attempt->number)
             ->where('status', AgentRunStatus::Completed)
             ->where('exit_code', 0)
@@ -780,7 +790,7 @@ class RunCoderTask
     {
         $run = AgentRun::query()
             ->whereBelongsTo($task)
-            ->where('role', AgentRole::Coder)
+            ->where('role', $this->executionRole)
             ->where('status', AgentRunStatus::Running)
             ->latest('id')
             ->first();
@@ -810,14 +820,14 @@ class RunCoderTask
     private function executionConfiguration(Task $task, array $context, ?TaskAttempt $recoveryAttempt): array
     {
         if ($recoveryAttempt === null) {
-            [$agent, $harness] = $this->resolveAgent($task->project, AgentRole::Coder);
+            [$agent, $harness] = $this->resolveAgent($task->project, $this->executionRole);
 
-            return [$agent, $harness, $agent === null ? null : $this->contextAssembler->assemble($agent, AgentRole::Coder, $context)];
+            return [$agent, $harness, $agent === null ? null : $this->contextAssembler->assemble($agent, $this->executionRole, $context)];
         }
 
         $run = AgentRun::query()
             ->whereBelongsTo($task)
-            ->where('role', AgentRole::Coder)
+            ->where('role', $this->executionRole)
             ->where('attempt_number', $recoveryAttempt->number)
             ->orderByDesc('started_at')
             ->orderByDesc('id')
