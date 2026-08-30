@@ -54,6 +54,7 @@ function p3016Harness(int $capacityTokens): AgentHarness
             ?Closure $onOutput = null,
             ?Closure $onHeartbeat = null,
             array $executionSettings = [],
+            ?string $executionPath = null,
         ): NormalizedExecutionResult {
             $this->executions++;
 
