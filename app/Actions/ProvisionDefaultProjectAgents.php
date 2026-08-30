@@ -26,9 +26,8 @@ class ProvisionDefaultProjectAgents
     {
         foreach ($this->defaults() as $definition) {
             $agent = $project->agents()->firstOrCreate(
-                ['name' => $definition['name']],
+                ['name' => $definition['name'], 'role' => $definition['role']],
                 [
-                    'role' => $definition['role'],
                     'harness' => AgentHarness::Codex,
                     ...$this->nativeDefinition($definition['role']),
                     'enabled' => true,
