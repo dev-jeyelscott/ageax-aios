@@ -43,4 +43,10 @@ class GoalRun extends Model
     {
         return $this->hasMany(GoalSession::class);
     }
+
+    /** @return HasMany<GoalRunVersion, $this> */
+    public function versions(): HasMany
+    {
+        return $this->hasMany(GoalRunVersion::class)->orderBy('version');
+    }
 }

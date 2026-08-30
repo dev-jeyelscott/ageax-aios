@@ -6,6 +6,7 @@ use App\AgentRole;
 use App\Models\Agent;
 use App\Models\FeatureSpec;
 use App\Models\GoalRun;
+use App\Models\GoalRunVersion;
 use App\Models\GoalSession;
 use App\Models\Project;
 use App\Models\Task;
@@ -38,12 +39,19 @@ test('approval versions an operator-edited canonical goal', function () {
     $task = Task::create(['project_id' => $project->id, 'key' => 'TASK-001', 'position' => 1, 'title' => 'Feature task', 'objective' => 'Implement the feature.', 'acceptance_criteria' => ['Works'], 'scope' => [], 'constraints' => [], 'relevant_paths' => [], 'verification_commands' => [], 'implementation_prompt' => 'Implement it.', 'context_capsule' => [], 'status' => 'queued']);
     $goalRun = GoalRun::factory()->for($project)->for($featureSpec)->for($task)->create(['status' => 'awaiting_approval', 'goal_text' => '/goal initial']);
 
+    $initialVersion = new GoalRunVersion;
+    $initialVersion->goal_run_id = $goalRun->id;
+    $initialVersion->version = 1;
+    $initialVersion->goal_text = '/goal initial';
+    $initialVersion->source = 'project_manager';
+    $initialVersion->save();
     app(ApproveFeatureGoal::class)->handle($goalRun, '/goal edited');
 
     expect($goalRun->refresh()->status)->toBe('approved')
         ->and($goalRun->goal_text)->toBe('/goal edited')
         ->and($goalRun->version)->toBe(2)
-        ->and($goalRun->approved_at)->not->toBeNull();
+        ->and($goalRun->approved_at)->not->toBeNull()
+        ->and($goalRun->versions()->pluck('goal_text')->all())->toBe(['/goal initial', '/goal edited']);
 });
 
 test('goal session execution settings resume only a durable same-role provider session', function () {

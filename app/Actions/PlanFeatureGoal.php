@@ -6,6 +6,7 @@ use App\AgentRole;
 use App\Exceptions\AgentNotBoundToRole;
 use App\Models\FeatureSpec;
 use App\Models\GoalRun;
+use App\Models\GoalRunVersion;
 use App\Models\GoalSession;
 use App\Models\Task;
 use App\Services\AgentContextAssembler;
@@ -64,7 +65,15 @@ class PlanFeatureGoal
         return DB::transaction(function () use ($featureSpec, $agent, $run, $context, $validated, $approvalMode): GoalRun {
             $position = ((int) $featureSpec->project->tasks()->max('position')) + 1;
             $task = Task::create(['project_id' => $featureSpec->project_id, 'key' => 'TASK-'.str_pad((string) $position, 3, '0', STR_PAD_LEFT), 'position' => $position, 'title' => $validated['title'], 'objective' => $validated['objective'], 'work_type' => $validated['work_type'], 'complexity' => $validated['complexity'], 'acceptance_criteria' => $validated['acceptance_criteria'], 'scope' => $validated['scope'], 'constraints' => $validated['constraints'], 'relevant_paths' => $validated['relevant_paths'], 'verification_commands' => $validated['verification_commands'], 'implementation_prompt' => $validated['implementation_prompt'], 'context_capsule' => $validated['context_capsule'], 'status' => 'queued']);
-            $goalRun = GoalRun::create(['project_id' => $featureSpec->project_id, 'feature_spec_id' => $featureSpec->id, 'task_id' => $task->id, 'project_manager_agent_id' => $agent->id, 'project_manager_agent_run_id' => $run->id, 'goal_text' => $validated['goal_text'], 'contract' => $validated, 'pm_output' => $validated, 'configuration_snapshot' => $context->configurationSnapshot(), 'native_definition_hash' => $agent->provider_definition_hash, 'harness' => $agent->harness->value, 'model' => $agent->model, 'approval_mode' => $approvalMode, 'status' => $approvalMode === 'automatic' ? 'approved' : 'awaiting_approval', 'context_hash' => $context->hash, 'approved_at' => $approvalMode === 'automatic' ? now() : null]);
+            $backendEngineer = $this->agents->forRole($featureSpec->project, AgentRole::BackendEngineer);
+            $reviewer = $this->agents->forRole($featureSpec->project, AgentRole::Reviewer);
+            $goalRun = GoalRun::create(['project_id' => $featureSpec->project_id, 'feature_spec_id' => $featureSpec->id, 'task_id' => $task->id, 'project_manager_agent_id' => $agent->id, 'backend_engineer_agent_id' => $backendEngineer->id, 'reviewer_agent_id' => $reviewer->id, 'project_manager_agent_run_id' => $run->id, 'goal_text' => $validated['goal_text'], 'contract' => $validated, 'pm_output' => $validated, 'configuration_snapshot' => $context->configurationSnapshot(), 'native_definition_hash' => $agent->provider_definition_hash, 'harness' => $agent->harness->value, 'model' => $agent->model, 'approval_mode' => $approvalMode, 'status' => $approvalMode === 'automatic' ? 'approved' : 'awaiting_approval', 'context_hash' => $context->hash, 'approved_at' => $approvalMode === 'automatic' ? now() : null]);
+            $goalVersion = new GoalRunVersion;
+            $goalVersion->goal_run_id = $goalRun->id;
+            $goalVersion->version = 1;
+            $goalVersion->goal_text = $validated['goal_text'];
+            $goalVersion->source = 'project_manager';
+            $goalVersion->save();
             foreach ([AgentRole::ProjectManager, AgentRole::BackendEngineer, AgentRole::Reviewer] as $role) {
                 $sessionAgent = $this->agents->forRole($featureSpec->project, $role);
                 GoalSession::create(['goal_run_id' => $goalRun->id, 'agent_id' => $sessionAgent->id, 'role' => $role, 'harness' => $sessionAgent->harness, 'provider_session_id' => $role === AgentRole::ProjectManager ? ($run->fresh()->external_run_id ?? $run->fresh()->codex_run_id) : null, 'status' => 'active']);

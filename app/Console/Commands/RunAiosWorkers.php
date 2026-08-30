@@ -268,6 +268,10 @@ class RunAiosWorkers extends Command
                                     $runCoderTask->handle($task, $lease);
                                 }
                             } else {
+                                $goalRun = $task->goalRun;
+                                if ($goalRun instanceof GoalRun) {
+                                    $goalRun->update(['status' => 'reviewing']);
+                                }
                                 $attempt = $task->attempts()
                                     ->latest('number')
                                     ->firstOrFail();
@@ -277,7 +281,6 @@ class RunAiosWorkers extends Command
                                     $attempt,
                                     $lease,
                                 );
-                                $goalRun = $task->goalRun;
                                 if ($goalRun instanceof GoalRun) {
                                     $goalSessions->recordLatest($goalRun, AgentRole::Reviewer);
                                     $goalRun->refresh();

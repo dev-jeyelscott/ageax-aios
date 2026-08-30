@@ -1511,8 +1511,7 @@ function OverviewDashboard({
                     {latestGoal && (
                         <div className="mt-4 rounded-lg border border-border-subtle bg-foreground/2 p-3">
                             <div className="flex flex-wrap justify-between gap-2 text-xs"><span>Task: {latestGoal.task?.key ?? 'materializing'}</span><span>{latestGoal.task?.status ?? latestGoal.status}</span></div>
-                            {latestGoal.goal_text && <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap font-sans text-xs text-muted-foreground">{latestGoal.goal_text}</pre>}
-                            {latestGoal.status === 'awaiting_approval' && <Form action={`/projects/${project.id}/goal-runs/${latestGoal.id}/approve`} method="post" className="mt-3"><input type="hidden" name="_method" value="patch" /><textarea name="goal_text" defaultValue={latestGoal.goal_text ?? ''} className="sr-only" /><Button type="submit" size="sm"><CheckCircle2 className="size-3.5" />Approve and run</Button></Form>}
+                            {latestGoal.status === 'awaiting_approval' ? <Form action={`/projects/${project.id}/goal-runs/${latestGoal.id}/approve`} method="post" className="mt-3 space-y-2"><input type="hidden" name="_method" value="patch" /><label className="block text-2xs font-medium text-muted-foreground" htmlFor={`goal-run-${latestGoal.id}`}>Canonical /goal (edits create an immutable new version)</label><textarea id={`goal-run-${latestGoal.id}`} name="goal_text" defaultValue={latestGoal.goal_text ?? ''} className="min-h-36 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" /><Button type="submit" size="sm"><CheckCircle2 className="size-3.5" />Approve and run</Button></Form> : latestGoal.goal_text && <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap font-sans text-xs text-muted-foreground">{latestGoal.goal_text}</pre>}
                         </div>
                     )}
                 </section>

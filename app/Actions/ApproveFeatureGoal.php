@@ -3,6 +3,7 @@
 namespace App\Actions;
 
 use App\Models\GoalRun;
+use App\Models\GoalRunVersion;
 use App\Services\AuditLogger;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -19,7 +20,14 @@ class ApproveFeatureGoal
                 throw ValidationException::withMessages(['goal' => 'Only a planned goal may be approved.']);
             }
             if ($goalText !== null && trim($goalText) !== '' && $goalText !== $locked->goal_text) {
-                $locked->update(['goal_text' => $goalText, 'version' => $locked->version + 1]);
+                $version = $locked->version + 1;
+                $goalVersion = new GoalRunVersion;
+                $goalVersion->goal_run_id = $locked->id;
+                $goalVersion->version = $version;
+                $goalVersion->goal_text = $goalText;
+                $goalVersion->source = 'operator_edit';
+                $goalVersion->save();
+                $locked->update(['goal_text' => $goalText, 'version' => $version]);
                 $this->audit->record('feature_goal.edited', ['goal_run_id' => $locked->id, 'version' => $locked->version], $locked->project, $locked->task);
             }
             $locked->update(['status' => 'approved', 'approved_at' => now()]);
