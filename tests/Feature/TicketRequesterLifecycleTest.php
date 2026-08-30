@@ -48,6 +48,9 @@ final class P3RequesterLifecycleHarness implements AgentHarnessContract
         return new HarnessCapabilities;
     }
 
+    /**
+     * Execute the deterministic requester-lifecycle harness fake using the shared AgentHarness contract.
+     */
     public function execute(
         Project $project,
         Agent $agent,
@@ -55,6 +58,7 @@ final class P3RequesterLifecycleHarness implements AgentHarnessContract
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         array $executionSettings = [],
+        ?string $executionPath = null,
     ): NormalizedExecutionResult {
         $this->executions++;
         $this->prompts[] = $prompt;
