@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\ClaimTicketForTriage;
+use App\Actions\ConvertTicketToTask;
 use App\Actions\DecideTicketEscalation;
 use App\Actions\RunTicketTriage;
 use App\AgentHarness as AgentHarnessIdentifier;
@@ -533,6 +534,193 @@ test('operator direction is project scoped idempotent auditable and becomes fres
         ->toHaveCount(2)
         ->and($harness->prompts[1])
         ->toContain($direction);
+});
+
+test('approving an escalated implementation-required proposal converts it instead of restarting triage', function (): void {
+    $operator = User::factory()->create();
+    $project = p3EscalationProject();
+    p3EscalationBindPm($project);
+    $ticket = p3EscalationTicket($project);
+
+    $attempt = p3RunEscalationTriage(
+        $project,
+        $ticket,
+        p3EscalationDecision([
+            'confidence' => 0.99,
+            'escalation_flags' => [
+                TicketEscalationReason::ArchitecturalDecisionRequired->value,
+            ],
+        ]),
+    );
+
+    expect($ticket->refresh()->status)->toBe(TicketStatus::Escalated);
+
+    $decision = app(DecideTicketEscalation::class)->handle(
+        $ticket->refresh(),
+        $attempt,
+        $operator,
+        TicketOperatorAction::ApproveProposedHandling,
+    );
+
+    expect($decision->action)->toBe(TicketOperatorAction::ApproveProposedHandling)
+        ->and($ticket->refresh()->status)
+        ->toBe(TicketStatus::Escalated)
+        ->and(app(ClaimTicketForTriage::class)->handle($project))
+        ->toBeNull();
+
+    $task = app(ConvertTicketToTask::class)->handle($attempt->refresh());
+
+    expect($task)->not->toBeNull()
+        ->and($ticket->refresh()->status)
+        ->toBe(TicketStatus::Converted)
+        ->and($ticket->converted_task_id)
+        ->toBe($task->id)
+        ->and($project->tasks()->count())
+        ->toBe(1);
+});
+
+test('newly surfaced escalation risk after approval blocks conversion and re-escalates for fresh operator review', function (): void {
+    $operator = User::factory()->create();
+    $project = p3EscalationProject();
+    p3EscalationBindPm($project);
+    $ticket = p3EscalationTicket($project);
+    [$phase, $dependency] = p3EscalationPendingTask($project, 1);
+
+    $decision = p3EscalationDecision([
+        'confidence' => 0.99,
+        'escalation_flags' => [
+            TicketEscalationReason::ArchitecturalDecisionRequired->value,
+        ],
+    ]);
+    $decision['proposed_task']['preferred_phase_id'] = $phase->id;
+    $decision['proposed_task']['depends_on_task_ids'] = [$dependency->id];
+
+    $attempt = p3RunEscalationTriage($project, $ticket, $decision);
+
+    expect($attempt->structured_decision['aios_validation']['escalation_reasons'])
+        ->toBe([TicketEscalationReason::ArchitecturalDecisionRequired->value]);
+
+    app(DecideTicketEscalation::class)->handle(
+        $ticket->refresh(),
+        $attempt,
+        $operator,
+        TicketOperatorAction::ApproveProposedHandling,
+    );
+
+    $dependency->update(['status' => TaskStatus::Cancelled]);
+
+    $task = app(ConvertTicketToTask::class)->handle($attempt->refresh());
+
+    expect($task)->toBeNull()
+        ->and($ticket->refresh()->status)
+        ->toBe(TicketStatus::Escalated)
+        ->and($project->tasks()->count())
+        ->toBe(1)
+        ->and($attempt->refresh()->structured_decision['aios_validation']['escalation_reasons'])
+        ->toContain(TicketEscalationReason::UnsafeOrUnresolvedDependencyPlacement->value)
+        ->and($project->auditEvents()
+            ->where('event_type', 'ticket.escalated')
+            ->where('payload->reason', 'ticket_task_conversion_revalidation')
+            ->exists())
+        ->toBeTrue();
+});
+
+test('proposed_tasks always requires operator escalation and is never automatically convertible', function (): void {
+    $project = p3EscalationProject();
+    $ticket = p3EscalationTicket($project);
+
+    $decision = p3EscalationDecision([
+        'confidence' => 0.99,
+        'complexity' => 'low',
+        'proposed_task' => null,
+        'proposed_tasks' => [
+            p3EscalationDecision()['proposed_task'],
+            p3EscalationDecision()['proposed_task'],
+        ],
+        'escalation_flags' => [
+            TicketEscalationReason::MultipleTasksOrPhasesRequired->value,
+        ],
+    ]);
+
+    $result = app(TicketTriagePolicy::class)->evaluate($ticket, $decision);
+
+    expect($result['requires_operator_decision'])->toBeTrue()
+        ->and($result['automatic_task_conversion_eligible'])->toBeFalse()
+        ->and($result['escalation_reasons'])
+        ->toContain(TicketEscalationReason::MultipleTasksOrPhasesRequired->value);
+});
+
+test('multiple_tasks_or_phases_required is derived even when the PM omits the flag', function (): void {
+    $project = p3EscalationProject();
+    $ticket = p3EscalationTicket($project);
+
+    $decision = p3EscalationDecision([
+        'confidence' => 0.99,
+        'proposed_task' => null,
+        'proposed_tasks' => [
+            p3EscalationDecision()['proposed_task'],
+            p3EscalationDecision()['proposed_task'],
+        ],
+        'escalation_flags' => [],
+    ]);
+
+    $result = app(TicketTriagePolicy::class)->evaluate($ticket, $decision);
+
+    expect($result['escalation_reasons'])
+        ->toContain(TicketEscalationReason::MultipleTasksOrPhasesRequired->value);
+});
+
+test('operator approving a proposed_tasks set converts the whole bounded ordered set with in-set dependencies', function (): void {
+    $operator = User::factory()->create();
+    $project = p3EscalationProject();
+    p3EscalationBindPm($project);
+    $ticket = p3EscalationTicket($project);
+
+    $firstTask = p3EscalationDecision()['proposed_task'];
+    $firstTask['title'] = 'P10-006: Recovery hardening';
+    $firstTask['depends_on_proposed_task_index'] = [];
+
+    $secondTask = p3EscalationDecision()['proposed_task'];
+    $secondTask['title'] = 'P10-007: Bounded concurrency controls';
+    $secondTask['depends_on_proposed_task_index'] = [0];
+
+    $decision = p3EscalationDecision([
+        'confidence' => 0.99,
+        'proposed_task' => null,
+        'proposed_tasks' => [$firstTask, $secondTask],
+        'escalation_flags' => [
+            TicketEscalationReason::MultipleTasksOrPhasesRequired->value,
+        ],
+    ]);
+
+    $attempt = p3RunEscalationTriage($project, $ticket, $decision);
+
+    expect($ticket->refresh()->status)->toBe(TicketStatus::Escalated)
+        ->and($attempt->structured_decision['aios_validation']['escalation_reasons'])
+        ->toBe([TicketEscalationReason::MultipleTasksOrPhasesRequired->value]);
+
+    app(DecideTicketEscalation::class)->handle(
+        $ticket->refresh(),
+        $attempt,
+        $operator,
+        TicketOperatorAction::ApproveProposedHandling,
+    );
+
+    expect($ticket->refresh()->status)->toBe(TicketStatus::Escalated);
+
+    $firstCreatedTask = app(ConvertTicketToTask::class)->handle($attempt->refresh());
+
+    expect($firstCreatedTask)->not->toBeNull()
+        ->and($project->tasks()->count())->toBe(2)
+        ->and($ticket->refresh()->status)->toBe(TicketStatus::Converted)
+        ->and($ticket->converted_task_id)->not->toBeNull();
+
+    $created = $project->tasks()->orderBy('position')->get();
+
+    expect($created[0]->title)->toBe('P10-006: Recovery hardening')
+        ->and($created[1]->title)->toBe('P10-007: Bounded concurrency controls')
+        ->and($created[1]->dependencies()->pluck('tasks.id'))
+        ->toEqual(collect([$created[0]->id]));
 });
 
 test('operator decision endpoint requires authentication and project scoped bindings', function (): void {

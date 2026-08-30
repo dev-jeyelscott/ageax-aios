@@ -49,14 +49,30 @@ class TicketTriagePolicy
             ? $decision['proposed_task']
             : null;
 
-        if ($proposal !== null) {
-            if ($this->preferredPhaseWouldReorderRoadmap($ticket, $proposal)) {
+        $proposalSet = is_array($decision['proposed_tasks'] ?? null)
+            ? array_values(array_filter(
+                $decision['proposed_tasks'],
+                is_array(...),
+            ))
+            : [];
+
+        $allProposals = $proposal !== null ? [$proposal] : $proposalSet;
+
+        foreach ($allProposals as $candidateProposal) {
+            if ($this->preferredPhaseWouldReorderRoadmap($ticket, $candidateProposal)) {
                 $reasons[] = TicketEscalationReason::RoadmapOrPhaseReorderingOrInterruptionRequested->value;
             }
 
-            if ($this->dependencyPlacementIsUnsafe($ticket, $proposal)) {
+            if ($this->dependencyPlacementIsUnsafe($ticket, $candidateProposal)) {
                 $reasons[] = TicketEscalationReason::UnsafeOrUnresolvedDependencyPlacement->value;
             }
+        }
+
+        // AIOS independently derives multi-Task scope from the actual proposal shape rather
+        // than trusting the Project Manager's self-reported escalation flag, matching how
+        // low_confidence and high_complexity are derived above.
+        if (count($proposalSet) > 1) {
+            $reasons[] = TicketEscalationReason::MultipleTasksOrPhasesRequired->value;
         }
 
         $reasons = $this->normalizeReasons($reasons);

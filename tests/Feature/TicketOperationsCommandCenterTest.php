@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\ConvertTicketToTask;
 use App\AgentRole;
 use App\AgentRunStatus;
 use App\Models\AgentRun;
@@ -335,10 +336,13 @@ test('critical roadmap interruption cannot use generic approval and requires the
 
     $operatorDecision = TicketEscalationDecision::query()->sole();
 
+    // The approval leaves the Ticket escalated (deferred) rather than reopening it for a
+    // brand-new, stateless PM triage attempt that would discard the reviewed proposal and
+    // very likely re-trip the very same deterministic escalation reason it just resolved.
     expect($operatorDecision->action)
         ->toBe(TicketOperatorAction::ApproveCriticalRoadmapInterruption)
         ->and($ticket->refresh()->status)
-        ->toBe(TicketStatus::Open)
+        ->toBe(TicketStatus::Escalated)
         ->and($ticket->converted_task_id)
         ->toBeNull()
         ->and($project->tasks()->count())
@@ -349,8 +353,22 @@ test('critical roadmap interruption cannot use generic approval and requires the
             ->where('event_type', 'ticket.operator_decision')
             ->where('payload->ticket_triage_attempt_id', $attempt->id)
             ->where('payload->critical_roadmap_interruption_approved', true)
+            ->where('payload->conversion_deferred', true)
             ->exists())
         ->toBeTrue();
+
+    // AIOS (the durable worker loop, via ConvertTicketToTask) re-validates the operator's
+    // exact approved risk against current state before converting — the approval does not
+    // bypass escalation, it resolves the specific reason the operator already reviewed.
+    $task = app(ConvertTicketToTask::class)->handle($attempt->refresh());
+
+    expect($task)->not->toBeNull()
+        ->and($ticket->refresh()->status)
+        ->toBe(TicketStatus::Converted)
+        ->and($ticket->converted_task_id)
+        ->toBe($task->id)
+        ->and($project->tasks()->count())
+        ->toBe(2);
 });
 
 test('dedicated critical approval is rejected when fresh durable roadmap state does not require it', function (): void {

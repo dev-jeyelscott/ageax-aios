@@ -133,11 +133,21 @@ class DecideTicketEscalation
                 $direction,
             );
 
-            $resultingStatus = $this->resultingStatus($action);
-            $this->workflow->transition(
-                $lockedTicket,
-                $resultingStatus,
+            $deferForConversion = $this->deferForConversion(
+                $action,
+                $structuredDecision,
             );
+            $resultingStatus = $this->resultingStatus(
+                $action,
+                $deferForConversion,
+            );
+
+            if (! $deferForConversion) {
+                $this->workflow->transition(
+                    $lockedTicket,
+                    $resultingStatus,
+                );
+            }
 
             $this->audit->record('ticket.operator_decision', [
                 'ticket_id' => $lockedTicket->id,
@@ -151,6 +161,7 @@ class DecideTicketEscalation
                 'fresh_escalation_reasons' => $freshValidation['escalation_reasons'],
                 'critical_roadmap_interruption_approved' => $action === TicketOperatorAction::ApproveCriticalRoadmapInterruption,
                 'resulting_status' => $resultingStatus->value,
+                'conversion_deferred' => $deferForConversion,
             ], $lockedTicket->project);
 
             return $decision;
@@ -273,8 +284,48 @@ class DecideTicketEscalation
         }
     }
 
-    private function resultingStatus(TicketOperatorAction $action): TicketStatus
-    {
+    /**
+     * Determine whether an operator approval already carries exactly one bounded
+     * proposed Task, so AIOS should leave the Ticket escalated and let the durable
+     * worker loop (ConvertTicketToTask) re-validate and convert it, instead of
+     * discarding the reviewed proposal into a brand-new triage attempt.
+     *
+     * @param  array<string, mixed>  $structuredDecision
+     */
+    private function deferForConversion(
+        TicketOperatorAction $action,
+        array $structuredDecision,
+    ): bool {
+        if (
+            ! in_array($action, [
+                TicketOperatorAction::ApproveProposedHandling,
+                TicketOperatorAction::ApproveCriticalRoadmapInterruption,
+            ], true)
+        ) {
+            return false;
+        }
+
+        if (($structuredDecision['implementation_required'] ?? null) !== true) {
+            return false;
+        }
+
+        if (is_array($structuredDecision['proposed_task'] ?? null)) {
+            return true;
+        }
+
+        $proposedTasks = $structuredDecision['proposed_tasks'] ?? null;
+
+        return is_array($proposedTasks) && count($proposedTasks) >= 2;
+    }
+
+    private function resultingStatus(
+        TicketOperatorAction $action,
+        bool $deferForConversion,
+    ): TicketStatus {
+        if ($deferForConversion) {
+            return TicketStatus::Escalated;
+        }
+
         return match ($action) {
             TicketOperatorAction::ApproveProposedHandling,
             TicketOperatorAction::ApproveCriticalRoadmapInterruption,

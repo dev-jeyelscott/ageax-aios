@@ -6,6 +6,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
     'ticket_id',
@@ -47,5 +48,11 @@ class TicketTriageAttempt extends Model
     public function agentRun(): BelongsTo
     {
         return $this->belongsTo(AgentRun::class);
+    }
+
+    /** @return HasOne<TicketEscalationDecision, $this> */
+    public function escalationDecision(): HasOne
+    {
+        return $this->hasOne(TicketEscalationDecision::class, 'ticket_triage_attempt_id');
     }
 }

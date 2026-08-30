@@ -66,7 +66,7 @@ The PM returns structured proposals only. PM output cannot directly change Ticke
 
 ## Automatic conversion is atomic and idempotent
 
-Automatic conversion may create exactly one Task only when the approved decision is `approved`, implementation is required, confidence is at least `0.80`, scope is clear/safe/bounded, complexity is not high, no escalation predicate applies, and phase/dependency placement is deterministic.
+Automatic (unreviewed) conversion may create exactly one Task only when the approved decision is `approved`, implementation is required, confidence is at least `0.80`, scope is clear/safe/bounded, complexity is not high, no escalation predicate applies, and phase/dependency placement is deterministic.
 
 Conversion must transactionally lock and re-check the relevant Ticket/project/phase placement evidence before commit.
 
@@ -84,6 +84,27 @@ proposal remains exactly one bounded Task
 Persist Task creation, Ticket linkage, dependencies, Ticket transition, and required audit/system evidence atomically or leave the Ticket unconverted.
 
 Retries and crashes must never create duplicate Tasks from one Ticket.
+
+## Operator-approved multi-Task conversion
+
+Multi-Task/phase scope is a mandatory escalation for automatic conversion (see below) and is never resolved by PM re-triage alone. It has exactly one resolution path: an operator explicitly reviewing and approving a bounded, ordered `proposed_tasks` set on a specific completed triage attempt via the existing Ticket escalation-decision action (`DecideTicketEscalation`).
+
+When that approval exists, AIOS (via `ConvertTicketToTask`, driven by the same durable worker-loop recovery step used for automatic conversion, never synchronously from the approval request) may create the full approved set of Tasks from that one Ticket, subject to the same re-check discipline as single-Task conversion:
+
+```
+Ticket has not already converted
+every Task in the proposed set is itself clear/safe/bounded
+in-set and cross-Ticket dependencies remain valid and resolve to real Tasks
+the whole set shares one deterministic target phase
+no escalation reason has newly surfaced since the operator's approval
+   (any reason present at fresh re-evaluation that was not part of the
+   approved attempt's reviewed escalation reasons forces re-escalation,
+   never silent conversion or silent failure)
+```
+
+All Tasks in an approved set are created together, or none are created — never a partial set, on first attempt or on retry after a crash.
+
+An operator-approved multi-Task conversion is strictly a Ticket-to-Task authoring capability. It must never be treated as, or used to bootstrap, concurrent/parallel Coder execution — every Task it creates still goes through the unmodified Task state machine, dependency ordering, phase review barrier, and serial Coder/Reviewer execution.
 
 ## Phase review barrier remains authoritative
 

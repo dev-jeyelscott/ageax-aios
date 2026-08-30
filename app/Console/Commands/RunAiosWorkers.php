@@ -22,6 +22,7 @@ use App\ProjectStatus;
 use App\Services\TaskPlanningEscalationWorkflow;
 use App\Services\TaskWorkflow;
 use App\Services\WorkerHeartbeat;
+use App\TicketOperatorAction;
 use App\TicketStatus;
 use App\WorkerLease;
 use Carbon\CarbonImmutable;
@@ -308,15 +309,29 @@ class RunAiosWorkers extends Command
     ): void {
         $attempt = TicketTriageAttempt::query()
             ->where('status', 'completed')
-            ->where(
-                'structured_decision->aios_validation->automatic_task_conversion_eligible',
-                true,
-            )
+            ->where(function ($query): void {
+                $query->where(
+                    'structured_decision->aios_validation->automatic_task_conversion_eligible',
+                    true,
+                )->orWhereHas(
+                    'escalationDecision',
+                    fn ($decisionQuery) => $decisionQuery->whereIn('action', [
+                        TicketOperatorAction::ApproveProposedHandling->value,
+                        TicketOperatorAction::ApproveCriticalRoadmapInterruption->value,
+                    ]),
+                );
+            })
             ->whereHas(
                 'ticket',
                 fn ($query) => $query
                     ->where('project_id', $project->id)
-                    ->where('status', TicketStatus::Triaging->value),
+                    ->whereIn('status', [
+                        TicketStatus::Triaging->value,
+                        TicketStatus::Escalated->value,
+                    ]),
+            )
+            ->whereRaw(
+                'number = (select max(tta.number) from ticket_triage_attempts as tta where tta.ticket_id = ticket_triage_attempts.ticket_id)',
             )
             ->oldest('id')
             ->first();

@@ -329,6 +329,7 @@ Required JSON contract:
   "suggested_priority": "low|normal|high|critical|emergency",
   "implementation_required": false,
   "proposed_task": null,
+  "proposed_tasks": null,
   "escalation_flags": []
 }
 
@@ -350,7 +351,9 @@ escalation_flags may contain only these canonical identifiers:
 
 AIOS independently derives low_confidence and high_complexity from the structured fields and may derive roadmap/preemption/dependency risk from durable project state. Never omit a canonical semantic risk merely because confidence is high.
 
-When implementation_required is true, proposed_task must be exactly one bounded Task proposal with:
+When implementation_required is true, propose work with exactly one of proposed_task or proposed_tasks (never both).
+
+Use proposed_task for one bounded Task:
 {
   "title": "...",
   "objective": "...",
@@ -364,10 +367,30 @@ When implementation_required is true, proposed_task must be exactly one bounded 
   "preferred_phase_id": null
 }
 
+Use proposed_tasks only when the work genuinely cannot be one bounded Task and must become an explicit ordered set (never a substitute for scoping the work down):
+[
+  {
+    "title": "...",
+    "objective": "...",
+    "acceptance_criteria": ["..."],
+    "scope": ["..."],
+    "constraints": ["..."],
+    "relevant_paths": ["..."],
+    "verification_commands": ["..."],
+    "implementation_prompt": "...",
+    "depends_on_task_ids": [],
+    "depends_on_proposed_task_index": [],
+    "preferred_phase_id": null
+  }
+]
+
 Rules:
 - Ticket triage is advisory structured reasoning only. Do not mutate Ticket state, create/update Tasks, reorder phases, close Tickets, send replies, or decide durable workflow state.
 - AIOS performs all persistence, escalation validation, Ticket-to-Task conversion, phase placement, ordering, replies, and transitions after validating your proposal.
-- implementation_required may be true only with decision=approved and one proposed_task. Otherwise it must be false and proposed_task must be null.
+- implementation_required may be true only with decision=approved and exactly one of proposed_task or proposed_tasks. Otherwise it must be false and both proposed_task and proposed_tasks must be null.
+- proposed_tasks always requires escalation_flags to include multiple_tasks_or_phases_required; AIOS independently derives and enforces this regardless of what you report. A multi-Task proposal can never be automatically converted — it always requires explicit operator review and approval before AIOS creates any of the proposed Tasks.
+- Every entry in proposed_tasks must itself be clear, safe, and bounded; do not use proposed_tasks to smuggle one oversized, vague, or open-ended Task.
+- depends_on_proposed_task_index references only 0-based positions of other entries within this same proposed_tasks array (never itself or an out-of-range index); depends_on_task_ids continues to reference only existing Tasks from this project.
 - duplicate_ticket_id is required only for decision=duplicate and must reference a different Ticket from this project; otherwise it must be null.
 - preferred_phase_id and depends_on_task_ids may reference only existing records from this project that are present in the supplied context/evidence.
 - Surface documentation conflicts in documentation_alignment and escalation_flags; never silently override approved documentation.
@@ -395,7 +418,8 @@ PROMPT;
         array $decision,
         Ticket $ticket,
     ): array {
-        $proposalRequired = ($decision['implementation_required'] ?? null) === true;
+        $proposalRequired = ($decision['implementation_required'] ?? null) === true
+            && is_array($decision['proposed_task'] ?? null);
 
         // Schema-required list fields may intentionally be empty. Laravel's required rule
         // treats an empty array as missing, so use present for lists whose empty state is valid.
@@ -566,6 +590,99 @@ PROMPT;
                 'nullable',
                 'integer',
             ],
+            'proposed_tasks' => [
+                'sometimes',
+                'nullable',
+                'array',
+                'min:2',
+                'max:10',
+            ],
+            'proposed_tasks.*.title' => [
+                'required',
+                'string',
+                'max:255',
+            ],
+            'proposed_tasks.*.objective' => [
+                'required',
+                'string',
+                'max:4000',
+            ],
+            'proposed_tasks.*.acceptance_criteria' => [
+                'required',
+                'array',
+                'min:1',
+                'max:30',
+            ],
+            'proposed_tasks.*.acceptance_criteria.*' => [
+                'required',
+                'string',
+                'max:2000',
+            ],
+            'proposed_tasks.*.scope' => [
+                'present',
+                'array',
+                'max:50',
+            ],
+            'proposed_tasks.*.scope.*' => [
+                'string',
+                'max:1000',
+            ],
+            'proposed_tasks.*.constraints' => [
+                'present',
+                'array',
+                'max:50',
+            ],
+            'proposed_tasks.*.constraints.*' => [
+                'string',
+                'max:2000',
+            ],
+            'proposed_tasks.*.relevant_paths' => [
+                'present',
+                'array',
+                'max:50',
+            ],
+            'proposed_tasks.*.relevant_paths.*' => [
+                'string',
+                'max:1000',
+            ],
+            'proposed_tasks.*.verification_commands' => [
+                'present',
+                'array',
+                'max:30',
+            ],
+            'proposed_tasks.*.verification_commands.*' => [
+                'string',
+                'max:1000',
+            ],
+            'proposed_tasks.*.implementation_prompt' => [
+                'required',
+                'string',
+                'max:16000',
+            ],
+            'proposed_tasks.*.depends_on_task_ids' => [
+                'present',
+                'array',
+                'max:50',
+            ],
+            'proposed_tasks.*.depends_on_task_ids.*' => [
+                'integer',
+                'distinct',
+            ],
+            'proposed_tasks.*.depends_on_proposed_task_index' => [
+                'sometimes',
+                'array',
+                'max:10',
+            ],
+            'proposed_tasks.*.depends_on_proposed_task_index.*' => [
+                'integer',
+                'distinct',
+                'min:0',
+            ],
+            'proposed_tasks.*.preferred_phase_id' => [
+                'present',
+                'nullable',
+                'integer',
+            ],
             'escalation_flags' => [
                 'present',
                 'array',
@@ -601,6 +718,7 @@ PROMPT;
 
             $decisionValue = $decision['decision'] ?? null;
             $proposedTask = $decision['proposed_task'] ?? null;
+            $proposedTasks = $decision['proposed_tasks'] ?? null;
 
             if (
                 $implementationRequired === true
@@ -614,11 +732,23 @@ PROMPT;
 
             if (
                 $implementationRequired === true
-                && ! is_array($proposedTask)
+                && is_array($proposedTask)
+                && is_array($proposedTasks)
             ) {
                 $validator->errors()->add(
                     'proposed_task',
-                    'An implementation-required decision must contain exactly one proposed Task.',
+                    'A triage attempt must propose exactly one of proposed_task or proposed_tasks, never both.',
+                );
+            }
+
+            if (
+                $implementationRequired === true
+                && ! is_array($proposedTask)
+                && ! is_array($proposedTasks)
+            ) {
+                $validator->errors()->add(
+                    'proposed_task',
+                    'An implementation-required decision must contain exactly one of proposed_task or proposed_tasks.',
                 );
             }
 
@@ -629,6 +759,16 @@ PROMPT;
                 $validator->errors()->add(
                     'proposed_task',
                     'proposed_task must be null when implementation is not required.',
+                );
+            }
+
+            if (
+                $implementationRequired === false
+                && $proposedTasks !== null
+            ) {
+                $validator->errors()->add(
+                    'proposed_tasks',
+                    'proposed_tasks must be null when implementation is not required.',
                 );
             }
 
@@ -700,71 +840,122 @@ PROMPT;
                 }
             }
 
-            if (! is_array($proposedTask)) {
-                return;
+            if (is_array($proposedTask)) {
+                $this->validateProposalDependencies(
+                    $validator,
+                    $ticket,
+                    $proposedTask,
+                    'proposed_task',
+                );
             }
 
-            $dependencyIds =
-                $proposedTask['depends_on_task_ids'] ?? [];
+            if (is_array($proposedTasks)) {
+                foreach ($proposedTasks as $index => $proposedTaskEntry) {
+                    if (! is_array($proposedTaskEntry)) {
+                        continue;
+                    }
 
-            if (is_array($dependencyIds)) {
-                foreach ($dependencyIds as $dependencyId) {
-                    if (! is_int($dependencyId)) {
-                        $validator->errors()->add(
-                            'proposed_task.depends_on_task_ids',
-                            'Task dependency IDs must be JSON integers.',
-                        );
-                        break;
+                    $this->validateProposalDependencies(
+                        $validator,
+                        $ticket,
+                        $proposedTaskEntry,
+                        "proposed_tasks.{$index}",
+                    );
+
+                    $crossIndexIds =
+                        $proposedTaskEntry['depends_on_proposed_task_index'] ?? [];
+
+                    if (! is_array($crossIndexIds)) {
+                        continue;
+                    }
+
+                    foreach ($crossIndexIds as $crossIndexId) {
+                        if (! is_int($crossIndexId)) {
+                            $validator->errors()->add(
+                                "proposed_tasks.{$index}.depends_on_proposed_task_index",
+                                'depends_on_proposed_task_index entries must be JSON integers.',
+                            );
+
+                            continue;
+                        }
+
+                        if ($crossIndexId >= $index) {
+                            $validator->errors()->add(
+                                "proposed_tasks.{$index}.depends_on_proposed_task_index",
+                                'A proposed Task may only depend on an earlier entry in proposed_tasks.',
+                            );
+                        }
                     }
                 }
-
-                $integerDependencyIds = array_values(array_filter(
-                    $dependencyIds,
-                    is_int(...),
-                ));
-
-                if (
-                    count($integerDependencyIds) > 0
-                    && Task::query()
-                        ->where('project_id', $ticket->project_id)
-                        ->whereIn('id', $integerDependencyIds)
-                        ->count() !== count(array_unique($integerDependencyIds))
-                ) {
-                    $validator->errors()->add(
-                        'proposed_task.depends_on_task_ids',
-                        'Every proposed Task dependency must belong to the same project.',
-                    );
-                }
-            }
-
-            $preferredPhaseId =
-                $proposedTask['preferred_phase_id'] ?? null;
-
-            if (
-                $preferredPhaseId !== null
-                && ! is_int($preferredPhaseId)
-            ) {
-                $validator->errors()->add(
-                    'proposed_task.preferred_phase_id',
-                    'preferred_phase_id must be a JSON integer or null.',
-                );
-            }
-
-            if (
-                is_int($preferredPhaseId)
-                && ! Phase::query()
-                    ->whereKey($preferredPhaseId)
-                    ->where('project_id', $ticket->project_id)
-                    ->exists()
-            ) {
-                $validator->errors()->add(
-                    'proposed_task.preferred_phase_id',
-                    'The preferred phase must belong to the same project.',
-                );
             }
         });
 
         return $validator->validate();
+    }
+
+    /** @param array<string, mixed> $proposal */
+    private function validateProposalDependencies(
+        Validator $validator,
+        Ticket $ticket,
+        array $proposal,
+        string $field,
+    ): void {
+        $dependencyIds = $proposal['depends_on_task_ids'] ?? [];
+
+        if (is_array($dependencyIds)) {
+            foreach ($dependencyIds as $dependencyId) {
+                if (! is_int($dependencyId)) {
+                    $validator->errors()->add(
+                        "{$field}.depends_on_task_ids",
+                        'Task dependency IDs must be JSON integers.',
+                    );
+                    break;
+                }
+            }
+
+            $integerDependencyIds = array_values(array_filter(
+                $dependencyIds,
+                is_int(...),
+            ));
+
+            if (
+                count($integerDependencyIds) > 0
+                && Task::query()
+                    ->where('project_id', $ticket->project_id)
+                    ->whereIn('id', $integerDependencyIds)
+                    ->count() !== count(array_unique($integerDependencyIds))
+            ) {
+                $validator->errors()->add(
+                    "{$field}.depends_on_task_ids",
+                    'Every proposed Task dependency must belong to the same project.',
+                );
+            }
+        }
+
+        $preferredPhaseId = $proposal['preferred_phase_id'] ?? null;
+
+        if (
+            $preferredPhaseId !== null
+            && ! is_int($preferredPhaseId)
+        ) {
+            $validator->errors()->add(
+                "{$field}.preferred_phase_id",
+                'preferred_phase_id must be a JSON integer or null.',
+            );
+        }
+
+        if (
+            is_int($preferredPhaseId)
+            && ! Phase::query()
+                ->whereKey($preferredPhaseId)
+                ->where('project_id', $ticket->project_id)
+                ->exists()
+        ) {
+            $validator->errors()->add(
+                "{$field}.preferred_phase_id",
+                'The preferred phase must belong to the same project.',
+            );
+        }
     }
 
     /** @param array<string, mixed> $decision */

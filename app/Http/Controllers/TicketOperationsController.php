@@ -178,6 +178,9 @@ class TicketOperationsController extends Controller
                     'proposed_task' => is_array($structuredDecision['proposed_task'] ?? null)
                         ? $structuredDecision['proposed_task']
                         : null,
+                    'proposed_tasks' => is_array($structuredDecision['proposed_tasks'] ?? null)
+                        ? $structuredDecision['proposed_tasks']
+                        : null,
                     'phase_placement_consequence' => $this->phasePlacementConsequence(
                         $ticket,
                         $structuredDecision,

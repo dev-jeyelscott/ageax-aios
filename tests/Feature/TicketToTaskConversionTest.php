@@ -517,6 +517,61 @@ test('competing completed conversion attempts converge on the same durable Task'
         ->toBe($firstTask?->id);
 });
 
+test('conversion is deferred while a fresh sibling triage attempt for the same Ticket is actively in flight', function () {
+    $project = p3ConversionProject();
+    $phase = p3ConversionPhase($project, 1, 'Current Phase');
+    p3ConversionTask($project, $phase, 1);
+    $ticket = p3ConversionTicket($project);
+    $attempt = p3ConversionAttempt(
+        $ticket,
+        proposalOverrides: ['preferred_phase_id' => $phase->id],
+    );
+
+    TicketTriageAttempt::create([
+        'ticket_id' => $ticket->id,
+        'number' => $attempt->number + 1,
+        'status' => 'running',
+        'structured_decision' => null,
+        'claimed_at' => now(),
+        'finished_at' => null,
+    ]);
+
+    $task = app(ConvertTicketToTask::class)->handle($attempt);
+
+    expect($task)->toBeNull()
+        ->and($ticket->refresh()->status)->toBe(TicketStatus::Triaging)
+        ->and($ticket->converted_task_id)->toBeNull()
+        ->and($project->tasks()->count())->toBe(1);
+});
+
+test('an abandoned stale sibling triage attempt past the staleness window no longer blocks conversion', function () {
+    $project = p3ConversionProject();
+    $phase = p3ConversionPhase($project, 1, 'Current Phase');
+    p3ConversionTask($project, $phase, 1);
+    $ticket = p3ConversionTicket($project);
+    $attempt = p3ConversionAttempt(
+        $ticket,
+        proposalOverrides: ['preferred_phase_id' => $phase->id],
+    );
+
+    TicketTriageAttempt::create([
+        'ticket_id' => $ticket->id,
+        'number' => $attempt->number + 1,
+        'status' => 'running',
+        'structured_decision' => null,
+        'claimed_at' => now()->subSeconds(
+            (int) config('aios.stale_worker_after_seconds') + 60,
+        ),
+        'finished_at' => null,
+    ]);
+
+    $task = app(ConvertTicketToTask::class)->handle($attempt);
+
+    expect($task)->not->toBeNull()
+        ->and($ticket->refresh()->status)->toBe(TicketStatus::Converted)
+        ->and($project->tasks()->count())->toBe(2);
+});
+
 test('commit-time dependency state is revalidated before Task creation', function () {
     $project = p3ConversionProject();
     $phase = p3ConversionPhase($project, 1, 'Current Phase');
