@@ -1,10 +1,13 @@
 <?php
 
 use App\AgentHarness as AgentHarnessIdentifier;
+use App\AgentRole;
 use App\Models\Agent;
 use App\Models\Project;
+use App\ProjectStatus;
 use App\Services\AgentHarness as AgentHarnessContract;
 use App\Services\AgentHarnessResolver;
+use App\Services\AgentResolver;
 use App\Services\HarnessCapabilities;
 use App\Services\NormalizedExecutionResult;
 use Illuminate\Support\Facades\DB;
@@ -72,6 +75,22 @@ test('resolves the executable harness from the persisted agent harness configura
 
     expect($resolver->resolve($codexAgent))->toBe($codexHarness)
         ->and($resolver->resolve($claudeAgent))->toBe($claudeHarness);
+});
+
+test('resolves Backend Engineer directly without creating another worker lane', function () {
+    $project = Project::create([
+        'name' => 'Backend Engineer binding',
+        'path' => sys_get_temp_dir().'/backend-engineer-binding-'.fake()->uuid(),
+        'status' => ProjectStatus::Paused,
+        'git_status' => 'clean',
+    ]);
+    $backendEngineer = Agent::factory()->for($project)->create([
+        'role' => AgentRole::BackendEngineer,
+        'enabled' => true,
+    ]);
+
+    expect($project->workers()->where('role', AgentRole::BackendEngineer)->exists())->toBeFalse()
+        ->and(app(AgentResolver::class)->forRole($project, AgentRole::BackendEngineer)->id)->toBe($backendEngineer->id);
 });
 
 test('fails deterministically for an unsupported persisted harness identifier', function () {

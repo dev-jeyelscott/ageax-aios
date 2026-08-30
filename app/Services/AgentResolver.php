@@ -22,6 +22,23 @@ class AgentResolver
 {
     public function forRole(Project $project, AgentRole $role): Agent
     {
+        if ($role === AgentRole::BackendEngineer) {
+            $agent = Agent::query()
+                ->whereBelongsTo($project)
+                ->where('role', $role)
+                ->first();
+
+            if ($agent === null) {
+                throw new AgentNotBoundToRole("No Agent is bound to the [{$role->value}] Feature Goal execution role for this project.");
+            }
+
+            if (! $agent->enabled) {
+                throw new LogicException("The Agent bound to the [{$role->value}] Feature Goal execution role is disabled.");
+            }
+
+            return $agent;
+        }
+
         $worker = AgentWorker::query()->whereBelongsTo($project)->where('role', $role)->first();
 
         if ($worker === null || $worker->agent_id === null) {
