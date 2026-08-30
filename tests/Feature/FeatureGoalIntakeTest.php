@@ -2,6 +2,7 @@
 
 use App\Actions\ApproveFeatureGoal;
 use App\Actions\ClaimTask;
+use App\Actions\PlanFeatureGoal;
 use App\Actions\StoreFeatureSpec;
 use App\AgentRole;
 use App\Models\Agent;
@@ -110,6 +111,14 @@ test('failed feature planning requires an explicit retry instead of looping the 
     expect($source)
         ->toContain("->where('status', 'uploaded')")
         ->not->toContain("->whereIn('status', ['uploaded', 'planning_failed'])");
+});
+
+test('feature goal contract rejects provider-specific labels and scalar role requirements', function () {
+    $contract = ['goal_text' => '/goal', 'title' => 'Feature', 'objective' => 'Implement.', 'acceptance_criteria' => ['Works'], 'scope' => [], 'constraints' => [], 'relevant_paths' => [], 'verification_commands' => [], 'implementation_prompt' => 'Implement.', 'context_capsule' => [], 'work_type' => 'frontend', 'complexity' => 'small', 'required_documentation_paths' => [], 'implementation_checklist' => [], 'backend_engineer_requirements' => 'Do the work.', 'reviewer_requirements' => 'Review it.'];
+    $method = new ReflectionMethod(PlanFeatureGoal::class, 'validatedContract');
+
+    expect(fn () => $method->invoke(app(PlanFeatureGoal::class), $contract))
+        ->toThrow(ValidationException::class);
 });
 
 function featureGoalProject(): Project
