@@ -55,8 +55,7 @@ final class WorkflowBoundaryHandoffRecorder
                     !== TaskStatus::ReadyForReview
                 || $attempt->getRawOriginal('status') !== 'completed'
                 || ! is_array($validation)
-                || ($validation['passed'] ?? false) !== true
-                || ($validation['checks']['task_commit'] ?? false) !== true
+                || ! $this->implementationBoundaryPassed($validation)
                 || ! is_array($rawChangedFiles)
                 || ($rawChangedFiles !== [] && blank($attempt->commit_sha))
                 || ! $this->sourceRunMatches(
@@ -310,6 +309,33 @@ final class WorkflowBoundaryHandoffRecorder
         }
 
         return $payload;
+    }
+
+    /**
+     * Verify durable implementation validation crossed either the legacy commit boundary or the P10 candidate/integration boundary.
+     */
+    private function implementationBoundaryPassed(array $validation): bool
+    {
+        if (($validation['passed'] ?? false) !== true) {
+            return false;
+        }
+
+        $checks = $validation['checks'] ?? null;
+
+        if (! is_array($checks)) {
+            return false;
+        }
+
+        if (($checks['task_commit'] ?? false) === true) {
+            return true;
+        }
+
+        $integration = $validation['git_integration'] ?? null;
+
+        return ($checks['git_candidate'] ?? false) === true
+            && ($checks['git_integration'] ?? false) === true
+            && is_array($integration)
+            && ($integration['passed'] ?? false) === true;
     }
 
     /**

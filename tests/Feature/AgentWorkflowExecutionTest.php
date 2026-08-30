@@ -51,7 +51,11 @@ function reviewTask(Project $project): Task
  */
 function coderExecutionProject(string $name = 'Example'): Project
 {
-    $path = sys_get_temp_dir().'/aios-coder-execution-'.fake()->uuid();
+    $workspaceRoot = (string) config('aios.workspace_root');
+
+    File::ensureDirectoryExists($workspaceRoot);
+
+    $path = $workspaceRoot.'/aios-coder-execution-'.fake()->uuid();
 
     File::ensureDirectoryExists($path);
     Process::path($path)->run(['git', 'init']);
@@ -61,11 +65,18 @@ function coderExecutionProject(string $name = 'Example'): Project
     Process::path($path)->run(['git', 'add', 'baseline.txt']);
     Process::path($path)->run(['git', 'commit', '-m', 'Baseline']);
 
+    $baseSha = trim(
+        Process::path($path)
+            ->run(['git', 'rev-parse', 'HEAD'])
+            ->output(),
+    );
+
     return Project::create([
         'name' => $name,
         'path' => $path,
         'status' => ProjectStatus::Running,
         'git_status' => 'clean',
+        'git_head_sha' => $baseSha,
     ]);
 }
 
@@ -334,7 +345,7 @@ test('the reviewer receives the complete task capsule and implementation evidenc
                 && $callback instanceof Closure
                 && str_contains($prompt, '"implementation_prompt":"Implement it."')
                 && str_contains($prompt, '"commit_sha":"commit-sha"')
-                && str_contains($prompt, '"changed_files":["app\\/Example.php"]');
+                && str_contains($prompt, '"changed_files":["app\/Example.php"]');
         })
         ->andReturn(['exit_code' => 0, 'output' => json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => json_encode($review, JSON_THROW_ON_ERROR)]], JSON_THROW_ON_ERROR), 'error_output' => '']);
 
@@ -504,7 +515,7 @@ test('the worker loop no longer performs stale recovery itself; that is owned by
 });
 
 test('a failed coder execution is persisted and becomes eligible for a fresh attempt', function () {
-    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $project = coderExecutionProject();
     $task = Task::create([
         'project_id' => $project->id,
         'key' => 'TASK-001',
@@ -516,7 +527,6 @@ test('a failed coder execution is persisted and becomes eligible for a fresh att
         'context_capsule' => [],
         'status' => TaskStatus::Coding,
     ]);
-    $project = coderExecutionProject();
 
     mock(CodexCliRunner::class)
         ->shouldReceive('runAtPath')
@@ -573,8 +583,10 @@ test('a coder execution that makes no changes because the task is already implem
         ->and($attempt->status)->toBe('completed')
         ->and($attempt->commit_sha)->toBeNull()
         ->and($attempt->changed_files)->toBe([])
-        ->and($attempt->validation_results['checks']['task_commit'])->toBeTrue()
-        ->and($attempt->validation_results['evidence']['task_commit']['summary'])->toContain('already satisfies this task');
+        ->and($attempt->validation_results['checks']['git_candidate'])->toBeTrue()
+        ->and($attempt->validation_results['checks']['git_integration'])->toBeTrue()
+        ->and($attempt->validation_results['git_integration']['status'])->toBe('already_satisfied')
+        ->and($attempt->validation_results['evidence']['git_candidate']['summary'])->toContain('produced no candidate changes');
 });
 
 test('a successful Coder run goes straight to Review with no deterministic validation step', function () {
@@ -637,8 +649,7 @@ test('an unsafe persisted project path blocks coding before any process starts',
 });
 
 test('a coder exception leaves durable execution evidence for recovery', function () {
-    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
-    File::ensureDirectoryExists($project->path);
+    $project = coderExecutionProject();
     $task = Task::create([
         'project_id' => $project->id,
         'key' => 'TASK-001',
@@ -650,7 +661,11 @@ test('a coder exception leaves durable execution evidence for recovery', functio
         'context_capsule' => [],
         'status' => TaskStatus::Coding,
     ]);
-    mock(CodexCliRunner::class)->shouldReceive('run')->once()->andThrow(new RuntimeException('The process ended unexpectedly.'));
+
+    mock(CodexCliRunner::class)
+        ->shouldReceive('runAtPath')
+        ->once()
+        ->andThrow(new RuntimeException('The process ended unexpectedly.'));
 
     app(RunCoderTask::class)->handle($task);
 
@@ -661,7 +676,8 @@ test('a coder exception leaves durable execution evidence for recovery', functio
 
 test('coder retries become blocked at the configured attempt limit', function () {
     config()->set('aios.max_coder_attempts', 1);
-    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+
+    $project = coderExecutionProject();
     $task = Task::create([
         'project_id' => $project->id,
         'key' => 'TASK-001',
@@ -673,7 +689,15 @@ test('coder retries become blocked at the configured attempt limit', function ()
         'context_capsule' => [],
         'status' => TaskStatus::Coding,
     ]);
-    Process::fake(['*' => Process::result(exitCode: 1, errorOutput: 'Codex failed.')]);
+
+    mock(CodexCliRunner::class)
+        ->shouldReceive('runAtPath')
+        ->once()
+        ->andReturn([
+            'exit_code' => 1,
+            'output' => '',
+            'error_output' => 'Codex failed.',
+        ]);
 
     app(RunCoderTask::class)->handle($task);
 
@@ -771,7 +795,11 @@ test('stale recovery safely ignores the global knowledge architect role', functi
 test('the core roadmap workflow survives a reviewer rejection and completes the next eligible task only after approval', function () {
     $vault = storage_path('framework/testing/obsidian-'.fake()->uuid());
     config()->set('aios.obsidian_vault_path', $vault);
-    $path = '/tmp/aios-core-workflow-'.fake()->uuid();
+
+    $workspaceRoot = (string) config('aios.workspace_root');
+    File::ensureDirectoryExists($workspaceRoot);
+
+    $path = $workspaceRoot.'/aios-core-workflow-'.fake()->uuid();
     File::ensureDirectoryExists($path);
     Process::path($path)->run(['git', 'init']);
     Process::path($path)->run(['git', 'config', 'user.email', 'aios@example.test']);
@@ -779,77 +807,166 @@ test('the core roadmap workflow survives a reviewer rejection and completes the 
     File::put($path.'/README.md', '# Core workflow');
     Process::path($path)->run(['git', 'add', 'README.md']);
     Process::path($path)->run(['git', 'commit', '-m', 'Baseline']);
-    $project = Project::create(['name' => 'Example', 'path' => $path, 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+
+    $baseSha = trim(
+        Process::path($path)
+            ->run(['git', 'rev-parse', 'HEAD'])
+            ->output(),
+    );
+
+    $project = Project::create([
+        'name' => 'Example',
+        'path' => $path,
+        'status' => ProjectStatus::Running,
+        'git_status' => 'clean',
+        'git_head_sha' => $baseSha,
+    ]);
+
     foreach ([AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer] as $role) {
         AgentWorker::create(['project_id' => $project->id, 'role' => $role, 'status' => 'idle']);
     }
-    $roadmap = Roadmap::create(['project_id' => $project->id, 'original_filename' => 'roadmap.md', 'storage_path' => 'roadmaps/example.md', 'status' => 'uploaded', 'content' => 'Implement the single focused task.']);
-    $plan = ['project_knowledge' => ['overview' => 'A focused workflow proof.'], 'phases' => [[
-        'title' => 'Foundation',
-        'objective' => 'Deliver the task.',
-        'tasks' => [[
-            'title' => 'Implement the focused task',
-            'objective' => 'Write the verified feature file.',
-            'acceptance_criteria' => ['The feature file contains the approved implementation.'],
-            'scope' => ['feature.txt'],
-            'constraints' => ['Keep the change focused.'],
-            'relevant_paths' => ['feature.txt'],
-            'verification_commands' => [],
-            'implementation_prompt' => 'Create feature.txt with the correct implementation.',
-            'completion_status' => 'queued',
-            'completion_evidence' => null,
+
+    $roadmap = Roadmap::create([
+        'project_id' => $project->id,
+        'original_filename' => 'roadmap.md',
+        'storage_path' => 'roadmaps/example.md',
+        'status' => 'uploaded',
+        'content' => 'Implement the single focused task.',
+    ]);
+
+    $plan = [
+        'project_knowledge' => ['overview' => 'A focused workflow proof.'],
+        'phases' => [[
+            'title' => 'Foundation',
+            'objective' => 'Deliver the task.',
+            'tasks' => [[
+                'title' => 'Implement the focused task',
+                'objective' => 'Write the verified feature file.',
+                'acceptance_criteria' => ['The feature file contains the approved implementation.'],
+                'scope' => ['feature.txt'],
+                'constraints' => ['Keep the change focused.'],
+                'relevant_paths' => ['feature.txt'],
+                'verification_commands' => [],
+                'implementation_prompt' => 'Create feature.txt with the correct implementation.',
+                'completion_status' => 'queued',
+                'completion_evidence' => null,
+            ]],
         ]],
-    ]]];
-    $reviews = [
-        ['outcome' => 'changes_required', 'summary' => 'The initial implementation needs the approved content.', 'findings' => [[
-            'severity' => 'high',
-            'location' => 'feature.txt',
-            'current_implementation' => 'The file contains the first draft.',
-            'expected_implementation' => 'The file contains the approved implementation.',
-            'why_incorrect' => 'The review criterion is not met.',
-            'required_fix' => 'Update the file to the approved content.',
-            'verification_requirement' => 'Inspect feature.txt.',
-            'implementation_fix_context' => 'Keep the change limited to the task.',
-        ]]],
-        ['outcome' => 'approved', 'summary' => 'feature.txt now contains the approved implementation and validation passed.', 'findings' => []],
     ];
-    mock(CodexCliRunner::class)
+
+    $reviews = [
+        [
+            'outcome' => 'changes_required',
+            'summary' => 'The initial implementation needs the approved content.',
+            'findings' => [[
+                'severity' => 'high',
+                'location' => 'feature.txt',
+                'current_implementation' => 'The file contains the first draft.',
+                'expected_implementation' => 'The file contains the approved implementation.',
+                'why_incorrect' => 'The review criterion is not met.',
+                'required_fix' => 'Update the file to the approved content.',
+                'verification_requirement' => 'Inspect feature.txt.',
+                'implementation_fix_context' => 'Keep the change limited to the task.',
+            ]],
+        ],
+        [
+            'outcome' => 'approved',
+            'summary' => 'feature.txt now contains the approved implementation and validation passed.',
+            'findings' => [],
+        ],
+    ];
+
+    $runner = mock(CodexCliRunner::class);
+
+    $runner
         ->shouldReceive('run')
-        ->times(5)
-        ->andReturnUsing(function (Project $runProject, string $prompt, mixed $onOutput) use ($path, $plan, &$reviews): array {
+        ->times(3)
+        ->andReturnUsing(function (Project $runProject, string $prompt, mixed $onOutput) use ($plan, &$reviews): array {
             if (str_contains($prompt, 'You are the Project Manager.')) {
-                return ['exit_code' => 0, 'output' => json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => json_encode($plan, JSON_THROW_ON_ERROR)]], JSON_THROW_ON_ERROR), 'error_output' => ''];
-            }
-
-            if (str_contains($prompt, 'You are the Coder role.')) {
-                File::put($path.'/feature.txt', File::exists($path.'/feature.txt') ? 'approved implementation' : 'first draft');
-
-                return ['exit_code' => 0, 'output' => json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => '{"summary":"Implemented the focused task."}']], JSON_THROW_ON_ERROR), 'error_output' => ''];
+                return [
+                    'exit_code' => 0,
+                    'output' => json_encode([
+                        'type' => 'item.completed',
+                        'item' => [
+                            'type' => 'agent_message',
+                            'text' => json_encode($plan, JSON_THROW_ON_ERROR),
+                        ],
+                    ], JSON_THROW_ON_ERROR),
+                    'error_output' => '',
+                ];
             }
 
             $review = array_shift($reviews);
 
-            return ['exit_code' => 0, 'output' => json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => json_encode($review, JSON_THROW_ON_ERROR)]], JSON_THROW_ON_ERROR), 'error_output' => ''];
+            return [
+                'exit_code' => 0,
+                'output' => json_encode([
+                    'type' => 'item.completed',
+                    'item' => [
+                        'type' => 'agent_message',
+                        'text' => json_encode($review, JSON_THROW_ON_ERROR),
+                    ],
+                ], JSON_THROW_ON_ERROR),
+                'error_output' => '',
+            ];
+        });
+
+    $runner
+        ->shouldReceive('runAtPath')
+        ->twice()
+        ->andReturnUsing(function (string $executionPath): array {
+            // Simulate Coder mutation only inside the AIOS-selected disposable Task worktree.
+            File::put(
+                $executionPath.'/feature.txt',
+                File::exists($executionPath.'/feature.txt')
+                    ? 'approved implementation'
+                    : 'first draft',
+            );
+
+            return [
+                'exit_code' => 0,
+                'output' => json_encode([
+                    'type' => 'item.completed',
+                    'item' => [
+                        'type' => 'agent_message',
+                        'text' => '{"summary":"Implemented the focused task."}',
+                    ],
+                ], JSON_THROW_ON_ERROR),
+                'error_output' => '',
+            ];
         });
 
     app(RunProjectManager::class)->handle($roadmap);
+
     $task = $project->tasks()->sole();
+
     expect(app(ClaimTask::class)->handle($project, AgentRole::Coder)?->id)->toBe($task->id);
+
     app(RunCoderTask::class)->handle($task->refresh());
+
     expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
         ->and(app(ClaimTask::class)->handle($project, AgentRole::Coder))->toBeNull();
+
     $reviewTask = app(ClaimTask::class)->handle($project, AgentRole::Reviewer);
     app(RunReviewerTask::class)->run($reviewTask, $reviewTask->attempts()->latest('number')->firstOrFail());
+
     expect($task->refresh()->status)->toBe(TaskStatus::ChangesRequired);
+
     $retryTask = app(ClaimTask::class)->handle($project, AgentRole::Coder);
+
     expect($retryTask)->not->toBeNull();
+
     app(RunCoderTask::class)->handle($retryTask);
+
     expect($task->attempts()->latest('number')->value('validation_results'))->toMatchArray(['passed' => true]);
     expect($task->attempts()->latest('number')->value('changed_files'))->toBe(['feature.txt']);
     expect(File::get($path.'/feature.txt'))->toBe('approved implementation');
     expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview);
+
     $approvalTask = app(ClaimTask::class)->handle($project, AgentRole::Reviewer);
+
     expect($approvalTask)->not->toBeNull();
+
     app(RunReviewerTask::class)->run($approvalTask, $approvalTask->attempts()->latest('number')->firstOrFail());
 
     expect($roadmap->refresh()->status)->toBe('processed')
