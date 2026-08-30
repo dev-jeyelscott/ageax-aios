@@ -56,8 +56,12 @@ type Task = {
     key: string;
     title: string;
     status: string;
-    attempts: { number: number }[];
-    reviews: { status: string }[];
+    attempts: {
+        number: number;
+        commit_sha: string | null;
+        validation_results: { passed?: boolean } | null;
+    }[];
+    reviews: { status: string; summary?: string | null }[];
 };
 
 type AgentRun = {
@@ -187,6 +191,12 @@ type Project = {
         status: string;
         approval_mode: string;
         task: { key: string; status: string } | null;
+        sessions: {
+            id: number;
+            role: string;
+            status: string;
+            last_used_at: string | null;
+        }[];
     }[];
     office_workers: OfficeWorker[];
     office_workflow: OfficeWorkflow | null;
@@ -1511,6 +1521,24 @@ function OverviewDashboard({
                     {latestGoal && (
                         <div className="mt-4 rounded-lg border border-border-subtle bg-foreground/2 p-3">
                             <div className="flex flex-wrap justify-between gap-2 text-xs"><span>Task: {latestGoal.task?.key ?? 'materializing'}</span><span>{latestGoal.task?.status ?? latestGoal.status}</span></div>
+                            <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                                {['project_manager', 'backend_engineer', 'reviewer'].map((role) => {
+                                    const session = latestGoal.sessions.find((candidate) => candidate.role === role);
+
+                                    return <div key={role} className="rounded border border-border-subtle px-2 py-1.5"><span className="text-muted-foreground">{humanize(role)}</span><p className="mt-0.5 font-medium">{session?.status ?? 'pending'}</p></div>;
+                                })}
+                            </div>
+                            {latestGoal.task && (() => {
+                                const task = project.tasks.find((candidate) => candidate.key === latestGoal.task?.key);
+                                const attempt = task?.attempts[0];
+                                const review = task?.reviews[0];
+
+                                return <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                                    {attempt?.commit_sha && <p>Validated commit: <span className="font-mono text-foreground">{attempt.commit_sha}</span></p>}
+                                    {attempt?.validation_results?.passed !== undefined && <p>Verification: {attempt.validation_results.passed ? 'passed' : 'requires attention'}</p>}
+                                    {review?.summary && <p>Reviewer: {review.summary}</p>}
+                                </div>;
+                            })()}
                             {latestGoal.status === 'awaiting_approval' ? <Form action={`/projects/${project.id}/goal-runs/${latestGoal.id}/approve`} method="post" className="mt-3 space-y-2"><input type="hidden" name="_method" value="patch" /><label className="block text-2xs font-medium text-muted-foreground" htmlFor={`goal-run-${latestGoal.id}`}>Canonical /goal (edits create an immutable new version)</label><textarea id={`goal-run-${latestGoal.id}`} name="goal_text" defaultValue={latestGoal.goal_text ?? ''} className="min-h-36 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" /><Button type="submit" size="sm"><CheckCircle2 className="size-3.5" />Approve and run</Button></Form> : latestGoal.goal_text && <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap font-sans text-xs text-muted-foreground">{latestGoal.goal_text}</pre>}
                         </div>
                     )}

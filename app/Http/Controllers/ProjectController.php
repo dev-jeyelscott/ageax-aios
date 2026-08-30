@@ -177,6 +177,9 @@ class ProjectController extends Controller
                     === $agent->name,
             );
         });
+        $project->goalRuns->each(function (GoalRun $goalRun): void {
+            $goalRun->sessions->each->makeHidden(['provider_session_id', 'runtime_metadata']);
+        });
 
         $usage = $this->harnessUsage($project, $usageWindow, $usageNormalizer);
         $project->setAttribute(
