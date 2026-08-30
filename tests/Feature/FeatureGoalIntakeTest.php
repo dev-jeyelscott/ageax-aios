@@ -1,6 +1,7 @@
 <?php
 
 use App\Actions\ApproveFeatureGoal;
+use App\Actions\ClaimTask;
 use App\Actions\StoreFeatureSpec;
 use App\AgentRole;
 use App\Models\Agent;
@@ -54,6 +55,20 @@ test('approval versions an operator-edited canonical goal', function () {
         ->and($goalRun->versions()->pluck('goal_text')->all())->toBe(['/goal initial', '/goal edited']);
 });
 
+test('approval-required goals cannot enter the Coder lane before approval', function () {
+    $project = featureGoalProject();
+    $project->update(['status' => ProjectStatus::Running]);
+    $featureSpec = FeatureSpec::factory()->for($project)->create();
+    $task = Task::create(['project_id' => $project->id, 'key' => 'TASK-001', 'position' => 1, 'title' => 'Feature task', 'objective' => 'Implement the feature.', 'acceptance_criteria' => ['Works'], 'scope' => [], 'constraints' => [], 'relevant_paths' => [], 'verification_commands' => [], 'implementation_prompt' => 'Implement it.', 'context_capsule' => [], 'status' => 'queued']);
+    $goalRun = GoalRun::factory()->for($project)->for($featureSpec)->for($task)->create(['status' => 'awaiting_approval']);
+
+    expect(app(ClaimTask::class)->handle($project, AgentRole::Coder))->toBeNull();
+
+    app(ApproveFeatureGoal::class)->handle($goalRun);
+
+    expect(app(ClaimTask::class)->handle($project, AgentRole::Coder)?->id)->toBe($task->id);
+});
+
 test('goal session execution settings resume only a durable same-role provider session', function () {
     $project = featureGoalProject();
     $featureSpec = FeatureSpec::factory()->for($project)->create();
@@ -77,6 +92,16 @@ test('governance scopes warm sessions to GoalRuns without weakening legacy execu
         ->toContain('isolated by GoalRun and role')
         ->and(file_get_contents(base_path('.codex/agents/reviewer-goal.md')))
         ->toContain('Do not rely on Backend Engineer hidden session memory.');
+});
+
+test('goal UI exposes editable approval, isolated session states, and durable evidence', function () {
+    $source = file_get_contents(resource_path('js/pages/projects/show.tsx'));
+
+    expect($source)
+        ->toContain('Canonical /goal (edits create an immutable new version)')
+        ->toContain("['project_manager', 'backend_engineer', 'reviewer']")
+        ->toContain('Validated commit:')
+        ->not->toContain('provider_session_id');
 });
 
 function featureGoalProject(): Project
