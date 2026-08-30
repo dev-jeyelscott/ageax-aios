@@ -52,6 +52,7 @@ final class P3TicketEscalationHarness implements AgentHarnessContract
         ?Closure $onOutput = null,
         ?Closure $onHeartbeat = null,
         array $executionSettings = [],
+        ?string $executionPath = null,
     ): NormalizedExecutionResult {
         $this->prompts[] = $prompt;
         $onOutput?->__invoke('stdout', $this->result->output);
