@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\AgentRole;
 use App\Exceptions\InvalidTaskTransition;
+use App\Exceptions\InvalidWorkflowExecutionState;
 use App\Models\AgentWorker;
 use App\Models\AuditEvent;
 use App\Models\Phase;
@@ -12,6 +13,8 @@ use App\Models\Review;
 use App\Models\ReviewFinding;
 use App\Models\Task;
 use App\Models\TaskAttempt;
+use App\Models\WorkflowStep;
+use App\Models\WorkflowTransition;
 use App\ParallelTaskSafety;
 use App\ProjectStatus;
 use App\ReviewStatus;
@@ -154,12 +157,21 @@ class TaskWorkflow
      */
     public function transition(Task $task, TaskStatus $to): Task
     {
-        $transitionedTask = DB::transaction(function () use ($task, $to): Task {
-            $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
-            $this->transitionLocked($lockedTask, $to);
+        try {
+            $transitionedTask = DB::transaction(function () use ($task, $to): Task {
+                $lockedTask = Task::query()->lockForUpdate()->findOrFail($task->id);
+                $this->transitionLocked($lockedTask, $to);
 
-            return $lockedTask->refresh();
-        }, attempts: 3);
+                return $lockedTask->refresh();
+            }, attempts: 3);
+        } catch (InvalidWorkflowExecutionState $exception) {
+            $this->audit->record('workflow.execution_blocked', [
+                'requested_status' => $to->value,
+                'reason' => $exception->getMessage(),
+            ], $task->project, $task);
+
+            throw $exception;
+        }
 
         if ($to === TaskStatus::Done) {
             $this->notes->writeTaskCompletion($transitionedTask, "Completed after workflow validation. {$transitionedTask->objective}");
@@ -732,6 +744,8 @@ class TaskWorkflow
             throw new InvalidTaskTransition("Cannot transition {$from->value} to {$to->value}.");
         }
 
+        $this->assertBoundWorkflowAllows($task, $from, $to);
+
         $task->update([
             'status' => $to,
             'claimed_at' => $to === TaskStatus::Coding || $to === TaskStatus::Reviewing ? now() : $task->claimed_at,
@@ -742,6 +756,51 @@ class TaskWorkflow
             'from' => $from->value,
             'to' => $to->value,
         ], $task->project, $task);
+    }
+
+    /**
+     * Deterministically resolve Task execution from its persisted immutable workflow-version
+     * binding, when one is bound. Unbound Tasks keep the exact existing built-in lifecycle
+     * behavior, governed solely by `allowedTransitions()`, so this never affects backward
+     * compatibility. A bound Task's persisted graph is authoritative in addition to (never
+     * instead of) `allowedTransitions()`, so binding can only narrow execution, never widen it.
+     * Unsupported or inconsistent bound workflow state fails closed instead of silently applying
+     * the requested transition.
+     */
+    private function assertBoundWorkflowAllows(Task $task, TaskStatus $from, TaskStatus $to): void
+    {
+        $workflowDefinitionId = $task->getRawOriginal('workflow_definition_id');
+
+        if ($workflowDefinitionId === null) {
+            return;
+        }
+
+        $definition = $task->workflowDefinition()->with(['steps', 'transitions'])->first();
+
+        if ($definition === null) {
+            throw new InvalidWorkflowExecutionState(
+                "Task {$task->key} is bound to workflow definition [{$workflowDefinitionId}], which could not be resolved.",
+            );
+        }
+
+        $fromStep = $definition->steps->first(fn (WorkflowStep $step): bool => $step->kind->toTaskStatus() === $from);
+        $toStep = $definition->steps->first(fn (WorkflowStep $step): bool => $step->kind->toTaskStatus() === $to);
+
+        if ($fromStep === null || $toStep === null) {
+            throw new InvalidWorkflowExecutionState(
+                "The workflow definition [{$definition->key} v{$definition->version}] bound to Task {$task->key} does not declare a step for status [{$from->value}] or [{$to->value}].",
+            );
+        }
+
+        $transitionExists = $definition->transitions->contains(
+            fn (WorkflowTransition $transition): bool => (int) $transition->from_step_id === $fromStep->id && (int) $transition->to_step_id === $toStep->id,
+        );
+
+        if (! $transitionExists) {
+            throw new InvalidWorkflowExecutionState(
+                "The workflow definition [{$definition->key} v{$definition->version}] bound to Task {$task->key} does not permit transitioning from [{$from->value}] to [{$to->value}].",
+            );
+        }
     }
 
     /**
