@@ -147,6 +147,59 @@ class WorkflowDefinitionManager
     }
 
     /**
+     * Resolve the currently approved built-in default workflow definition, without installing it.
+     *
+     * Existing projects and Tasks keep their current behavior either way: this method never binds
+     * a Task and never activates alternative execution routing, it only exposes the built-in
+     * definition for callers that need to reference it.
+     */
+    public function resolveDefault(): ?WorkflowDefinition
+    {
+        return WorkflowDefinition::query()
+            ->where('key', BuiltInWorkflow::Key)
+            ->where('status', WorkflowDefinitionStatus::Approved)
+            ->orderByDesc('version')
+            ->first();
+    }
+
+    /**
+     * Idempotently install the built-in default workflow as an approved immutable version.
+     *
+     * Reproduces the existing Coder-to-Validation-to-Reviewer Task lifecycle derived directly
+     * from `TaskWorkflow::allowedTransitions()`, so this can never diverge from live execution
+     * behavior. Repeated calls resolve the already-installed version rather than creating a
+     * duplicate.
+     */
+    public function installBuiltIn(User $installer): WorkflowDefinition
+    {
+        $existing = $this->resolveDefault();
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        $graph = BuiltInWorkflow::graph();
+        $validation = app(WorkflowGraphValidator::class)->validate($graph);
+
+        if (! $validation['valid']) {
+            throw new InvalidWorkflowMutation(
+                'The built-in workflow graph failed deterministic validation: '.json_encode($validation['errors'], JSON_THROW_ON_ERROR),
+            );
+        }
+
+        $definition = $this->createVersion(
+            $installer,
+            BuiltInWorkflow::Key,
+            BuiltInWorkflow::Name,
+            'The backward-compatible built-in Coder-to-Validation-to-Reviewer Task lifecycle.',
+            $graph['steps'],
+            $graph['transitions'],
+        );
+
+        return $this->approve($installer, $definition);
+    }
+
+    /**
      * Bind the immutable workflow definition version selected for a Task at creation.
      *
      * The binding cannot be silently rewritten once persisted; a second call for a Task

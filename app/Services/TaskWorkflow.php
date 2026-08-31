@@ -728,7 +728,7 @@ class TaskWorkflow
     {
         $from = TaskStatus::from($task->getRawOriginal('status'));
 
-        if (! in_array($to, $this->allowedTransitions($from), true)) {
+        if (! in_array($to, self::allowedTransitions($from), true)) {
             throw new InvalidTaskTransition("Cannot transition {$from->value} to {$to->value}.");
         }
 
@@ -747,9 +747,13 @@ class TaskWorkflow
     /**
      * Return the allowlisted workflow transitions for a Task status.
      *
+     * This is the single authoritative source of the Coder-to-Validation-to-Reviewer lifecycle
+     * matrix; the built-in workflow graph (`App\Services\BuiltInWorkflow`) is derived from it
+     * directly so the two representations cannot drift apart.
+     *
      * @return array<TaskStatus>
      */
-    private function allowedTransitions(TaskStatus $from): array
+    public static function allowedTransitions(TaskStatus $from): array
     {
         return match ($from) {
             TaskStatus::Queued => [TaskStatus::Coding, TaskStatus::Cancelled, TaskStatus::Blocked],
