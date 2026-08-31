@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Exceptions\InvalidWorkflowMutation;
 use App\TaskComplexity;
 use App\TaskStatus;
 use App\TaskWorkType;
@@ -17,7 +18,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
-#[Fillable(['project_id', 'knowledge_improvement_candidate_id', 'phase_id', 'coder_worker_id', 'coder_worker_lease_id', 'key', 'position', 'title', 'objective', 'work_type', 'complexity', 'acceptance_criteria', 'scope', 'constraints', 'relevant_paths', 'verification_commands', 'implementation_prompt', 'context_capsule', 'stewardship_provenance', 'status', 'is_cleared', 'claimed_at', 'completed_at'])]
+#[Fillable(['project_id', 'knowledge_improvement_candidate_id', 'phase_id', 'workflow_definition_id', 'coder_worker_id', 'coder_worker_lease_id', 'key', 'position', 'title', 'objective', 'work_type', 'complexity', 'acceptance_criteria', 'scope', 'constraints', 'relevant_paths', 'verification_commands', 'implementation_prompt', 'context_capsule', 'stewardship_provenance', 'status', 'is_cleared', 'claimed_at', 'completed_at'])]
 /**
  * @property TaskStatus $status
  * @property bool $is_cleared
@@ -40,6 +41,15 @@ class Task extends Model
     protected $attributes = [
         'is_cleared' => false,
     ];
+
+    protected static function booted(): void
+    {
+        static::updating(function (self $task): void {
+            if ($task->isDirty('workflow_definition_id') && $task->getRawOriginal('workflow_definition_id') !== null) {
+                throw new InvalidWorkflowMutation('The workflow definition version bound to a Task is immutable and cannot be silently rewritten.');
+            }
+        });
+    }
 
     /**
      * Define the durable attribute casts used by Tasks.
@@ -80,6 +90,16 @@ class Task extends Model
     public function phase(): BelongsTo
     {
         return $this->belongsTo(Phase::class);
+    }
+
+    /**
+     * Return the immutable workflow definition version bound to this Task at creation, when selected.
+     *
+     * @return BelongsTo<WorkflowDefinition, $this>
+     */
+    public function workflowDefinition(): BelongsTo
+    {
+        return $this->belongsTo(WorkflowDefinition::class);
     }
 
     /**
