@@ -186,3 +186,31 @@ test('worker command prints the exact Reviewer Agent while processing a Task', f
             'Processing TASK-REVIEWER-AGENT for reviewer [agent: Reviewer Alpha].',
         );
 });
+
+test('a role-scoped worker does not claim another role task lane', function () {
+    $project = workerAgentObservabilityProject('Role-scoped worker');
+    $agent = workerAgentObservabilityAgent($project, AgentRole::Reviewer, 'Reviewer Alpha');
+    workerAgentObservabilityWorker($project, AgentRole::Reviewer, $agent);
+
+    $task = workerAgentObservabilityTask($project, 'TASK-ROLE-SCOPED', TaskStatus::Reviewing);
+    TaskAttempt::create([
+        'task_id' => $task->id,
+        'number' => 1,
+        'status' => 'running',
+        'started_at' => now(),
+    ]);
+
+    $this->mock(RunReviewerTask::class, function (MockInterface $mock): void {
+        $mock->shouldNotReceive('run');
+    });
+
+    expect(Artisan::call('aios:work', ['--once' => true, '--role' => AgentRole::Coder->value]))
+        ->toBe(0)
+        ->and($task->refresh()->status)->toBe(TaskStatus::Reviewing);
+});
+
+test('worker command rejects unsupported role scopes', function () {
+    expect(Artisan::call('aios:work', ['--once' => true, '--role' => 'orchestrator']))
+        ->toBe(1)
+        ->and(Artisan::output())->toContain('The --role option must be project_manager, coder, or reviewer.');
+});

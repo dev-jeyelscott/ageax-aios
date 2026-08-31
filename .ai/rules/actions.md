@@ -10,19 +10,19 @@ paths:
 
 Before a new normal Coder attempt, require a clean Git index and working tree and persist the clean base SHA. Derive task candidate paths from that base; never subtract baseline filenames. Dirty failed/interrupted task state may continue only through explicit recovery evidence tied to the same base. Never stash, reset, clean, discard, or auto-commit pre-existing changes.
 
-## Phase-batched review remains serial and deterministic
+## Rolling review remains serial per role and deterministic
 
 Coder and Reviewer workflow remains strictly serial under AIOS control. Serial execution means only one eligible Coder task and one eligible Reviewer task may be actively claimed or executed at a time; it does not require each same-phase task to become `done` before the next eligible same-phase Coder implementation may begin.
 
-Within the current phase, after a Coder task successfully reaches `ready_for_review`, AIOS may claim the next eligible same-phase Coder task when its persisted dependency requirements are satisfied. Phase batching must not bypass explicit dependency edges or allow concurrent Coder execution.
+Within the current phase, after a Coder task successfully reaches `ready_for_review`, AIOS may claim the next eligible same-phase Coder task when its persisted dependency requirements are satisfied. This does not bypass explicit dependency edges or allow concurrent Coder execution.
 
-The Reviewer must not begin reviewing the current phase until every required task in that phase has reached `ready_for_review`. Before the first phase review, any required task still in `queued`, `coding`, `validating`, `changes_required`, `failed`, `blocked`, or `interrupted` keeps the phase review barrier closed.
+The Reviewer may claim the lowest-position `ready_for_review` task in the earliest reviewable phase as soon as one exists, even while independent Coder work remains active. A `changes_required` task pauses review only in its own phase; only one Reviewer task may be claimed or executed at a time.
 
-Once phase review begins, tasks already approved as `done` count as having crossed the review barrier. The Reviewer must claim exactly one remaining `ready_for_review` task at a time in deterministic task-position order.
+The Coder and Reviewer execute through separate role-scoped `aios:work` processes and durable role leases. They may overlap, but neither role gains another worker lane or concurrent Task claim.
 
-A validated `changes_required` result closes or pauses further phase review progression. Later tasks in the same phase must not continue through review until the rejected task has returned through Coder execution and validation to `ready_for_review`, after which AIOS may reopen the phase review barrier when the phase is eligible again.
+A validated `changes_required` result pauses further Reviewer claims in that phase. An already-running isolated Coder attempt may finish; the rejected Task remains the next Coder claim by deterministic position until it returns through validation to `ready_for_review`.
 
-The next phase must not begin while the current phase contains unresolved implementation or review work. Phase advancement, review-barrier eligibility, task ordering, and dependency enforcement are AIOS-owned durable workflow decisions and must be enforced through application/database controls rather than prompts or harness behavior.
+The Coder must not begin the next phase while the current phase contains unresolved implementation or review work. The Reviewer may inspect a later reviewable phase without advancing Coder phase progression. Phase advancement, rolling-review eligibility, task ordering, and dependency enforcement are AIOS-owned durable workflow decisions and must be enforced through application/database controls rather than prompts or harness behavior.
 
 Coder and Reviewer task cooldowns remain AIOS-owned scheduler behavior. Normal worker execution must respect the centrally configured per-role cooldown after completing a claimed task before another task for the same project and role may be claimed. The default cooldown is 300 seconds. Actions, Agents, and harnesses must not introduce a path that bypasses the scheduler's cooldown or creates a competing timer.
 
@@ -30,13 +30,13 @@ Coder and Reviewer task cooldowns remain AIOS-owned scheduler behavior. Normal w
 
 Only a validated Reviewer changes_required decision with actionable findings may transition a task to changes_required. Reviewer process, parsing, timeout, or stale-worker failures retain the completed implementation, record durable failure evidence, and retry review until the bounded limit blocks for operator intervention.
 
-Operational Reviewer failures must not be treated as implementation rejection and must not incorrectly advance, permanently close, or otherwise corrupt the current phase review barrier.
+Operational Reviewer failures must not be treated as implementation rejection and must not incorrectly advance, permanently pause, or otherwise corrupt rolling review.
 
 ## Workflow Actions preserve AIOS orchestration ownership
 
-Project Agent configuration is project-scoped execution configuration and must remain separate from `AgentWorker`, which is authoritative durable workflow-slot, lease, heartbeat, and runtime state. Actions may resolve the Agent bound to a core workflow role and select its persisted Codex or Claude Code harness, but the Agent or harness must never own task transitions, task ordering, phase review barriers, worker task cooldowns, Git lifecycle, deterministic validation, persistence, recovery, auditing, context assembly, context budgeting, score calculation, recommendation eligibility, or worker leases.
+Project Agent configuration is project-scoped execution configuration and must remain separate from `AgentWorker`, which is authoritative durable workflow-slot, lease, heartbeat, and runtime state. Actions may resolve the Agent bound to a core workflow role and select its persisted Codex or Claude Code harness, but the Agent or harness must never own task transitions, task ordering, rolling-review eligibility or pauses, worker task cooldowns, Git lifecycle, deterministic validation, persistence, recovery, auditing, context assembly, context budgeting, score calculation, recommendation eligibility, or worker leases.
 
-Project Manager, Coder, and Reviewer remain the executable core workflow roles. Task execution remains serial and dependency ordered under AIOS control; same-phase implementation may accumulate validated `ready_for_review` tasks before phase review begins, but additional configured Agents must not create worker lanes, self-schedule, or bypass persisted workflow ordering.
+Project Manager, Coder, and Reviewer remain the executable core workflow roles. Task execution remains serial per role and dependency ordered under AIOS control; the Coder and Reviewer may overlap once a Task is ready for review, but additional configured Agents must not create worker lanes, self-schedule, or bypass persisted workflow ordering.
 
 Every new roadmap-analysis, Project Manager `ticket_triage`, implementation, fix/retry, or review attempt must start a fresh harness execution context and capture a new immutable effective configuration snapshot before execution. Recovery of the same interrupted attempt must continue from its persisted snapshot, Git state, run evidence, and audit evidence rather than resolving mutable current Agent, Skill, or harness configuration into that existing attempt.
 
@@ -50,9 +50,9 @@ The Project Manager Agent/harness may return structured triage output only. It m
 
 Automatic Ticket-to-Task conversion is limited to exactly one clear, safe, bounded implementation-required Task and requires the approved eligibility rules, including confidence of at least `0.80` and no mandatory escalation condition.
 
-Conversion must be transactional and idempotent. Under locking, AIOS must re-check that the Ticket has not already converted, the target project/phase still matches, the phase review barrier has not invalidated placement, dependencies remain valid, and the generated Task position/key cannot collide before committing Ticket linkage, Task creation, dependencies, audit evidence, and Ticket state.
+Conversion must be transactional and idempotent. Under locking, AIOS must re-check that the Ticket has not already converted, the target project/phase still matches, review start has not invalidated placement, dependencies remain valid, and the generated Task position/key cannot collide before committing Ticket linkage, Task creation, dependencies, audit evidence, and Ticket state.
 
-A Ticket-created Task receives no special workflow permissions. It must not bypass dependency ordering, Coder repository preflight, deterministic validation, task-only commit rules, phase review barriers, Reviewer review, or normal Task transitions.
+A Ticket-created Task receives no special workflow permissions. It must not bypass dependency ordering, Coder repository preflight, deterministic validation, task-only commit rules, review-start composition rules, Reviewer review, or normal Task transitions.
 
 ## Operator escalation gates are deterministic
 

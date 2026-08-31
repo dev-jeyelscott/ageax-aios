@@ -203,18 +203,7 @@ A Task originating from a Ticket receives no special Coder permissions and follo
 
 The Reviewer independently reviews exactly **one eligible** **`ready_for_review`** **task at a time**.
 
-The Reviewer must not begin reviewing a phase while that phase is still being prepared by the Coder.
-
-Before the first review in a phase:
-
-```
-every required task in the current phase
-→ ready_for_review
-```
-
-Only then may AIOS open the phase review barrier and allow Reviewer claims.
-
-After phase review has started, already approved tasks in `done` count as having crossed the review barrier. Remaining reviewable tasks must remain `ready_for_review` before the next review may be claimed.
+The Reviewer may begin reviewing the lowest-position `ready_for_review` task in the earliest reviewable phase as soon as one exists, without waiting for independent Coder work to finish. A `changes_required` task pauses review only in its own phase. The Reviewer remains limited to one active task.
 
 Review order must be deterministic:
 
@@ -233,7 +222,7 @@ changes_required
 → coding
 → validating
 → ready_for_review
-→ phase becomes review-eligible again
+→ Reviewer claims resume
 → Reviewer resumes in deterministic order
 ```
 
@@ -636,6 +625,8 @@ Agents must not arbitrarily change task state.
 
 Execution remains strictly serial. Serial means AIOS permits only one active Coder task and one active Reviewer task according to the authoritative workflow rules; it does **not** require every Coder task to become `done` before the next same-phase implementation may begin.
 
+AIOS runs separate role-scoped worker processes (`aios:work --role=project_manager`, `--role=coder`, and `--role=reviewer`). The Coder and Reviewer processes may overlap after a Task reaches `ready_for_review`; durable per-role leases retain the authoritative single-task boundary for each role.
+
 The normal phase lifecycle is:
 
 ```
@@ -644,26 +635,13 @@ Phase N
 Coder TASK-001
 → ready_for_review
 
-Coder TASK-002
-→ ready_for_review
-
-Coder TASK-003
-→ ready_for_review
-
-all required Phase N tasks reached ready_for_review
-→ phase review barrier opens
-
 Reviewer TASK-001
 → done
 
-wait configured Reviewer cooldown
+Coder TASK-002
+→ ready_for_review
 
 Reviewer TASK-002
-→ done
-
-wait configured Reviewer cooldown
-
-Reviewer TASK-003
 → done
 
 all required Phase N tasks done
@@ -684,25 +662,21 @@ Phase batching must never bypass explicit task dependencies. A task whose requir
 Reviewer execution remains one task at a time:
 
 ```
-phase review barrier closed
+no ready_for_review task, or a changes_required task exists
 → Reviewer claims nothing
 
-phase review barrier open
-→ Reviewer claims lowest-position ready_for_review task
+lowest-position ready_for_review task exists
+→ Reviewer claims it, even while independent Coder work continues
 → reviewing
 → outcome persisted
 → no concurrent Reviewer claim
 ```
 
-Before the first review in a phase, every required task in that phase must be `ready_for_review`.
-
-After review begins, tasks already approved as `done` remain barrier-satisfied while remaining tasks await review in `ready_for_review`.
-
-A `changes_required` result immediately blocks further review progression in the phase until the rejected task is corrected and returns to `ready_for_review`.
+A `changes_required` result immediately pauses further review progression in the phase until the rejected task is corrected and returns to `ready_for_review`. An already-running isolated Coder attempt may finish; the rejected Task is then the next Coder claim.
 
 When the deterministic repeated-review threshold is met, the task instead becomes `blocked`; it remains a phase barrier until an operator explicitly requeues it or skips it with a reason.
 
-The next phase must not begin while the current phase contains unresolved implementation or review work.
+The Coder must not begin the next phase while the current phase contains unresolved implementation or review work. The Reviewer may review a later phase without advancing Coder phase progression.
 
 ### Worker Task Cooldown
 
@@ -751,7 +725,6 @@ clean/recoverable repository preflight
 → capture exact diff
 → task-only commit
 → ready_for_review
-→ phase review barrier
 → review
 ```
 
@@ -963,7 +936,7 @@ Significant actions must be auditable, including:
 
 ```
 task transitions
-phase review barrier decisions
+rolling-review claim and pause decisions
 ticket transitions
 ticket triage attempts
 Ticket-to-Task conversion
@@ -1060,7 +1033,7 @@ Ticket-to-Task conversion
 phase placement
 task ordering
 roadmap interruption/reordering
-phase review barriers
+rolling-review eligibility and pauses
 worker task cooldowns
 Git lifecycle
 deterministic validation
@@ -1099,7 +1072,7 @@ Ticket and Task claiming
 dependency enforcement
 phase and Task ordering
 durable workflow transitions
-phase review barriers
+rolling-review eligibility and pauses
 deterministic validation
 persistence
 Git lifecycle and repository integration

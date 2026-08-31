@@ -250,7 +250,7 @@ test('conversion is idempotent across repeated retries', function () {
         ->toBe(1);
 });
 
-test('phase review barrier sends new Ticket work to an append-only future intake phase', function () {
+test('review start sends new Ticket work to an append-only future intake phase', function () {
     $project = p3ConversionProject();
     $phase = p3ConversionPhase($project, 1, 'Current Phase');
     p3ConversionTask(

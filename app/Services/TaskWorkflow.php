@@ -761,13 +761,17 @@ class TaskWorkflow
     }
 
     /**
-     * Return the next non-cleared Task eligible for Reviewer execution.
+     * Return the next ready Task eligible for rolling Reviewer execution.
      */
     private function reviewableTask(Project $project): ?Task
     {
-        $phase = $this->currentPhase($project);
+        $phases = Phase::query()
+            ->whereBelongsTo($project)
+            ->orderBy('position')
+            ->lockForUpdate()
+            ->get();
 
-        if ($phase === null) {
+        if ($phases->isEmpty()) {
             return Task::query()
                 ->whereBelongsTo($project)
                 ->notCleared()
@@ -777,23 +781,31 @@ class TaskWorkflow
                 ->first();
         }
 
-        $phaseTasks = Task::query()
-            ->whereBelongsTo($project)
-            ->notCleared()
-            ->where('phase_id', $phase->id)
-            ->orderBy('position')
-            ->lockForUpdate()
-            ->get();
+        foreach ($phases as $phase) {
+            $phaseTasks = Task::query()
+                ->whereBelongsTo($project)
+                ->notCleared()
+                ->where('phase_id', $phase->id)
+                ->orderBy('position')
+                ->lockForUpdate()
+                ->get();
 
-        if (! $phaseTasks->every(
-            fn (Task $task): bool => TaskStatus::from($task->getRawOriginal('status'))->satisfiesPhaseReviewBarrier(),
-        )) {
-            return null;
+            if ($phaseTasks->contains(
+                fn (Task $task): bool => TaskStatus::from($task->getRawOriginal('status')) === TaskStatus::ChangesRequired,
+            )) {
+                continue;
+            }
+
+            $task = $phaseTasks->first(
+                fn (Task $task): bool => TaskStatus::from($task->getRawOriginal('status'))->isReviewerClaimable(),
+            );
+
+            if ($task !== null) {
+                return $task;
+            }
         }
 
-        return $phaseTasks->first(
-            fn (Task $task): bool => TaskStatus::from($task->getRawOriginal('status'))->isReviewerClaimable(),
-        );
+        return null;
     }
 
     /**

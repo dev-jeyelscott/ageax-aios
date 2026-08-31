@@ -22,7 +22,20 @@ return Application::configure(basePath: dirname(__DIR__))
         // well so an unexpected worker-process exit is repaired automatically on the next minute.
         // Worker leases still provide the authoritative serial-execution boundary when this
         // fallback overlaps a healthy long-lived worker.
-        $schedule->command('aios:work --once')
+        $schedule->command('aios:work --once --role=project_manager')
+            ->name('aios-work-project-manager')
+            ->everyMinute()
+            ->runInBackground()
+            ->withoutOverlapping();
+
+        $schedule->command('aios:work --once --role=coder')
+            ->name('aios-work-coder')
+            ->everyMinute()
+            ->runInBackground()
+            ->withoutOverlapping();
+
+        $schedule->command('aios:work --once --role=reviewer')
+            ->name('aios-work-reviewer')
             ->everyMinute()
             ->runInBackground()
             ->withoutOverlapping();

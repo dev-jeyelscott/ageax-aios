@@ -45,11 +45,6 @@ enum TaskStatus: string
         return $this->semantics()['blocks_phase_completion'];
     }
 
-    public function satisfiesPhaseReviewBarrier(): bool
-    {
-        return $this->semantics()['review_barrier_satisfied'];
-    }
-
     /** @return list<string> */
     public static function coderClaimableValues(): array
     {
@@ -80,8 +75,7 @@ enum TaskStatus: string
      *     coder_claimable: bool,
      *     reviewer_claimable: bool,
      *     dependency_satisfaction: 'always'|'same_phase'|'never',
-     *     blocks_phase_completion: bool,
-     *     review_barrier_satisfied: bool
+     *     blocks_phase_completion: bool
      * }
      */
     private function semantics(): array
@@ -93,7 +87,6 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'never',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => false,
             ],
             self::Coding => [
                 'terminal' => false,
@@ -101,7 +94,6 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'never',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => false,
             ],
             self::Validating => [
                 'terminal' => false,
@@ -109,7 +101,6 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'never',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => false,
             ],
             self::ReadyForReview => [
                 'terminal' => false,
@@ -117,15 +108,13 @@ enum TaskStatus: string
                 'reviewer_claimable' => true,
                 'dependency_satisfaction' => 'same_phase',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => true,
             ],
             self::Reviewing => [
                 'terminal' => false,
                 'coder_claimable' => false,
                 'reviewer_claimable' => false,
-                'dependency_satisfaction' => 'never',
+                'dependency_satisfaction' => 'same_phase',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => true,
             ],
             self::ChangesRequired => [
                 'terminal' => false,
@@ -133,7 +122,6 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'never',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => false,
             ],
             self::Done => [
                 'terminal' => true,
@@ -141,7 +129,6 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'always',
                 'blocks_phase_completion' => false,
-                'review_barrier_satisfied' => true,
             ],
             self::Blocked => [
                 'terminal' => false,
@@ -149,7 +136,6 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'never',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => false,
             ],
             self::Interrupted => [
                 'terminal' => false,
@@ -157,7 +143,6 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'never',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => false,
             ],
             self::Failed => [
                 'terminal' => false,
@@ -165,7 +150,6 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'never',
                 'blocks_phase_completion' => true,
-                'review_barrier_satisfied' => false,
             ],
             self::Cancelled => [
                 'terminal' => true,
@@ -173,7 +157,6 @@ enum TaskStatus: string
                 'reviewer_claimable' => false,
                 'dependency_satisfaction' => 'always',
                 'blocks_phase_completion' => false,
-                'review_barrier_satisfied' => true,
             ],
         };
     }

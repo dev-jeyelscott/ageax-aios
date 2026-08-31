@@ -27,7 +27,7 @@ A Task is executable implementation work.
 
 Ticket submission must never directly enter Coder or Reviewer execution. Only an AIOS-validated Ticket-to-Task conversion may create executable work.
 
-Ticket-origin Tasks use the normal Task state machine, Git lifecycle, validation, dependency ordering, phase review barrier, Reviewer semantics, recovery, and auditing rules.
+Ticket-origin Tasks use the normal Task state machine, Git lifecycle, validation, dependency ordering, rolling-review semantics, recovery, and auditing rules.
 
 ## Ticket state is server-authoritative
 
@@ -104,9 +104,9 @@ no escalation reason has newly surfaced since the operator's approval
 
 All Tasks in an approved set are created together, or none are created — never a partial set, on first attempt or on retry after a crash.
 
-An operator-approved multi-Task conversion is strictly a Ticket-to-Task authoring capability. It must never be treated as, or used to bootstrap, concurrent/parallel Coder execution — every Task it creates still goes through the unmodified Task state machine, dependency ordering, phase review barrier, and serial Coder/Reviewer execution.
+An operator-approved multi-Task conversion is strictly a Ticket-to-Task authoring capability. It must never be treated as, or used to bootstrap, concurrent/parallel Coder execution — every Task it creates still goes through the unmodified Task state machine, dependency ordering, rolling review, and serial-per-role execution.
 
-## Phase review barrier remains authoritative
+## Review start freezes current-phase composition
 
 Current-phase Ticket work may be appended only before phase review has begun and only when phase composition may still safely change and phase/dependency placement is deterministic.
 

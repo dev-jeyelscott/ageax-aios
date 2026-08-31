@@ -30,9 +30,10 @@ use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use Throwable;
 
-#[Signature('aios:work {--once}')]
+#[Signature('aios:work {--once} {--role= : Restrict execution to project_manager, coder, or reviewer}')]
 #[Description('Run durable AIOS workers until stopped, or one cycle with --once')]
 class RunAiosWorkers extends Command
 {
@@ -55,6 +56,14 @@ class RunAiosWorkers extends Command
         TaskPlanningEscalationWorkflow $planningEscalations,
         TaskWorkflow $workflow,
     ): int {
+        try {
+            $requestedRole = $this->requestedRole();
+        } catch (InvalidArgumentException $exception) {
+            $this->error($exception->getMessage());
+
+            return self::FAILURE;
+        }
+
         $workerInstanceId = (string) Str::uuid();
 
         do {
@@ -70,157 +79,159 @@ class RunAiosWorkers extends Command
                     continue;
                 }
 
-                try {
-                    $this->recoverPendingTicketConversion(
-                        $project,
-                        $convertTicketToTask,
-                    );
-                } catch (Throwable $throwable) {
-                    report($throwable);
-
-                    continue;
-                }
-
-                $activeTicketTriage = $this->hasActiveTicketTriage($project);
-
-                $dueRoadmap = $activeTicketTriage
-                    ? null
-                    : Roadmap::query()
-                        ->whereBelongsTo($project)
-                        ->whereIn('status', [
-                            'uploaded',
-                            'failed',
-                            'in_progress',
-                        ])
-                        ->oldest()
-                        ->first();
-
-                $roadmapOnCooldown = $dueRoadmap !== null
-                    && $dueRoadmap->getRawOriginal('status') !== 'in_progress'
-                    && $this->onRoadmapCooldown($project);
-
-                $roadmap = $roadmapOnCooldown ? null : $dueRoadmap;
-
-                if ($roadmap !== null) {
-                    $lease = $heartbeat->acquire(
-                        $project,
-                        AgentRole::ProjectManager,
-                        $workerInstanceId,
-                        slot: self::PrimaryWorkerSlot,
-                    );
-
-                    if ($lease !== null) {
-                        $agentName = $this->agentNameForLease(
-                            $lease,
-                            AgentRole::ProjectManager,
+                if ($requestedRole === null || $requestedRole === AgentRole::ProjectManager) {
+                    try {
+                        $this->recoverPendingTicketConversion(
+                            $project,
+                            $convertTicketToTask,
                         );
+                    } catch (Throwable $throwable) {
+                        report($throwable);
 
-                        $this->info(
-                            "Processing roadmap {$roadmap->id} for project_manager [agent: {$agentName}].",
-                        );
-
-                        try {
-                            $runProjectManager->handle($roadmap, $lease);
-                        } catch (Throwable $throwable) {
-                            report($throwable);
-                        } finally {
-                            $this->markTaskCompleted($lease);
-                            $heartbeat->release($lease);
-                        }
-                    }
-
-                    if ($this->stopRequested($project, $setProjectStatus)) {
                         continue;
                     }
-                }
 
-                if (! $this->hasPendingRoadmapWork($project)) {
-                    $lease = $heartbeat->acquire(
-                        $project,
-                        AgentRole::ProjectManager,
-                        $workerInstanceId,
-                        slot: self::PrimaryWorkerSlot,
-                    );
+                    $activeTicketTriage = $this->hasActiveTicketTriage($project);
 
-                    if ($lease !== null) {
-                        try {
-                            $revisionAttempt = $planningEscalations->claim(
-                                $project,
+                    $dueRoadmap = $activeTicketTriage
+                        ? null
+                        : Roadmap::query()
+                            ->whereBelongsTo($project)
+                            ->whereIn('status', [
+                                'uploaded',
+                                'failed',
+                                'in_progress',
+                            ])
+                            ->oldest()
+                            ->first();
+
+                    $roadmapOnCooldown = $dueRoadmap !== null
+                        && $dueRoadmap->getRawOriginal('status') !== 'in_progress'
+                        && $this->onRoadmapCooldown($project);
+
+                    $roadmap = $roadmapOnCooldown ? null : $dueRoadmap;
+
+                    if ($roadmap !== null) {
+                        $lease = $heartbeat->acquire(
+                            $project,
+                            AgentRole::ProjectManager,
+                            $workerInstanceId,
+                            slot: self::PrimaryWorkerSlot,
+                        );
+
+                        if ($lease !== null) {
+                            $agentName = $this->agentNameForLease(
+                                $lease,
+                                AgentRole::ProjectManager,
                             );
 
-                            if ($revisionAttempt !== null) {
-                                $agentName = $this->agentNameForLease(
-                                    $lease,
-                                    AgentRole::ProjectManager,
-                                );
+                            $this->info(
+                                "Processing roadmap {$roadmap->id} for project_manager [agent: {$agentName}].",
+                            );
 
-                                $this->info(
-                                    "Processing task planning revision for project_manager [agent: {$agentName}].",
-                                );
-
-                                $runTaskPlanningRevision->handle(
-                                    $revisionAttempt,
-                                    $lease,
-                                );
-
+                            try {
+                                $runProjectManager->handle($roadmap, $lease);
+                            } catch (Throwable $throwable) {
+                                report($throwable);
+                            } finally {
                                 $this->markTaskCompleted($lease);
+                                $heartbeat->release($lease);
                             }
-                        } catch (Throwable $throwable) {
-                            report($throwable);
-                        } finally {
-                            $heartbeat->release($lease);
+                        }
+
+                        if ($this->stopRequested($project, $setProjectStatus)) {
+                            continue;
+                        }
+                    }
+
+                    if (! $this->hasPendingRoadmapWork($project)) {
+                        $lease = $heartbeat->acquire(
+                            $project,
+                            AgentRole::ProjectManager,
+                            $workerInstanceId,
+                            slot: self::PrimaryWorkerSlot,
+                        );
+
+                        if ($lease !== null) {
+                            try {
+                                $revisionAttempt = $planningEscalations->claim(
+                                    $project,
+                                );
+
+                                if ($revisionAttempt !== null) {
+                                    $agentName = $this->agentNameForLease(
+                                        $lease,
+                                        AgentRole::ProjectManager,
+                                    );
+
+                                    $this->info(
+                                        "Processing task planning revision for project_manager [agent: {$agentName}].",
+                                    );
+
+                                    $runTaskPlanningRevision->handle(
+                                        $revisionAttempt,
+                                        $lease,
+                                    );
+
+                                    $this->markTaskCompleted($lease);
+                                }
+                            } catch (Throwable $throwable) {
+                                report($throwable);
+                            } finally {
+                                $heartbeat->release($lease);
+                            }
+                        }
+                    }
+
+                    if (
+                        ! $this->hasActiveTicketTriage($project)
+                        && ! $this->hasPendingRoadmapWork($project)
+                        && ! $this->hasActivePlanningRevision($project)
+                        && $this->hasEligibleTicketTriage($project)
+                    ) {
+                        $lease = $heartbeat->acquire(
+                            $project,
+                            AgentRole::ProjectManager,
+                            $workerInstanceId,
+                            slot: self::PrimaryWorkerSlot,
+                        );
+
+                        if ($lease !== null) {
+                            try {
+                                $attempt = $claimTicketForTriage->handle($project);
+
+                                if ($attempt !== null) {
+                                    $ticket = $attempt->ticket()->firstOrFail();
+                                    $agentName = $this->agentNameForLease(
+                                        $lease,
+                                        AgentRole::ProjectManager,
+                                    );
+
+                                    $this->info(
+                                        "Claimed {$ticket->key} for project_manager ticket triage attempt {$attempt->number} [agent: {$agentName}].",
+                                    );
+
+                                    $runTicketTriage->handle(
+                                        $attempt,
+                                        $lease,
+                                    );
+
+                                    $convertTicketToTask->handle($attempt);
+                                }
+                            } catch (Throwable $throwable) {
+                                report($throwable);
+                            } finally {
+                                $heartbeat->release($lease);
+                            }
+                        }
+
+                        if ($this->stopRequested($project, $setProjectStatus)) {
+                            continue;
                         }
                     }
                 }
 
-                if (
-                    ! $this->hasActiveTicketTriage($project)
-                    && ! $this->hasPendingRoadmapWork($project)
-                    && ! $this->hasActivePlanningRevision($project)
-                    && $this->hasEligibleTicketTriage($project)
-                ) {
-                    $lease = $heartbeat->acquire(
-                        $project,
-                        AgentRole::ProjectManager,
-                        $workerInstanceId,
-                        slot: self::PrimaryWorkerSlot,
-                    );
-
-                    if ($lease !== null) {
-                        try {
-                            $attempt = $claimTicketForTriage->handle($project);
-
-                            if ($attempt !== null) {
-                                $ticket = $attempt->ticket()->firstOrFail();
-                                $agentName = $this->agentNameForLease(
-                                    $lease,
-                                    AgentRole::ProjectManager,
-                                );
-
-                                $this->info(
-                                    "Claimed {$ticket->key} for project_manager ticket triage attempt {$attempt->number} [agent: {$agentName}].",
-                                );
-
-                                $runTicketTriage->handle(
-                                    $attempt,
-                                    $lease,
-                                );
-
-                                $convertTicketToTask->handle($attempt);
-                            }
-                        } catch (Throwable $throwable) {
-                            report($throwable);
-                        } finally {
-                            $heartbeat->release($lease);
-                        }
-                    }
-
-                    if ($this->stopRequested($project, $setProjectStatus)) {
-                        continue;
-                    }
-                }
-
-                foreach ([AgentRole::Coder, AgentRole::Reviewer] as $role) {
+                foreach ($this->taskRoles($requestedRole) as $role) {
                     $task = $workflow->claimedTask($project, $role);
 
                     if (
@@ -347,6 +358,40 @@ class RunAiosWorkers extends Command
                 "Recovered automatic Ticket conversion to {$task->key}.",
             );
         }
+    }
+
+    /**
+     * Resolve the optional worker role while preventing non-core roles from owning a project lane.
+     */
+    private function requestedRole(): ?AgentRole
+    {
+        $value = $this->option('role');
+
+        if (! is_string($value) || $value === '') {
+            return null;
+        }
+
+        $role = AgentRole::tryFrom($value);
+
+        if (! in_array($role, [AgentRole::ProjectManager, AgentRole::Coder, AgentRole::Reviewer], true)) {
+            throw new InvalidArgumentException('The --role option must be project_manager, coder, or reviewer.');
+        }
+
+        return $role;
+    }
+
+    /**
+     * Return the task lanes owned by this worker invocation.
+     *
+     * @return list<AgentRole>
+     */
+    private function taskRoles(?AgentRole $requestedRole): array
+    {
+        return match ($requestedRole) {
+            AgentRole::Coder => [AgentRole::Coder],
+            AgentRole::Reviewer => [AgentRole::Reviewer],
+            default => [AgentRole::Coder, AgentRole::Reviewer],
+        };
     }
 
     /**

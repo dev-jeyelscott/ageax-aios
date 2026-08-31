@@ -5,17 +5,17 @@ use App\TaskStatus;
 function taskStatusSemanticsMatrix(): array
 {
     return [
-        'queued' => [TaskStatus::Queued, false, true, false, false, false, true, false],
-        'coding' => [TaskStatus::Coding, false, false, false, false, false, true, false],
-        'validating' => [TaskStatus::Validating, false, false, false, false, false, true, false],
-        'ready for review' => [TaskStatus::ReadyForReview, false, false, true, true, false, true, true],
-        'reviewing' => [TaskStatus::Reviewing, false, false, false, false, false, true, true],
-        'changes required' => [TaskStatus::ChangesRequired, false, true, false, false, false, true, false],
-        'done' => [TaskStatus::Done, true, false, false, true, true, false, true],
-        'blocked' => [TaskStatus::Blocked, false, false, false, false, false, true, false],
-        'interrupted' => [TaskStatus::Interrupted, false, false, false, false, false, true, false],
-        'failed' => [TaskStatus::Failed, false, true, false, false, false, true, false],
-        'cancelled' => [TaskStatus::Cancelled, true, false, false, true, true, false, true],
+        'queued' => [TaskStatus::Queued, false, true, false, false, false, true],
+        'coding' => [TaskStatus::Coding, false, false, false, false, false, true],
+        'validating' => [TaskStatus::Validating, false, false, false, false, false, true],
+        'ready for review' => [TaskStatus::ReadyForReview, false, false, true, true, false, true],
+        'reviewing' => [TaskStatus::Reviewing, false, false, false, true, false, true],
+        'changes required' => [TaskStatus::ChangesRequired, false, true, false, false, false, true],
+        'done' => [TaskStatus::Done, true, false, false, true, true, false],
+        'blocked' => [TaskStatus::Blocked, false, false, false, false, false, true],
+        'interrupted' => [TaskStatus::Interrupted, false, false, false, false, false, true],
+        'failed' => [TaskStatus::Failed, false, true, false, false, false, true],
+        'cancelled' => [TaskStatus::Cancelled, true, false, false, true, true, false],
     ];
 }
 
@@ -40,15 +40,13 @@ test('task status workflow semantics stay deterministic', function (
     bool $samePhaseDependencySatisfied,
     bool $crossPhaseDependencySatisfied,
     bool $blocksPhaseCompletion,
-    bool $reviewBarrierSatisfied,
 ) {
     expect($status->isTerminal())->toBe($terminal)
         ->and($status->isCoderClaimable())->toBe($coderClaimable)
         ->and($status->isReviewerClaimable())->toBe($reviewerClaimable)
         ->and($status->satisfiesDependency(true))->toBe($samePhaseDependencySatisfied)
         ->and($status->satisfiesDependency(false))->toBe($crossPhaseDependencySatisfied)
-        ->and($status->blocksPhaseCompletion())->toBe($blocksPhaseCompletion)
-        ->and($status->satisfiesPhaseReviewBarrier())->toBe($reviewBarrierSatisfied);
+        ->and($status->blocksPhaseCompletion())->toBe($blocksPhaseCompletion);
 })->with(taskStatusSemanticsMatrix());
 
 test('claim and phase query values are derived from the semantics matrix', function () {

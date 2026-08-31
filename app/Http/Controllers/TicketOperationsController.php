@@ -445,9 +445,9 @@ class TicketOperationsController extends Controller
                 return 'The proposed preferred phase no longer resolves inside this project; placement requires fresh AIOS validation.';
             }
 
-            return "The PM proposed phase #{$preferredPhase->position} ({$preferredPhase->title}). AIOS must still re-check the phase review barrier and dependencies before any Task placement.";
+            return "The PM proposed phase #{$preferredPhase->position} ({$preferredPhase->title}). AIOS must still re-check review start and dependencies before any Task placement.";
         }
 
-        return 'No preferred phase is locked. AIOS will re-check current phase/review-barrier eligibility and otherwise place safe work in the existing future intake/backlog flow.';
+        return 'No preferred phase is locked. AIOS will re-check current phase/review-start eligibility and otherwise place safe work in the existing future intake/backlog flow.';
     }
 }

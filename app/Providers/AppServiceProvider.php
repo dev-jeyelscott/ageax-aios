@@ -59,7 +59,9 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->configureDefaults();
         $this->configureRuntimeCommandContext();
-        DevCommands::artisan('aios:work', 'aios-workers');
+        DevCommands::artisan('aios:work --role=project_manager', 'aios-project-manager');
+        DevCommands::artisan('aios:work --role=coder', 'aios-coder');
+        DevCommands::artisan('aios:work --role=reviewer', 'aios-reviewer');
         DevCommands::artisan('schedule:work', 'scheduler');
     }
 

@@ -6,4 +6,4 @@ paths:
 # Bootstrap
 
 ## AIOS worker scheduler fallback
-Keep the every-minute `aios:work --once` scheduled fallback. It self-heals an exited long-lived worker; run it in the background with `withoutOverlapping()`. Durable AgentWorker leases remain the serial-execution authority when it overlaps the normal worker process.
+Keep separate every-minute `aios:work --once --role=project_manager`, `--role=coder`, and `--role=reviewer` scheduled fallbacks. Run each in the background with its own name and `withoutOverlapping()` so the Coder and Reviewer lanes may overlap while durable per-role AgentWorker leases remain authoritative.

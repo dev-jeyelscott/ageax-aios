@@ -112,7 +112,7 @@ test('an exhausted reviewer operational retry blocks and can be requeued for rev
     expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview);
 });
 
-test('coder batches the current phase before reviewer claims tasks in position order', function () {
+test('reviewer claims ready current-phase work while the coder advances serially', function () {
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $firstPhase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
@@ -136,7 +136,9 @@ test('coder batches the current phase before reviewer claims tasks in position o
     $transitionTask->handle($firstTask, TaskStatus::Validating);
     $transitionTask->handle($firstTask, TaskStatus::ReadyForReview);
 
-    expect($claimTask->handle($project, AgentRole::Reviewer))->toBeNull()
+    $firstReviewTask = $claimTask->handle($project, AgentRole::Reviewer);
+
+    expect($firstReviewTask?->id)->toBe($firstTask->id)
         ->and($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($secondTask->id);
 
     $transitionTask->handle($secondTask, TaskStatus::Validating);
@@ -146,10 +148,7 @@ test('coder batches the current phase before reviewer claims tasks in position o
         $claimTask->handle($project, AgentRole::Coder),
     )->toBeNull('the next phase must remain closed even when its first task has no explicit dependency');
 
-    $firstReviewTask = $claimTask->handle($project, AgentRole::Reviewer);
-
-    expect($firstReviewTask?->id)->toBe($firstTask->id)
-        ->and($claimTask->handle($project, AgentRole::Reviewer))->toBeNull();
+    expect($claimTask->handle($project, AgentRole::Reviewer))->toBeNull();
 
     app(TaskWorkflow::class)->approveTask($firstReviewTask);
 
@@ -183,11 +182,25 @@ test('a same-phase dependency is satisfied once its dependency reaches ready for
     $transitionTask->handle($firstTask, TaskStatus::Validating);
     $transitionTask->handle($firstTask, TaskStatus::ReadyForReview);
 
-    expect($claimTask->handle($project, AgentRole::Reviewer))->toBeNull()
+    expect($claimTask->handle($project, AgentRole::Reviewer)?->id)->toBe($firstTask->id)
         ->and($claimTask->handle($project, AgentRole::Coder)?->id)->toBe($secondTask->id);
 });
 
-test('a cancelled task counts as having crossed the phase review barrier', function () {
+test('reviewer claims the lowest-position ready task without waiting for earlier independent coding work', function () {
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
+    $codingTask = createWorkflowTask($project, 1);
+    $readyTask = createWorkflowTask($project, 2);
+
+    $codingTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::Coding]);
+    $readyTask->update(['phase_id' => $phase->id, 'status' => TaskStatus::ReadyForReview]);
+
+    expect(app(ClaimTask::class)->handle($project, AgentRole::Reviewer)?->id)
+        ->toBe($readyTask->id);
+});
+
+test('a cancelled task does not block rolling review', function () {
     config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $phase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Foundation', 'objective' => 'Build the foundation.']);
@@ -285,6 +298,21 @@ test('changes required closes the phase review gate and returns control to the c
     $transitionTask->handle($secondTask, TaskStatus::ReadyForReview);
 
     expect($claimTask->handle($project, AgentRole::Reviewer)?->id)->toBe($secondTask->id);
+});
+
+test('reviewer may claim a later phase while an earlier phase awaits Coder fixes', function () {
+    config()->set('aios.obsidian_vault_path', storage_path('framework/testing/obsidian-'.fake()->uuid()));
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $blockedPhase = Phase::create(['project_id' => $project->id, 'position' => 1, 'title' => 'Blocked', 'objective' => 'Await a Coder fix.']);
+    $reviewablePhase = Phase::create(['project_id' => $project->id, 'position' => 2, 'title' => 'Reviewable', 'objective' => 'Ready for review.']);
+    $rejectedTask = createWorkflowTask($project, 1);
+    $readyTask = createWorkflowTask($project, 2);
+
+    $rejectedTask->update(['phase_id' => $blockedPhase->id, 'status' => TaskStatus::ChangesRequired]);
+    $readyTask->update(['phase_id' => $reviewablePhase->id, 'status' => TaskStatus::ReadyForReview]);
+
+    expect(app(ClaimTask::class)->handle($project, AgentRole::Reviewer)?->id)
+        ->toBe($readyTask->id);
 });
 
 test('reviewer worker cooldown blocks the next phase review claim for 300 seconds', function () {
