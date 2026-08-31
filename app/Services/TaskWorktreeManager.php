@@ -60,6 +60,11 @@ class TaskWorktreeManager
                 $baseSha,
             )
         ) {
+            $this->worktrees->linkSharedDependencies(
+                $repositoryPath,
+                $worktreePath,
+            );
+
             return $this->paths->resolve(
                 $this->relativePath($task, $attempt),
                 mustExist: true,
@@ -93,6 +98,11 @@ class TaskWorktreeManager
                 'AIOS could not verify the isolated Task worktree after creation.',
             );
         }
+
+        $this->worktrees->linkSharedDependencies(
+            $repositoryPath,
+            $worktreePath,
+        );
 
         return $this->paths->resolve(
             $this->relativePath($task, $attempt),

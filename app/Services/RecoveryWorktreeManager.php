@@ -35,6 +35,11 @@ class RecoveryWorktreeManager
             $baseSha,
         );
 
+        $this->worktrees->linkSharedDependencies(
+            $repositoryPath,
+            $worktreePath,
+        );
+
         return $worktreePath;
     }
 

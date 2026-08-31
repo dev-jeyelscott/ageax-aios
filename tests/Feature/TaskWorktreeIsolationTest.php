@@ -494,6 +494,71 @@ test(
 );
 
 /**
+ * Verify untracked shared dependency directories are usable inside the isolated worktree without
+ * being copied into Git or risking the main checkout when the worktree is later released.
+ */
+test(
+    'task worktree links shared vendor and node_modules without exposing them to git or the main checkout',
+    function () {
+        [$project, $baseSha] = taskWorktreeProject();
+
+        File::put($project->path.'/.gitignore', "/vendor\n/node_modules\n");
+
+        File::ensureDirectoryExists($project->path.'/vendor/acme');
+        File::put($project->path.'/vendor/acme/marker.php', "<?php\n");
+
+        File::ensureDirectoryExists($project->path.'/node_modules/acme');
+        File::put($project->path.'/node_modules/acme/marker.js', "module.exports = {};\n");
+
+        $task = taskWorktreeTask(
+            $project,
+            'P10-002-DEPS',
+            1,
+        );
+
+        $attempt = taskWorktreeAttempt(
+            $task,
+            $baseSha,
+        );
+
+        $manager = app(
+            TaskWorktreeManager::class,
+        );
+
+        $path = $manager->acquire(
+            $task,
+            $attempt,
+        );
+
+        try {
+            expect(File::exists($path.'/vendor/acme/marker.php'))
+                ->toBeTrue()
+                ->and(is_link($path.'/vendor'))
+                ->toBeTrue()
+                ->and(File::exists($path.'/node_modules/acme/marker.js'))
+                ->toBeTrue()
+                ->and(is_link($path.'/node_modules'))
+                ->toBeTrue();
+
+            $manager->release(
+                $task,
+                $attempt,
+            );
+
+            expect(File::exists($project->path.'/vendor/acme/marker.php'))
+                ->toBeTrue()
+                ->and(File::exists($project->path.'/node_modules/acme/marker.js'))
+                ->toBeTrue();
+        } finally {
+            $manager->release(
+                $task,
+                $attempt,
+            );
+        }
+    },
+);
+
+/**
  * Verify WorkspacePathResolver still fails closed when the managed worktree root escapes through a symlink.
  */
 test(

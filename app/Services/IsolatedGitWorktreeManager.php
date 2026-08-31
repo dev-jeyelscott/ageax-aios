@@ -55,6 +55,35 @@ class IsolatedGitWorktreeManager
     }
 
     /**
+     * Symlink untracked shared dependency directories (vendor, node_modules) from the source
+     * repository into an isolated worktree, since `git worktree add` only materializes tracked
+     * files and these directories are gitignored. Idempotent: safe to call on every acquire.
+     */
+    public function linkSharedDependencies(string $repositoryPath, string $worktreePath): void
+    {
+        foreach (['vendor', 'node_modules'] as $directory) {
+            $target = $repositoryPath.DIRECTORY_SEPARATOR.$directory;
+            $link = $worktreePath.DIRECTORY_SEPARATOR.$directory;
+
+            if (! is_dir($target) || is_link($target)) {
+                continue;
+            }
+
+            if (is_link($link)) {
+                if (readlink($link) === $target) {
+                    continue;
+                }
+
+                File::delete($link);
+            } elseif (file_exists($link)) {
+                continue;
+            }
+
+            symlink($target, $link);
+        }
+    }
+
+    /**
      * Determine whether an existing worktree belongs to the repository and still points at the exact base SHA.
      */
     public function matches(string $repositoryPath, string $worktreePath, string $baseSha): bool

@@ -2170,7 +2170,10 @@ export function AgentOffice({
                                     projectId={projectId}
                                     worker={worker}
                                     agent={agentByWorkerId.get(worker.id)}
-                                    active={worker.id === activeWorkerId}
+                                    active={
+                                        worker.id === activeWorkerId ||
+                                        worker.status === 'working'
+                                    }
                                     index={index + 1}
                                     projectStatus={projectStatus}
                                     currentTime={currentTime}
