@@ -46,6 +46,43 @@ test('the most recent exhaustion event decides the requeue target when both even
     expect($task->refresh()->status)->toBe(TaskStatus::ChangesRequired);
 });
 
+test('a reviewer block caused only by repository-document drift is requeued directly to review', function () {
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = requeueTestTask($project, 1);
+    $task = app(TransitionTask::class)->handle($task, TaskStatus::Blocked);
+    app(AuditLogger::class)->record('task.contract_drift_detected', [
+        'operation' => 'reviewer',
+        'changed_inputs' => [
+            'repository_documents:AGENTS.md',
+            'repository_documents:.ai/rules/services.md',
+        ],
+    ], $project, $task);
+
+    app(RequeueBlockedTask::class)->handle($task);
+
+    $requeue = $task->auditEvents()->where('event_type', 'task.requeued')->latest('id')->firstOrFail();
+
+    expect($task->refresh()->status)->toBe(TaskStatus::ReadyForReview)
+        ->and($requeue->payload)->toMatchArray([
+            'reason' => 'manual reviewer context rebase',
+            'status' => TaskStatus::ReadyForReview->value,
+        ]);
+});
+
+test('reviewer task-contract drift still returns to the coder when it changes task requirements', function () {
+    $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
+    $task = requeueTestTask($project, 1);
+    $task = app(TransitionTask::class)->handle($task, TaskStatus::Blocked);
+    app(AuditLogger::class)->record('task.contract_drift_detected', [
+        'operation' => 'reviewer',
+        'changed_inputs' => ['acceptance_criteria'],
+    ], $project, $task);
+
+    app(RequeueBlockedTask::class)->handle($task);
+
+    expect($task->refresh()->status)->toBe(TaskStatus::ChangesRequired);
+});
+
 test('a task with no exhaustion evidence at all still defaults to changes required', function () {
     $project = Project::create(['name' => 'Example', 'path' => '/tmp/example-'.fake()->uuid(), 'status' => ProjectStatus::Running, 'git_status' => 'clean']);
     $task = requeueTestTask($project, 1);
